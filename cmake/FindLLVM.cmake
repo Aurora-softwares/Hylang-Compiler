@@ -1,0 +1,5 @@
+if (DEFINED ENV{LLVM_DIR} AND NOT LLVM_DIR)
+  set(LLVM_DIR "$ENV{LLVM_DIR}" CACHE PATH "Path to LLVMConfig.cmake" FORCE)
+endif()
+
+find_package(LLVM REQUIRED CONFIG)
