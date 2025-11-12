@@ -1,0 +1,15 @@
+# Build artifacts
+/build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+Testing/
+*.o
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.dir/
+.DS_Store
