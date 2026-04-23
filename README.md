@@ -25,6 +25,7 @@ The current bootstrap supports:
 - `System.IO.File.Exists(...)`, `ReadAllText(...)`, and `WriteAllText(...)`
 
 Bootstrap accessibility semantics:
+
 - `public` is visible everywhere
 - `private` is restricted to the declaring class
 - `internal` is visible within the current compilation

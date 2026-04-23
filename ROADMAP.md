@@ -36,6 +36,23 @@ That means Hylang is past the “toy parser” stage and is now in the bootstrap
 - Add low-level power deliberately, with clear boundaries between safe managed code and unsafe systems code.
 - Build the standard library and tooling in parallel with the language, not as an afterthought.
 
+## Phase Snapshot
+
+Checked items reflect the current repo state as of now.
+
+- [x] Phase 0: Bootstrap Foundation is effectively complete enough to move beyond the bootstrap-only stage
+- [ ] Phase 1: Language Hardening is in progress
+- [ ] Phase 2: Core Language Expansion has not started in earnest
+- [ ] Phase 3: Runtime and Memory Model has not started in earnest
+- [ ] Phase 4: Tooling and Developer Workflow has not started in earnest
+- [ ] Phase 5: Self-Hosting Preparation has not started in earnest
+- [ ] Phase 6: Self-Hosted Compiler has not started
+- [ ] Phase 7: Full Standard Library has not started in earnest
+- [ ] Phase 8: Backend Evolution has not started in earnest
+- [ ] Phase 9: Hylang for Aura OS Userland has not started
+- [ ] Phase 10: Hylang for System Software and Kernel-Adjacent Code has not started
+- [ ] Phase 11: Full OS and Ecosystem Vision remains the long-term destination
+
 ## Phase 0: Bootstrap Foundation
 
 Status: largely complete
@@ -45,6 +62,19 @@ Goals:
 - run simple Hylang programs in the terminal
 - build host-native binaries through a portable backend
 - prove the core class-based programming model
+
+Checklist:
+
+- [x] `hyrun` can execute `.hy` scripts and `.hyproj` projects
+- [x] `hyc build` can build host-native executables
+- [x] `hyc build --target lib` can build static libraries
+- [x] The compiler has a real frontend and semantic pipeline
+- [x] Core OO syntax works: namespaces, classes, fields, constructors, methods, and static members
+- [x] Basic control flow works across interpreter and compiled output
+- [x] Minimal `System.Console` support exists
+- [x] Minimal `System.IO.File` support exists
+- [x] Multi-file console tools can be written and run today
+- [x] The bootstrap is strong enough to move into language hardening work
 
 Delivered / near-delivered scope:
 
@@ -69,6 +99,22 @@ Goals:
 - make the bootstrap language reliable enough for larger tools
 - expand the standard library just enough to build real developer utilities
 - improve diagnostics and confidence in compiler behavior
+
+Checklist:
+
+- [x] Add `for`, `break`, and `continue`
+- [x] Add `string.Length`
+- [x] Add basic string concatenation for string/int/bool combinations
+- [x] Add `System.Console.Write(...)`
+- [x] Add basic `System.IO.File` read/write/exists APIs
+- [x] Add array indexing for command-line argument and array workflows
+- [x] Add a non-trivial multi-file sample Hylang console tool
+- [x] Add negative coverage for new control-flow and builtin misuse cases
+- [x] Validate interpreter mode and compiled mode against the new feature set
+- [ ] Improve parser error recovery so one syntax issue does not cascade as badly
+- [ ] Harden overload resolution and method/constructor selection rules
+- [ ] Expand regression coverage further until refactors feel cheap and safe
+- [ ] Prove the language on at least one medium-sized Hylang tool beyond the current samples
 
 Main work:
 
@@ -101,6 +147,19 @@ Goals:
 - move from “small tool language” to “general-purpose application language”
 - fill in the missing object model and type system pieces needed before self-hosting
 
+Checklist:
+
+- [ ] Add inheritance
+- [ ] Add virtual/override behavior
+- [ ] Add interfaces
+- [ ] Add enums
+- [ ] Decide and implement value-type or struct design
+- [ ] Add generics
+- [ ] Improve overload resolution
+- [ ] Improve namespace and import resolution behavior
+- [ ] Add any minimal type inference needed for ergonomic compiler/library code
+- [ ] Capture the implemented rules in language-spec notes
+
 Main work:
 
 - inheritance
@@ -130,6 +189,18 @@ Goals:
 - define how Hylang manages memory in normal applications
 - define how low-level code can opt into more explicit control
 
+Checklist:
+
+- [ ] Replace the bootstrap allocation strategy with a real GC-backed managed runtime
+- [ ] Define stable runtime object and metadata layout
+- [ ] Make strings and arrays behave consistently across all backends
+- [ ] Design `unsafe` blocks
+- [ ] Design pointer support
+- [ ] Design stack allocation support
+- [ ] Design manual allocation/free APIs
+- [ ] Add raw memory and buffer primitives suitable for systems code
+- [ ] Define the safe/unsafe boundary clearly in docs and compiler rules
+
 Main work:
 
 - replace the bootstrap allocation model with a real cross-platform GC integration
@@ -157,6 +228,18 @@ Exit criteria:
 Goals:
 
 - make Hylang pleasant to use for real projects, not just experiments
+
+Checklist:
+
+- [ ] Stabilize the project/package manifest format
+- [ ] Add a first-class `hy` CLI workflow
+- [ ] Add a formatter
+- [ ] Add a test runner workflow
+- [ ] Add linting or static analysis
+- [ ] Add language-server/editor support
+- [ ] Improve diagnostics and incremental build behavior
+- [ ] Add debug metadata/source mapping support
+- [ ] Make project creation and dependency management coherent for new users
 
 Main work:
 
@@ -188,6 +271,17 @@ Goals:
 
 - make the compiler architecture clean enough to be reimplemented in Hylang without losing momentum
 
+Checklist:
+
+- [ ] Split the compiler into clearer libraries/modules
+- [ ] Document the bound IR and semantic model
+- [ ] Stabilize core compiler data structures
+- [ ] Move more support libraries into Hylang
+- [ ] Build a tokenizer in Hylang
+- [ ] Build a parser prototype in Hylang
+- [ ] Build at least one code-processing utility in Hylang
+- [ ] Prove Hylang is comfortable for compiler-style data processing
+
 Main work:
 
 - split the compiler into clearer layers and libraries
@@ -214,6 +308,16 @@ Goals:
 - write a Hylang compiler in Hylang
 - keep the bootstrap compiler only as the trusted seed until the self-hosted one is proven
 
+Checklist:
+
+- [ ] Write foundational compiler utilities in Hylang
+- [ ] Write frontend pieces in Hylang
+- [ ] Reuse or mirror the existing semantic model/backend strategy
+- [ ] Build a Hylang compiler that can compile meaningful Hylang programs
+- [ ] Reach self-compilation
+- [ ] Compare bootstrap and self-hosted compiler output on a shared test corpus
+- [ ] Promote the self-hosted compiler to primary status only after validation
+
 Suggested path:
 
 1. write utility libraries in Hylang first
@@ -237,6 +341,19 @@ Exit criteria:
 Goals:
 
 - grow from a minimal bootstrap library to a real platform library
+
+Checklist:
+
+- [ ] Build out `System`
+- [ ] Build out `System.IO`
+- [ ] Build out `System.Text`
+- [ ] Build out `System.Collections`
+- [ ] Build out `System.Threading`
+- [ ] Build out `System.Diagnostics`
+- [ ] Build out networking/platform APIs as needed
+- [ ] Add reusable testing/assertion helpers
+- [ ] Move stdlib implementation increasingly into Hylang itself
+- [ ] Make the compiler and core tools depend mostly on stdlib code instead of ad hoc helpers
 
 Core stdlib areas:
 
@@ -271,6 +388,17 @@ Goals:
 
 - move beyond the bootstrap C backend into a language/runtime toolchain that can better serve OS development
 
+Checklist:
+
+- [ ] Keep the C backend healthy as a portability path
+- [ ] Improve emitted C quality and runtime shims
+- [ ] Add native x64 code generation
+- [ ] Add object-file emission
+- [ ] Add linker/ABI integration
+- [ ] Add better debug information
+- [ ] Improve generated-code performance
+- [ ] Add broader cross-compilation support if needed
+
 Near-term:
 
 - keep the C backend as a portability path and fallback
@@ -300,6 +428,16 @@ Goals:
 
 - make Hylang the primary language for user-space tooling and core applications on Aura OS
 
+Checklist:
+
+- [ ] Define the Hylang runtime boundary for Aura OS processes
+- [ ] Add startup/runtime initialization for Aura OS targets
+- [ ] Add filesystem, process, console, and IPC bindings
+- [ ] Add any needed windowing/application bindings
+- [ ] Write shell and service tooling in Hylang
+- [ ] Write build/install/package-management tooling in Hylang
+- [ ] Prove that meaningful day-to-day Aura OS userland can ship in Hylang
+
 Main work:
 
 - libc/runtime boundary for Aura OS
@@ -322,6 +460,16 @@ Goals:
 
 - extend Hylang into the lower layers of the OS stack where it makes sense
 
+Checklist:
+
+- [ ] Finalize the unsafe systems-programming model
+- [ ] Finalize ABI and calling-convention control where needed
+- [ ] Support explicit layout and low-level interop requirements
+- [ ] Define panic/error behavior for low-level code
+- [ ] Support reduced-runtime or no-runtime profiles where needed
+- [ ] Prove Hylang can handle kernel-adjacent libraries and helpers safely
+- [ ] Move selected lower-level OS components into Hylang only when the model is mature
+
 Likely order:
 
 - userland first
@@ -342,6 +490,15 @@ Exit criteria:
 - parts of the OS stack can be safely and intentionally written in Hylang without hidden runtime assumptions
 
 ## Phase 11: Full OS and Ecosystem Vision
+
+Checklist:
+
+- [ ] Hylang compiler is self-hosted
+- [ ] The standard library is substantial and mostly written in Hylang
+- [ ] Aura OS userland is primarily written in Hylang
+- [ ] Selected systems components are written in Hylang
+- [ ] Tooling, docs, package workflow, and ecosystem are mature
+- [ ] Third-party developers can build serious software in Hylang without depending on compiler internals
 
 End-state goals:
 
