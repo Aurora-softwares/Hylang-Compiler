@@ -16,10 +16,13 @@ The current bootstrap supports:
 - static methods and static fields
 - fields, constructors, methods
 - `int`, `bool`, `string`, and `string[]`
-- local variables, `if`, `while`, `return`
+- local variables, `if`, `while`, `for`, `break`, `continue`, and `return`
 - object creation, method calls, field access, assignment
-- array length access through `.Length`
-- `System.Console.WriteLine(...)` for `string`, `int`, and `bool`
+- array length access through `.Length` and string length access through `string.Length`
+- array element access such as `args[0]`
+- string concatenation through `+` for string/int/bool combinations
+- `System.Console.Write(...)` and `System.Console.WriteLine(...)` for `string`, `int`, and `bool`
+- `System.IO.File.Exists(...)`, `ReadAllText(...)`, and `WriteAllText(...)`
 
 Bootstrap accessibility semantics:
 - `public` is visible everywhere
@@ -67,6 +70,14 @@ build/hyc build tests/hello_world.hy -o build/hello_world
 ```bash
 build/hyc build tests/projects/app/App.hyproj -o build/demo_app
 ./build/demo_app
+```
+
+## Sample text tool
+
+```bash
+printf 'Hello from Hylang' > build/sample_input.txt
+build/hyrun samples/text_report/TextReport.hyproj build/sample_input.txt build/sample_report.txt
+cat build/sample_report.txt
 ```
 
 ## Build a library

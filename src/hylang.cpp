@@ -118,6 +118,9 @@ enum class TokenKind {
     If,
     Else,
     While,
+    For,
+    Break,
+    Continue,
     Return,
     New,
     This,
@@ -342,6 +345,9 @@ private:
             {"if", TokenKind::If},
             {"else", TokenKind::Else},
             {"while", TokenKind::While},
+            {"for", TokenKind::For},
+            {"break", TokenKind::Break},
+            {"continue", TokenKind::Continue},
             {"return", TokenKind::Return},
             {"new", TokenKind::New},
             {"this", TokenKind::This},
@@ -476,6 +482,11 @@ struct MemberAccessExpressionSyntax final : ExpressionSyntax {
     string member_name;
 };
 
+struct ElementAccessExpressionSyntax final : ExpressionSyntax {
+    unique_ptr<ExpressionSyntax> target;
+    unique_ptr<ExpressionSyntax> index;
+};
+
 struct InvocationExpressionSyntax final : ExpressionSyntax {
     unique_ptr<ExpressionSyntax> callee;
     vector<unique_ptr<ExpressionSyntax>> arguments;
@@ -516,6 +527,17 @@ struct WhileStatementSyntax final : StatementSyntax {
     unique_ptr<ExpressionSyntax> condition;
     unique_ptr<StatementSyntax> body;
 };
+
+struct ForStatementSyntax final : StatementSyntax {
+    unique_ptr<StatementSyntax> initializer;
+    unique_ptr<ExpressionSyntax> condition;
+    unique_ptr<ExpressionSyntax> update;
+    unique_ptr<StatementSyntax> body;
+};
+
+struct BreakStatementSyntax final : StatementSyntax {};
+
+struct ContinueStatementSyntax final : StatementSyntax {};
 
 struct ReturnStatementSyntax final : StatementSyntax {
     unique_ptr<ExpressionSyntax> expression;
@@ -822,6 +844,15 @@ private:
         if (match(TokenKind::While)) {
             return parse_while_statement(previous());
         }
+        if (match(TokenKind::For)) {
+            return parse_for_statement(previous());
+        }
+        if (match(TokenKind::Break)) {
+            return parse_break_statement(previous());
+        }
+        if (match(TokenKind::Continue)) {
+            return parse_continue_statement(previous());
+        }
         if (match(TokenKind::Return)) {
             return parse_return_statement(previous());
         }
@@ -857,6 +888,47 @@ private:
         return statement;
     }
 
+    unique_ptr<StatementSyntax> parse_for_statement(const Token& token) {
+        consume(TokenKind::OpenParen, "Expected '(' after 'for'");
+        auto statement = std::make_unique<ForStatementSyntax>();
+        statement->line = token.line;
+        statement->column = token.column;
+        if (!check(TokenKind::Semicolon)) {
+            if (looks_like_variable_declaration()) {
+                statement->initializer = parse_variable_declaration_statement(false);
+            } else {
+                statement->initializer = parse_expression_statement_syntax(false);
+            }
+        }
+        consume(TokenKind::Semicolon, "Expected ';' after for initializer");
+        if (!check(TokenKind::Semicolon)) {
+            statement->condition = parse_expression();
+        }
+        consume(TokenKind::Semicolon, "Expected ';' after for condition");
+        if (!check(TokenKind::CloseParen)) {
+            statement->update = parse_expression();
+        }
+        consume(TokenKind::CloseParen, "Expected ')' after for clauses");
+        statement->body = parse_statement();
+        return statement;
+    }
+
+    unique_ptr<StatementSyntax> parse_break_statement(const Token& token) {
+        auto statement = std::make_unique<BreakStatementSyntax>();
+        statement->line = token.line;
+        statement->column = token.column;
+        consume(TokenKind::Semicolon, "Expected ';' after break statement");
+        return statement;
+    }
+
+    unique_ptr<StatementSyntax> parse_continue_statement(const Token& token) {
+        auto statement = std::make_unique<ContinueStatementSyntax>();
+        statement->line = token.line;
+        statement->column = token.column;
+        consume(TokenKind::Semicolon, "Expected ';' after continue statement");
+        return statement;
+    }
+
     unique_ptr<StatementSyntax> parse_return_statement(const Token& token) {
         auto statement = std::make_unique<ReturnStatementSyntax>();
         statement->line = token.line;
@@ -869,6 +941,10 @@ private:
     }
 
     unique_ptr<StatementSyntax> parse_variable_declaration() {
+        return parse_variable_declaration_statement(true);
+    }
+
+    unique_ptr<VariableDeclarationStatementSyntax> parse_variable_declaration_statement(bool require_semicolon) {
         auto statement = std::make_unique<VariableDeclarationStatementSyntax>();
         statement->line = current().line;
         statement->column = current().column;
@@ -878,16 +954,24 @@ private:
         if (match(TokenKind::Equals)) {
             statement->initializer = parse_expression();
         }
-        consume(TokenKind::Semicolon, "Expected ';' after variable declaration");
+        if (require_semicolon) {
+            consume(TokenKind::Semicolon, "Expected ';' after variable declaration");
+        }
         return statement;
     }
 
     unique_ptr<StatementSyntax> parse_expression_statement() {
+        return parse_expression_statement_syntax(true);
+    }
+
+    unique_ptr<ExpressionStatementSyntax> parse_expression_statement_syntax(bool require_semicolon) {
         auto statement = std::make_unique<ExpressionStatementSyntax>();
         statement->line = current().line;
         statement->column = current().column;
         statement->expression = parse_expression();
-        consume(TokenKind::Semicolon, "Expected ';' after expression");
+        if (require_semicolon) {
+            consume(TokenKind::Semicolon, "Expected ';' after expression");
+        }
         return statement;
     }
 
@@ -1039,6 +1123,17 @@ private:
                 }
                 consume(TokenKind::CloseParen, "Expected ')' after arguments");
                 expression = std::move(invocation);
+                continue;
+            }
+
+            if (match(TokenKind::OpenBracket)) {
+                auto access = std::make_unique<ElementAccessExpressionSyntax>();
+                access->line = previous().line;
+                access->column = previous().column;
+                access->target = std::move(expression);
+                access->index = parse_expression();
+                consume(TokenKind::CloseBracket, "Expected ']' after index expression");
+                expression = std::move(access);
                 continue;
             }
 
@@ -1227,6 +1322,8 @@ enum class BoundExpressionKind {
     ThisReference,
     Field,
     ArrayLength,
+    ArrayIndex,
+    StringLength,
     Assignment,
     Unary,
     Binary,
@@ -1240,6 +1337,9 @@ enum class BoundStatementKind {
     Expression,
     If,
     While,
+    For,
+    Break,
+    Continue,
     Return,
 };
 
@@ -1272,6 +1372,15 @@ struct BoundFieldExpression final : BoundExpression {
 
 struct BoundArrayLengthExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> array_expression;
+};
+
+struct BoundArrayIndexExpression final : BoundExpression {
+    std::unique_ptr<BoundExpression> array_expression;
+    std::unique_ptr<BoundExpression> index_expression;
+};
+
+struct BoundStringLengthExpression final : BoundExpression {
+    std::unique_ptr<BoundExpression> string_expression;
 };
 
 struct BoundAssignmentExpression final : BoundExpression {
@@ -1333,6 +1442,17 @@ struct BoundWhileStatement final : BoundStatement {
     std::unique_ptr<BoundStatement> body;
 };
 
+struct BoundForStatement final : BoundStatement {
+    std::unique_ptr<BoundStatement> initializer;
+    std::unique_ptr<BoundExpression> condition;
+    std::unique_ptr<BoundExpression> update;
+    std::unique_ptr<BoundStatement> body;
+};
+
+struct BoundBreakStatement final : BoundStatement {};
+
+struct BoundContinueStatement final : BoundStatement {};
+
 struct BoundReturnStatement final : BoundStatement {
     std::unique_ptr<BoundExpression> expression;
 };
@@ -1362,9 +1482,16 @@ struct SemanticModel {
     std::unordered_map<string, ClassSymbol*> classes_by_full_name;
     std::unordered_set<string> namespaces;
     ClassSymbol* console_class = nullptr;
+    ClassSymbol* file_class = nullptr;
+    MethodSymbol* console_write_string = nullptr;
+    MethodSymbol* console_write_int = nullptr;
+    MethodSymbol* console_write_bool = nullptr;
     MethodSymbol* console_writeline_string = nullptr;
     MethodSymbol* console_writeline_int = nullptr;
     MethodSymbol* console_writeline_bool = nullptr;
+    MethodSymbol* file_exists = nullptr;
+    MethodSymbol* file_read_all_text = nullptr;
+    MethodSymbol* file_write_all_text = nullptr;
     int next_variable_id = 1;
 
     const TypeSymbol* get_array_type(const TypeSymbol* element_type) {
@@ -1469,6 +1596,19 @@ bool is_type_assignable(const TypeSymbol* destination, const TypeSymbol* source)
     return false;
 }
 
+bool is_string_concat_operand(const SemanticModel& model, const TypeSymbol* type) {
+    return type == &model.string_type || type == &model.int_type || type == &model.bool_type;
+}
+
+bool is_string_concatenation(const SemanticModel& model, const TypeSymbol* left, const TypeSymbol* right) {
+    if (left == nullptr || right == nullptr) {
+        return false;
+    }
+    return (left == &model.string_type || right == &model.string_type) &&
+           is_string_concat_operand(model, left) &&
+           is_string_concat_operand(model, right);
+}
+
 const TypeSymbol* resolve_type_in_context(SemanticModel& model,
                                           DiagnosticBag& diagnostics,
                                           const fs::path& file,
@@ -1550,34 +1690,63 @@ public:
 private:
     void install_builtins(SemanticModel& model) {
         model.namespaces.insert("System");
-        auto console = std::make_unique<ClassSymbol>();
-        console->namespace_name = "System";
-        console->name = "Console";
-        console->full_name = "System.Console";
-        console->is_builtin = true;
-        auto console_type = console.get();
+        model.namespaces.insert("System.IO");
 
-        auto create_builtin = [&](const string& name, const TypeSymbol* parameter_type) -> MethodSymbol* {
-            auto method = std::make_unique<MethodSymbol>();
-            method->name = name;
-            method->return_type = &model.void_type;
-            method->parameters.push_back(ParameterSymbol{"value", parameter_type, 0});
-            method->is_static = true;
-            method->is_builtin = true;
-            method->accessibility = Accessibility::Public;
-            method->owner = console_type;
-            method->slot = static_cast<int>(console_type->methods.size());
-            auto* raw = method.get();
-            console_type->methods.push_back(std::move(method));
+        auto create_builtin_class = [&](const string& namespace_name, const string& class_name) -> ClassSymbol* {
+            auto klass = std::make_unique<ClassSymbol>();
+            klass->namespace_name = namespace_name;
+            klass->name = class_name;
+            klass->full_name = namespace_name.empty() ? class_name : namespace_name + "." + class_name;
+            klass->is_builtin = true;
+            auto* raw = klass.get();
+            model.classes_by_full_name[klass->full_name] = raw;
+            model.classes.push_back(std::move(klass));
             return raw;
         };
 
-        model.console_writeline_string = create_builtin("WriteLine", &model.string_type);
-        model.console_writeline_int = create_builtin("WriteLine", &model.int_type);
-        model.console_writeline_bool = create_builtin("WriteLine", &model.bool_type);
-        model.console_class = console_type;
-        model.classes_by_full_name[console->full_name] = console_type;
-        model.classes.push_back(std::move(console));
+        auto create_builtin = [&](ClassSymbol* owner,
+                                  const string& name,
+                                  const TypeSymbol* return_type,
+                                  const vector<std::pair<string, const TypeSymbol*>>& parameters) -> MethodSymbol* {
+            auto method = std::make_unique<MethodSymbol>();
+            method->name = name;
+            method->return_type = return_type;
+            for (std::size_t index = 0; index < parameters.size(); ++index) {
+                method->parameters.push_back(ParameterSymbol{parameters[index].first, parameters[index].second, static_cast<int>(index)});
+            }
+            method->is_static = true;
+            method->is_builtin = true;
+            method->accessibility = Accessibility::Public;
+            method->owner = owner;
+            method->slot = static_cast<int>(owner->methods.size());
+            auto* raw = method.get();
+            owner->methods.push_back(std::move(method));
+            return raw;
+        };
+
+        model.console_class = create_builtin_class("System", "Console");
+        model.console_write_string =
+            create_builtin(model.console_class, "Write", &model.void_type, {{"value", &model.string_type}});
+        model.console_write_int =
+            create_builtin(model.console_class, "Write", &model.void_type, {{"value", &model.int_type}});
+        model.console_write_bool =
+            create_builtin(model.console_class, "Write", &model.void_type, {{"value", &model.bool_type}});
+        model.console_writeline_string =
+            create_builtin(model.console_class, "WriteLine", &model.void_type, {{"value", &model.string_type}});
+        model.console_writeline_int =
+            create_builtin(model.console_class, "WriteLine", &model.void_type, {{"value", &model.int_type}});
+        model.console_writeline_bool =
+            create_builtin(model.console_class, "WriteLine", &model.void_type, {{"value", &model.bool_type}});
+
+        model.file_class = create_builtin_class("System.IO", "File");
+        model.file_exists =
+            create_builtin(model.file_class, "Exists", &model.bool_type, {{"path", &model.string_type}});
+        model.file_read_all_text =
+            create_builtin(model.file_class, "ReadAllText", &model.string_type, {{"path", &model.string_type}});
+        model.file_write_all_text = create_builtin(model.file_class,
+                                                   "WriteAllText",
+                                                   &model.void_type,
+                                                   {{"path", &model.string_type}, {"content", &model.string_type}});
     }
 
     void declare_classes(SemanticModel& model, const vector<CompilationUnitSyntax>& units) {
@@ -1989,7 +2158,56 @@ private:
                     diagnostics_.add(find_file_for_class(&current_class_), while_statement->line, while_statement->column,
                                      "While condition must be of type 'bool'");
                 }
+                ++loop_depth_;
                 bound->body = bind_statement(*while_statement->body);
+                --loop_depth_;
+                return bound;
+            }
+            if (const auto* for_statement = dynamic_cast<const ForStatementSyntax*>(&statement)) {
+                auto bound = std::make_unique<BoundForStatement>();
+                bound->kind = BoundStatementKind::For;
+                bound->line = for_statement->line;
+                bound->column = for_statement->column;
+                push_scope();
+                if (for_statement->initializer != nullptr) {
+                    bound->initializer = bind_statement(*for_statement->initializer);
+                }
+                if (for_statement->condition != nullptr) {
+                    bound->condition = bind_expression(*for_statement->condition);
+                    if (bound->condition->type != &program_.semantic_model.bool_type) {
+                        diagnostics_.add(find_file_for_class(&current_class_), for_statement->line, for_statement->column,
+                                         "For condition must be of type 'bool'");
+                    }
+                }
+                if (for_statement->update != nullptr) {
+                    bound->update = bind_expression(*for_statement->update);
+                }
+                ++loop_depth_;
+                bound->body = bind_statement(*for_statement->body);
+                --loop_depth_;
+                pop_scope();
+                return bound;
+            }
+            if (const auto* break_statement = dynamic_cast<const BreakStatementSyntax*>(&statement)) {
+                auto bound = std::make_unique<BoundBreakStatement>();
+                bound->kind = BoundStatementKind::Break;
+                bound->line = break_statement->line;
+                bound->column = break_statement->column;
+                if (loop_depth_ == 0) {
+                    diagnostics_.add(find_file_for_class(&current_class_), break_statement->line, break_statement->column,
+                                     "'break' can only be used inside a loop");
+                }
+                return bound;
+            }
+            if (const auto* continue_statement = dynamic_cast<const ContinueStatementSyntax*>(&statement)) {
+                auto bound = std::make_unique<BoundContinueStatement>();
+                bound->kind = BoundStatementKind::Continue;
+                bound->line = continue_statement->line;
+                bound->column = continue_statement->column;
+                if (loop_depth_ == 0) {
+                    diagnostics_.add(find_file_for_class(&current_class_), continue_statement->line, continue_statement->column,
+                                     "'continue' can only be used inside a loop");
+                }
                 return bound;
             }
             if (const auto* return_statement = dynamic_cast<const ReturnStatementSyntax*>(&statement)) {
@@ -2072,6 +2290,10 @@ private:
                 return bound;
             }
 
+            if (const auto* access = dynamic_cast<const ElementAccessExpressionSyntax*>(&expression)) {
+                return bind_element_access(*access);
+            }
+
             if (const auto* unary = dynamic_cast<const UnaryExpressionSyntax*>(&expression)) {
                 auto operand = bind_expression(*unary->operand);
                 auto bound = std::make_unique<BoundUnaryExpression>();
@@ -2108,6 +2330,19 @@ private:
                 bound->op = binary->op;
                 switch (binary->op) {
                     case TokenKind::Plus:
+                        if (bound->left->type == &program_.semantic_model.int_type &&
+                            bound->right->type == &program_.semantic_model.int_type) {
+                            bound->type = &program_.semantic_model.int_type;
+                            break;
+                        }
+                        if (is_string_concatenation(program_.semantic_model, bound->left->type, bound->right->type)) {
+                            bound->type = &program_.semantic_model.string_type;
+                            break;
+                        }
+                        diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                         "Operator '+' requires int operands or string concatenation operands");
+                        bound->type = &program_.semantic_model.error_type;
+                        break;
                     case TokenKind::Minus:
                     case TokenKind::Star:
                     case TokenKind::Slash:
@@ -2163,6 +2398,33 @@ private:
             }
 
             return bind_value_expression(expression);
+        }
+
+        std::unique_ptr<BoundExpression> bind_element_access(const ElementAccessExpressionSyntax& syntax) {
+            auto array_expression = bind_expression(*syntax.target);
+            auto index_expression = bind_expression(*syntax.index);
+            auto bound = std::make_unique<BoundArrayIndexExpression>();
+            bound->kind = BoundExpressionKind::ArrayIndex;
+            bound->line = syntax.line;
+            bound->column = syntax.column;
+            bound->array_expression = std::move(array_expression);
+            bound->index_expression = std::move(index_expression);
+
+            if (bound->array_expression->type == nullptr || bound->array_expression->type->kind != TypeKind::Array ||
+                bound->array_expression->type->element_type == nullptr) {
+                diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                 "Element access requires an array value");
+                bound->type = &program_.semantic_model.error_type;
+                return bound;
+            }
+
+            if (bound->index_expression->type != &program_.semantic_model.int_type) {
+                diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                 "Array indices must be of type 'int'");
+            }
+
+            bound->type = bound->array_expression->type->element_type;
+            return bound;
         }
 
         std::unique_ptr<BoundExpression> bind_value_expression(const ExpressionSyntax& expression) {
@@ -2560,6 +2822,19 @@ private:
                         return result;
                     }
 
+                    if (base.value->type == &program_.semantic_model.string_type && member->member_name == "Length") {
+                        auto length = std::make_unique<BoundStringLengthExpression>();
+                        length->kind = BoundExpressionKind::StringLength;
+                        length->type = &program_.semantic_model.int_type;
+                        length->line = expression.line;
+                        length->column = expression.column;
+                        length->string_expression = std::move(base.value);
+                        EntityResolution result;
+                        result.kind = EntityResolution::Kind::Value;
+                        result.value = std::move(length);
+                        return result;
+                    }
+
                     if (base.value->type == nullptr || base.value->type->kind != TypeKind::Class ||
                         base.value->type->class_symbol == nullptr) {
                         diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
@@ -2673,6 +2948,7 @@ private:
         DiagnosticBag& diagnostics_;
         const MethodSymbol* current_method_ = nullptr;
         const ConstructorSymbol* current_constructor_ = nullptr;
+        int loop_depth_ = 0;
         std::unordered_map<string, const ParameterSymbol*> parameter_lookup_;
         vector<std::unique_ptr<VariableSymbol>> locals_;
         vector<std::unordered_map<string, const VariableSymbol*>> scopes_;
@@ -2852,6 +3128,13 @@ public:
     }
 
 private:
+    enum class FlowSignal {
+        None,
+        Return,
+        Break,
+        Continue,
+    };
+
     struct Frame {
         std::unordered_map<const ParameterSymbol*, Value> parameters;
         std::unordered_map<const VariableSymbol*, Value> locals;
@@ -2859,28 +3142,79 @@ private:
     };
 
     struct ExecutionResult {
-        bool has_return = false;
+        FlowSignal signal = FlowSignal::None;
         Value value{};
     };
+
+    string stringify_value(const Value& value, const TypeSymbol* expected_type = nullptr) const {
+        if (std::holds_alternative<string>(value.data)) {
+            return std::get<string>(value.data);
+        }
+        if (std::holds_alternative<int64_t>(value.data)) {
+            return std::to_string(std::get<int64_t>(value.data));
+        }
+        if (std::holds_alternative<bool>(value.data)) {
+            return std::get<bool>(value.data) ? "true" : "false";
+        }
+        if (expected_type != nullptr && expected_type->kind == TypeKind::String) {
+            return "null";
+        }
+        return "null";
+    }
+
+    void write_console_value(const Value& value, bool newline) {
+        if (std::holds_alternative<string>(value.data)) {
+            std::cout << std::get<string>(value.data);
+        } else if (std::holds_alternative<int64_t>(value.data)) {
+            std::cout << std::get<int64_t>(value.data);
+        } else if (std::holds_alternative<bool>(value.data)) {
+            std::cout << (std::get<bool>(value.data) ? "true" : "false");
+        } else {
+            std::cout << "null";
+        }
+        if (newline) {
+            std::cout << '\n';
+        }
+    }
 
     Value invoke_method(const MethodSymbol& method,
                         std::shared_ptr<RuntimeObject> receiver,
                         const vector<Value>& arguments) {
         if (method.is_builtin) {
-            if (method.owner == program_.semantic_model.console_class && method.name == "WriteLine") {
-                if (arguments.empty()) {
-                    std::cout << '\n';
+            if (method.owner == program_.semantic_model.console_class &&
+                (method.name == "Write" || method.name == "WriteLine")) {
+                write_console_value(arguments.empty() ? Value{nullptr} : arguments[0], method.name == "WriteLine");
+                return Value{nullptr};
+            }
+            if (method.owner == program_.semantic_model.file_class && method.name == "Exists") {
+                if (arguments.empty() || !std::holds_alternative<string>(arguments[0].data)) {
+                    return Value{false};
+                }
+                return Value{fs::exists(std::get<string>(arguments[0].data))};
+            }
+            if (method.owner == program_.semantic_model.file_class && method.name == "ReadAllText") {
+                if (arguments.empty() || !std::holds_alternative<string>(arguments[0].data)) {
                     return Value{nullptr};
                 }
-                const Value& value = arguments[0];
-                if (std::holds_alternative<string>(value.data)) {
-                    std::cout << std::get<string>(value.data) << '\n';
-                } else if (std::holds_alternative<int64_t>(value.data)) {
-                    std::cout << std::get<int64_t>(value.data) << '\n';
-                } else if (std::holds_alternative<bool>(value.data)) {
-                    std::cout << (std::get<bool>(value.data) ? "true" : "false") << '\n';
-                } else {
-                    std::cout << "null\n";
+                std::ifstream input(std::get<string>(arguments[0].data));
+                if (!input) {
+                    return Value{nullptr};
+                }
+                std::ostringstream buffer;
+                buffer << input.rdbuf();
+                return Value{buffer.str()};
+            }
+            if (method.owner == program_.semantic_model.file_class && method.name == "WriteAllText") {
+                if (arguments.size() < 2 || !std::holds_alternative<string>(arguments[0].data)) {
+                    throw std::runtime_error("System.IO.File.WriteAllText requires a valid path");
+                }
+                const string& path = std::get<string>(arguments[0].data);
+                std::ofstream output(path);
+                if (!output) {
+                    throw std::runtime_error("Could not write file '" + path + "'");
+                }
+                if (std::holds_alternative<string>(arguments[1].data)) {
+                    output << std::get<string>(arguments[1].data);
                 }
                 return Value{nullptr};
             }
@@ -2898,7 +3232,7 @@ private:
         }
 
         const ExecutionResult result = execute_statement(*found->second->body, frame);
-        if (result.has_return) {
+        if (result.signal == FlowSignal::Return) {
             return result.value;
         }
         return default_value_for_type(method.return_type);
@@ -2925,7 +3259,7 @@ private:
                 const auto& block = static_cast<const BoundBlockStatement&>(statement);
                 for (const auto& child : block.statements) {
                     ExecutionResult result = execute_statement(*child, frame);
-                    if (result.has_return) {
+                    if (result.signal != FlowSignal::None) {
                         return result;
                     }
                 }
@@ -2958,18 +3292,54 @@ private:
                 const auto& while_statement = static_cast<const BoundWhileStatement&>(statement);
                 while (std::get<bool>(evaluate_expression(*while_statement.condition, frame).data)) {
                     ExecutionResult result = execute_statement(*while_statement.body, frame);
-                    if (result.has_return) {
+                    if (result.signal == FlowSignal::Return) {
                         return result;
+                    }
+                    if (result.signal == FlowSignal::Break) {
+                        return {};
+                    }
+                    if (result.signal == FlowSignal::Continue) {
+                        continue;
                     }
                 }
                 return {};
             }
+            case BoundStatementKind::For: {
+                const auto& for_statement = static_cast<const BoundForStatement&>(statement);
+                if (for_statement.initializer != nullptr) {
+                    ExecutionResult init_result = execute_statement(*for_statement.initializer, frame);
+                    if (init_result.signal != FlowSignal::None) {
+                        return init_result;
+                    }
+                }
+                while (for_statement.condition == nullptr ||
+                       std::get<bool>(evaluate_expression(*for_statement.condition, frame).data)) {
+                    ExecutionResult result = execute_statement(*for_statement.body, frame);
+                    if (result.signal == FlowSignal::Return) {
+                        return result;
+                    }
+                    if (result.signal == FlowSignal::Break) {
+                        return {};
+                    }
+                    if (for_statement.update != nullptr) {
+                        evaluate_expression(*for_statement.update, frame);
+                    }
+                    if (result.signal == FlowSignal::Continue) {
+                        continue;
+                    }
+                }
+                return {};
+            }
+            case BoundStatementKind::Break:
+                return ExecutionResult{FlowSignal::Break, Value{nullptr}};
+            case BoundStatementKind::Continue:
+                return ExecutionResult{FlowSignal::Continue, Value{nullptr}};
             case BoundStatementKind::Return: {
                 const auto& return_statement = static_cast<const BoundReturnStatement&>(statement);
                 if (return_statement.expression != nullptr) {
-                    return ExecutionResult{true, evaluate_expression(*return_statement.expression, frame)};
+                    return ExecutionResult{FlowSignal::Return, evaluate_expression(*return_statement.expression, frame)};
                 }
-                return ExecutionResult{true, Value{nullptr}};
+                return ExecutionResult{FlowSignal::Return, Value{nullptr}};
             }
         }
         return {};
@@ -3037,6 +3407,28 @@ private:
                 }
                 return Value{int64_t{0}};
             }
+            case BoundExpressionKind::ArrayIndex: {
+                const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
+                Value array_value = evaluate_expression(*access.array_expression, frame);
+                Value index_value = evaluate_expression(*access.index_expression, frame);
+                if (!std::holds_alternative<std::shared_ptr<RuntimeArray>>(array_value.data)) {
+                    return Value{nullptr};
+                }
+                const auto& array = std::get<std::shared_ptr<RuntimeArray>>(array_value.data);
+                const int64_t index = std::get<int64_t>(index_value.data);
+                if (array == nullptr || index < 0 || static_cast<std::size_t>(index) >= array->elements.size()) {
+                    throw std::runtime_error("Array index out of range");
+                }
+                return array->elements[static_cast<std::size_t>(index)];
+            }
+            case BoundExpressionKind::StringLength: {
+                const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
+                Value string_value = evaluate_expression(*length.string_expression, frame);
+                if (std::holds_alternative<string>(string_value.data)) {
+                    return Value{static_cast<int64_t>(std::get<string>(string_value.data).size())};
+                }
+                return Value{int64_t{0}};
+            }
             case BoundExpressionKind::Assignment: {
                 const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
                 Value value = evaluate_expression(*assignment.expression, frame);
@@ -3063,6 +3455,9 @@ private:
                 Value right = evaluate_expression(*binary.right, frame);
                 switch (binary.op) {
                     case TokenKind::Plus:
+                        if (binary.type == &program_.semantic_model.string_type) {
+                            return Value{stringify_value(left, binary.left->type) + stringify_value(right, binary.right->type)};
+                        }
                         return Value{std::get<int64_t>(left.data) + std::get<int64_t>(right.data)};
                     case TokenKind::Minus:
                         return Value{std::get<int64_t>(left.data) - std::get<int64_t>(right.data)};
@@ -3247,6 +3642,47 @@ private:
         out << "    hy_track_allocation(memory);\n";
         out << "    return memory;\n";
         out << "}\n\n";
+        out << "static void hy_runtime_fail(const char* message) {\n";
+        out << "    fprintf(stderr, \"%s\\n\", message);\n";
+        out << "    exit(1);\n";
+        out << "}\n\n";
+        out << "static const char* hy_alloc_string_copy(const char* value) {\n";
+        out << "    const char* safe_value = value == NULL ? \"null\" : value;\n";
+        out << "    size_t length = strlen(safe_value);\n";
+        out << "    char* result = (char*)hy_alloc_managed(length + 1);\n";
+        out << "    memcpy(result, safe_value, length + 1);\n";
+        out << "    return result;\n";
+        out << "}\n";
+        out << "static int64_t hy_string_length(const char* value) {\n";
+        out << "    return (int64_t)strlen(value == NULL ? \"\" : value);\n";
+        out << "}\n";
+        out << "static const char* hy_string_from_int(int64_t value) {\n";
+        out << "    char buffer[32];\n";
+        out << "    snprintf(buffer, sizeof(buffer), \"%lld\", (long long)value);\n";
+        out << "    return hy_alloc_string_copy(buffer);\n";
+        out << "}\n";
+        out << "static const char* hy_string_from_bool(bool value) {\n";
+        out << "    return hy_alloc_string_copy(value ? \"true\" : \"false\");\n";
+        out << "}\n";
+        out << "static const char* hy_string_concat(const char* left, const char* right) {\n";
+        out << "    const char* safe_left = left == NULL ? \"null\" : left;\n";
+        out << "    const char* safe_right = right == NULL ? \"null\" : right;\n";
+        out << "    size_t left_length = strlen(safe_left);\n";
+        out << "    size_t right_length = strlen(safe_right);\n";
+        out << "    char* result = (char*)hy_alloc_managed(left_length + right_length + 1);\n";
+        out << "    memcpy(result, safe_left, left_length);\n";
+        out << "    memcpy(result + left_length, safe_right, right_length + 1);\n";
+        out << "    return result;\n";
+        out << "}\n";
+        out << "static void hy_console_write_string(const char* value) {\n";
+        out << "    printf(\"%s\", value == NULL ? \"null\" : value);\n";
+        out << "}\n";
+        out << "static void hy_console_write_int(int64_t value) {\n";
+        out << "    printf(\"%lld\", (long long)value);\n";
+        out << "}\n";
+        out << "static void hy_console_write_bool(bool value) {\n";
+        out << "    printf(\"%s\", value ? \"true\" : \"false\");\n";
+        out << "}\n";
         out << "static void hy_console_writeline_string(const char* value) {\n";
         out << "    printf(\"%s\\n\", value == NULL ? \"null\" : value);\n";
         out << "}\n";
@@ -3255,6 +3691,59 @@ private:
         out << "}\n";
         out << "static void hy_console_writeline_bool(bool value) {\n";
         out << "    printf(\"%s\\n\", value ? \"true\" : \"false\");\n";
+        out << "}\n\n";
+        out << "static bool hy_file_exists(const char* path) {\n";
+        out << "    if (path == NULL) {\n";
+        out << "        return false;\n";
+        out << "    }\n";
+        out << "    FILE* file = fopen(path, \"rb\");\n";
+        out << "    if (file == NULL) {\n";
+        out << "        return false;\n";
+        out << "    }\n";
+        out << "    fclose(file);\n";
+        out << "    return true;\n";
+        out << "}\n";
+        out << "static const char* hy_file_read_all_text(const char* path) {\n";
+        out << "    if (path == NULL) {\n";
+        out << "        return NULL;\n";
+        out << "    }\n";
+        out << "    FILE* file = fopen(path, \"rb\");\n";
+        out << "    if (file == NULL) {\n";
+        out << "        return NULL;\n";
+        out << "    }\n";
+        out << "    if (fseek(file, 0, SEEK_END) != 0) {\n";
+        out << "        fclose(file);\n";
+        out << "        return NULL;\n";
+        out << "    }\n";
+        out << "    long size = ftell(file);\n";
+        out << "    if (size < 0) {\n";
+        out << "        fclose(file);\n";
+        out << "        return NULL;\n";
+        out << "    }\n";
+        out << "    rewind(file);\n";
+        out << "    char* buffer = (char*)hy_alloc_managed((size_t)size + 1);\n";
+        out << "    size_t read_count = fread(buffer, 1, (size_t)size, file);\n";
+        out << "    fclose(file);\n";
+        out << "    buffer[read_count] = '\\0';\n";
+        out << "    return buffer;\n";
+        out << "}\n";
+        out << "static void hy_file_write_all_text(const char* path, const char* content) {\n";
+        out << "    if (path == NULL) {\n";
+        out << "        hy_runtime_fail(\"Hylang file write failed\");\n";
+        out << "    }\n";
+        out << "    FILE* file = fopen(path, \"wb\");\n";
+        out << "    if (file == NULL) {\n";
+        out << "        hy_runtime_fail(\"Hylang file write failed\");\n";
+        out << "    }\n";
+        out << "    const char* safe_content = content == NULL ? \"\" : content;\n";
+        out << "    size_t length = strlen(safe_content);\n";
+        out << "    if (length > 0 && fwrite(safe_content, 1, length, file) != length) {\n";
+        out << "        fclose(file);\n";
+        out << "        hy_runtime_fail(\"Hylang file write failed\");\n";
+        out << "    }\n";
+        out << "    if (fclose(file) != 0) {\n";
+        out << "        hy_runtime_fail(\"Hylang file write failed\");\n";
+        out << "    }\n";
         out << "}\n\n";
     }
 
@@ -3445,13 +3934,7 @@ private:
             case BoundStatementKind::VariableDeclaration: {
                 const auto& declaration = static_cast<const BoundVariableDeclarationStatement&>(statement);
                 indent(out, level);
-                out << c_type_name(declaration.variable->type) << " " << local_name(*declaration.variable);
-                if (declaration.initializer != nullptr) {
-                    out << " = " << emit_expression(*declaration.initializer);
-                } else {
-                    out << " = " << default_expression(declaration.variable->type);
-                }
-                out << ";\n";
+                out << emit_variable_declaration(declaration) << ";\n";
                 break;
             }
             case BoundStatementKind::Expression: {
@@ -3485,6 +3968,33 @@ private:
                 out << "}\n";
                 break;
             }
+            case BoundStatementKind::For: {
+                const auto& for_statement = static_cast<const BoundForStatement&>(statement);
+                indent(out, level);
+                out << "for (";
+                if (for_statement.initializer != nullptr) {
+                    out << emit_for_initializer(*for_statement.initializer);
+                }
+                out << "; ";
+                out << (for_statement.condition != nullptr ? emit_expression(*for_statement.condition) : "true");
+                out << "; ";
+                if (for_statement.update != nullptr) {
+                    out << emit_expression(*for_statement.update);
+                }
+                out << ") {\n";
+                emit_statement(out, *for_statement.body, level + 1);
+                indent(out, level);
+                out << "}\n";
+                break;
+            }
+            case BoundStatementKind::Break:
+                indent(out, level);
+                out << "break;\n";
+                break;
+            case BoundStatementKind::Continue:
+                indent(out, level);
+                out << "continue;\n";
+                break;
             case BoundStatementKind::Return: {
                 const auto& return_statement = static_cast<const BoundReturnStatement&>(statement);
                 indent(out, level);
@@ -3527,6 +4037,41 @@ private:
         return "local_" + sanitize_c_name(variable.name) + "_" + std::to_string(variable.id);
     }
 
+    string emit_variable_declaration(const BoundVariableDeclarationStatement& declaration) {
+        std::ostringstream builder;
+        builder << c_type_name(declaration.variable->type) << " " << local_name(*declaration.variable);
+        if (declaration.initializer != nullptr) {
+            builder << " = " << emit_expression(*declaration.initializer);
+        } else {
+            builder << " = " << default_expression(declaration.variable->type);
+        }
+        return builder.str();
+    }
+
+    string emit_for_initializer(const BoundStatement& statement) {
+        switch (statement.kind) {
+            case BoundStatementKind::VariableDeclaration:
+                return emit_variable_declaration(static_cast<const BoundVariableDeclarationStatement&>(statement));
+            case BoundStatementKind::Expression:
+                return emit_expression(*static_cast<const BoundExpressionStatement&>(statement).expression);
+            default:
+                return "";
+        }
+    }
+
+    string emit_string_operand(const BoundExpression& expression) {
+        if (expression.type == &program_.semantic_model.string_type) {
+            return emit_expression(expression);
+        }
+        if (expression.type == &program_.semantic_model.int_type) {
+            return "hy_string_from_int(" + emit_expression(expression) + ")";
+        }
+        if (expression.type == &program_.semantic_model.bool_type) {
+            return "hy_string_from_bool(" + emit_expression(expression) + ")";
+        }
+        return "\"null\"";
+    }
+
     string emit_expression(const BoundExpression& expression) {
         switch (expression.kind) {
             case BoundExpressionKind::Literal: {
@@ -3563,6 +4108,14 @@ private:
                 const auto& length = static_cast<const BoundArrayLengthExpression&>(expression);
                 return "((int64_t)(" + emit_expression(*length.array_expression) + ".length))";
             }
+            case BoundExpressionKind::ArrayIndex: {
+                const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
+                return "(" + emit_expression(*access.array_expression) + ".items[" + emit_expression(*access.index_expression) + "])";
+            }
+            case BoundExpressionKind::StringLength: {
+                const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
+                return "hy_string_length(" + emit_expression(*length.string_expression) + ")";
+            }
             case BoundExpressionKind::Assignment: {
                 const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
                 return "(" + emit_expression(*assignment.target) + " = " + emit_expression(*assignment.expression) + ")";
@@ -3573,18 +4126,39 @@ private:
             }
             case BoundExpressionKind::Binary: {
                 const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
+                if (binary.op == TokenKind::Plus && binary.type == &program_.semantic_model.string_type) {
+                    return "hy_string_concat(" + emit_string_operand(*binary.left) + ", " + emit_string_operand(*binary.right) + ")";
+                }
                 return "(" + emit_expression(*binary.left) + " " + token_text(binary.op) + " " + emit_expression(*binary.right) + ")";
             }
             case BoundExpressionKind::Call: {
                 const auto& call = static_cast<const BoundCallExpression&>(expression);
                 if (call.method->is_builtin && call.method->owner == program_.semantic_model.console_class) {
                     string function_name = "hy_console_writeline_string";
-                    if (call.method == program_.semantic_model.console_writeline_int) {
+                    if (call.method == program_.semantic_model.console_write_string) {
+                        function_name = "hy_console_write_string";
+                    } else if (call.method == program_.semantic_model.console_write_int) {
+                        function_name = "hy_console_write_int";
+                    } else if (call.method == program_.semantic_model.console_write_bool) {
+                        function_name = "hy_console_write_bool";
+                    } else if (call.method == program_.semantic_model.console_writeline_int) {
                         function_name = "hy_console_writeline_int";
                     } else if (call.method == program_.semantic_model.console_writeline_bool) {
                         function_name = "hy_console_writeline_bool";
                     }
                     return function_name + "(" + emit_expression(*call.arguments[0]) + ")";
+                }
+                if (call.method->is_builtin && call.method->owner == program_.semantic_model.file_class) {
+                    if (call.method == program_.semantic_model.file_exists) {
+                        return "hy_file_exists(" + emit_expression(*call.arguments[0]) + ")";
+                    }
+                    if (call.method == program_.semantic_model.file_read_all_text) {
+                        return "hy_file_read_all_text(" + emit_expression(*call.arguments[0]) + ")";
+                    }
+                    if (call.method == program_.semantic_model.file_write_all_text) {
+                        return "hy_file_write_all_text(" + emit_expression(*call.arguments[0]) + ", " +
+                               emit_expression(*call.arguments[1]) + ")";
+                    }
                 }
 
                 std::ostringstream builder;
@@ -3948,8 +4522,13 @@ RunResult run_target(const RunOptions& options) {
     }
 
     Interpreter interpreter(*program);
-    if (!interpreter.run(options.args)) {
-        diagnostics.add(options.input_path, 1, 1, "Interpreter could not start the program");
+    try {
+        if (!interpreter.run(options.args)) {
+            diagnostics.add(options.input_path, 1, 1, "Interpreter could not start the program");
+            return RunResult{false, std::move(diagnostics.items)};
+        }
+    } catch (const std::exception& ex) {
+        diagnostics.add(options.input_path, 1, 1, "Runtime error: " + string(ex.what()));
         return RunResult{false, std::move(diagnostics.items)};
     }
 

@@ -59,6 +59,44 @@ add_test(
 set_tests_properties(hyrun_allocation_loop PROPERTIES PASS_REGULAR_EXPRESSION "999")
 
 add_test(
+    NAME hyrun_for_loop
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/for_loop.hy
+)
+set_tests_properties(hyrun_for_loop PROPERTIES PASS_REGULAR_EXPRESSION "9")
+
+add_test(
+    NAME hyrun_string_features
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/string_features.hy
+)
+set_tests_properties(hyrun_string_features PROPERTIES PASS_REGULAR_EXPRESSION "Flag=true")
+
+add_test(
+    NAME hyrun_file_roundtrip
+    COMMAND ${CMAKE_COMMAND}
+        -DMODE=run
+        -DEXECUTE_BINARY=$<TARGET_FILE:hyrun>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/file_roundtrip.hy
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hyrun_file_roundtrip
+        -DINPUT_TEXT=Hydrogen
+        -DEXPECTED_OUTPUT_REGEX=chars=8
+        -DEXPECTED_FILE_TEXT=chars=8
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunWithTempFiles.cmake
+)
+
+add_test(
+    NAME hyrun_text_report_project
+    COMMAND ${CMAKE_COMMAND}
+        -DMODE=run
+        -DEXECUTE_BINARY=$<TARGET_FILE:hyrun>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/text_report/TextReport.hyproj
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hyrun_text_report
+        -DINPUT_TEXT=SampleText
+        -DEXPECTED_OUTPUT_REGEX=characters=10
+        -DEXPECTED_FILE_TEXT=characters=10
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunWithTempFiles.cmake
+)
+
+add_test(
     NAME hyc_build_and_run_hello
     COMMAND ${CMAKE_COMMAND}
         -DHY_BINARY=$<TARGET_FILE:hyc>
@@ -107,6 +145,54 @@ add_test(
         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/allocation_loop
         -DEXPECTED_TEXT=999
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_for_loop
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/for_loop.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/for_loop
+        -DEXPECTED_TEXT=9
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_string_features
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/string_features.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/string_features
+        -DEXPECTED_TEXT=Flag=true
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_file_roundtrip
+    COMMAND ${CMAKE_COMMAND}
+        -DMODE=build
+        -DEXECUTE_BINARY=$<TARGET_FILE:hyc>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/file_roundtrip.hy
+        -DOUTPUT_ARTIFACT=${CMAKE_CURRENT_BINARY_DIR}/generated/file_roundtrip
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hyc_file_roundtrip
+        -DINPUT_TEXT=Compiler
+        -DEXPECTED_OUTPUT_REGEX=chars=8
+        -DEXPECTED_FILE_TEXT=chars=8
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunWithTempFiles.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_text_report_project
+    COMMAND ${CMAKE_COMMAND}
+        -DMODE=build
+        -DEXECUTE_BINARY=$<TARGET_FILE:hyc>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/text_report/TextReport.hyproj
+        -DOUTPUT_ARTIFACT=${CMAKE_CURRENT_BINARY_DIR}/generated/text_report
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hyc_text_report
+        -DINPUT_TEXT=Longer\ sample
+        -DEXPECTED_OUTPUT_REGEX=characters=13
+        -DEXPECTED_FILE_TEXT=characters=13
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunWithTempFiles.cmake
 )
 
 add_test(
@@ -181,4 +267,49 @@ add_test(
 set_tests_properties(hyrun_private_constructor_fails PROPERTIES
     WILL_FAIL TRUE
     PASS_REGULAR_EXPRESSION "protection level"
+)
+
+add_test(
+    NAME hyrun_break_outside_loop_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/break_outside_loop.hy
+)
+set_tests_properties(hyrun_break_outside_loop_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "inside a loop"
+)
+
+add_test(
+    NAME hyrun_continue_outside_loop_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/continue_outside_loop.hy
+)
+set_tests_properties(hyrun_continue_outside_loop_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "inside a loop"
+)
+
+add_test(
+    NAME hyrun_for_condition_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/for_condition.hy
+)
+set_tests_properties(hyrun_for_condition_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "For condition must be of type 'bool'"
+)
+
+add_test(
+    NAME hyrun_invalid_string_plus_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/invalid_string_plus.hy
+)
+set_tests_properties(hyrun_invalid_string_plus_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "string concatenation operands"
+)
+
+add_test(
+    NAME hyrun_file_wrong_arguments_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/file_wrong_arguments.hy
+)
+set_tests_properties(hyrun_file_wrong_arguments_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "No overload of 'Exists' matches the provided arguments"
 )
