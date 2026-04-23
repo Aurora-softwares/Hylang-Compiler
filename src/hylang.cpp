@@ -393,6 +393,9 @@ private:
                     case 'n':
                         value.push_back('\n');
                         break;
+                    case 'r':
+                        value.push_back('\r');
+                        break;
                     case 't':
                         value.push_back('\t');
                         break;
@@ -3526,6 +3529,9 @@ string escape_c_string(const string& value) {
             case '\n':
                 out << "\\n";
                 break;
+            case '\r':
+                out << "\\r";
+                break;
             case '\t':
                 out << "\\t";
                 break;
@@ -4252,6 +4258,12 @@ private:
         out << "    memcpy(result + left_length, safe_right, right_length + 1);\n";
         out << "    return result;\n";
         out << "}\n";
+        out << "static bool hy_string_equals(const char* left, const char* right) {\n";
+        out << "    if (left == NULL || right == NULL) {\n";
+        out << "        return left == right;\n";
+        out << "    }\n";
+        out << "    return strcmp(left, right) == 0;\n";
+        out << "}\n";
         out << "static void hy_console_write_string(const char* value) {\n";
         out << "    printf(\"%s\", value == NULL ? \"null\" : value);\n";
         out << "}\n";
@@ -4739,6 +4751,13 @@ private:
                 const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
                 if (binary.op == TokenKind::Plus && binary.type == &program_.semantic_model.string_type) {
                     return "hy_string_concat(" + emit_string_operand(*binary.left) + ", " + emit_string_operand(*binary.right) + ")";
+                }
+                if ((binary.op == TokenKind::EqualsEquals || binary.op == TokenKind::BangEquals) &&
+                    (binary.left->type == &program_.semantic_model.string_type ||
+                     binary.right->type == &program_.semantic_model.string_type)) {
+                    const string comparison =
+                        "hy_string_equals(" + emit_expression(*binary.left) + ", " + emit_expression(*binary.right) + ")";
+                    return binary.op == TokenKind::EqualsEquals ? comparison : "(!" + comparison + ")";
                 }
                 return "(" + emit_expression(*binary.left) + " " + token_text(binary.op) + " " + emit_expression(*binary.right) + ")";
             }

@@ -28,6 +28,17 @@ target_link_libraries(hyc PRIVATE hylang)
 
 enable_testing()
 
+function(add_hyrun_negative_test test_name source_file expected_regex)
+    add_test(
+        NAME ${test_name}
+        COMMAND ${CMAKE_COMMAND}
+            -DEXECUTE_BINARY=$<TARGET_FILE:hyrun>
+            -DINPUT_TARGET=${source_file}
+            "-DEXPECTED_OUTPUT_REGEX=${expected_regex}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectFailure.cmake
+    )
+endfunction()
+
 add_test(
     NAME hyrun_hello_world
     COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/hello_world.hy
@@ -69,6 +80,12 @@ add_test(
     COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/string_features.hy
 )
 set_tests_properties(hyrun_string_features PROPERTIES PASS_REGULAR_EXPRESSION "Flag=true")
+
+add_test(
+    NAME hyrun_string_equality
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/string_equality.hy
+)
+set_tests_properties(hyrun_string_equality PROPERTIES PASS_REGULAR_EXPRESSION "true:true:false:true")
 
 add_test(
     NAME hyrun_file_roundtrip
@@ -132,7 +149,7 @@ add_test(
         -DHY_BINARY=$<TARGET_FILE:hyc>
         -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/args_length.hy
         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/args_length
-        -DRUN_ARGS=alpha;beta;gamma
+        -DRUN_ARGS=alpha\;beta\;gamma
         -DEXPECTED_TEXT=3
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
 )
@@ -164,6 +181,16 @@ add_test(
         -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/string_features.hy
         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/string_features
         -DEXPECTED_TEXT=Flag=true
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_string_equality
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/string_equality.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/string_equality
+        -DEXPECTED_TEXT=true:true:false:true
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
 )
 
@@ -206,112 +233,76 @@ add_test(
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildProjectAndRun.cmake
 )
 
-add_test(
-    NAME hyrun_missing_main_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/missing_main.hy
-)
-set_tests_properties(hyrun_missing_main_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "Entry point not found"
+add_hyrun_negative_test(
+    hyrun_missing_main_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/missing_main.hy
+    "Entry point not found"
 )
 
-add_test(
-    NAME hyrun_duplicate_symbols_fail
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/duplicate_method.hy
-)
-set_tests_properties(hyrun_duplicate_symbols_fail PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "Duplicate method"
+add_hyrun_negative_test(
+    hyrun_duplicate_symbols_fail
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/duplicate_method.hy
+    "Duplicate method"
 )
 
-add_test(
-    NAME hyrun_unresolved_using_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/unresolved_using.hy
-)
-set_tests_properties(hyrun_unresolved_using_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "Unresolved using directive"
+add_hyrun_negative_test(
+    hyrun_unresolved_using_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/unresolved_using.hy
+    "Unresolved using directive"
 )
 
-add_test(
-    NAME hyrun_wrong_arguments_fail
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/wrong_arguments.hy
-)
-set_tests_properties(hyrun_wrong_arguments_fail PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "No overload of 'WriteLine' matches the provided arguments"
+add_hyrun_negative_test(
+    hyrun_wrong_arguments_fail
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/wrong_arguments.hy
+    "No overload of 'WriteLine' matches the provided arguments"
 )
 
-add_test(
-    NAME hyrun_invalid_return_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/invalid_return.hy
-)
-set_tests_properties(hyrun_invalid_return_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "Return expression type 'string' is not assignable to 'int'"
+add_hyrun_negative_test(
+    hyrun_invalid_return_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/invalid_return.hy
+    "Return expression type 'string' is not assignable to 'int'"
 )
 
-add_test(
-    NAME hyrun_private_access_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/private_access.hy
-)
-set_tests_properties(hyrun_private_access_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "protection level"
+add_hyrun_negative_test(
+    hyrun_private_access_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/private_access.hy
+    "protection level"
 )
 
-add_test(
-    NAME hyrun_private_constructor_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/private_constructor.hy
-)
-set_tests_properties(hyrun_private_constructor_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "protection level"
+add_hyrun_negative_test(
+    hyrun_private_constructor_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/private_constructor.hy
+    "protection level"
 )
 
-add_test(
-    NAME hyrun_break_outside_loop_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/break_outside_loop.hy
-)
-set_tests_properties(hyrun_break_outside_loop_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "inside a loop"
+add_hyrun_negative_test(
+    hyrun_break_outside_loop_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/break_outside_loop.hy
+    "inside a loop"
 )
 
-add_test(
-    NAME hyrun_continue_outside_loop_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/continue_outside_loop.hy
-)
-set_tests_properties(hyrun_continue_outside_loop_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "inside a loop"
+add_hyrun_negative_test(
+    hyrun_continue_outside_loop_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/continue_outside_loop.hy
+    "inside a loop"
 )
 
-add_test(
-    NAME hyrun_for_condition_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/for_condition.hy
-)
-set_tests_properties(hyrun_for_condition_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "For condition must be of type 'bool'"
+add_hyrun_negative_test(
+    hyrun_for_condition_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/for_condition.hy
+    "For condition must be of type 'bool'"
 )
 
-add_test(
-    NAME hyrun_invalid_string_plus_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/invalid_string_plus.hy
-)
-set_tests_properties(hyrun_invalid_string_plus_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "string concatenation operands"
+add_hyrun_negative_test(
+    hyrun_invalid_string_plus_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/invalid_string_plus.hy
+    "string concatenation operands"
 )
 
-add_test(
-    NAME hyrun_file_wrong_arguments_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/file_wrong_arguments.hy
-)
-set_tests_properties(hyrun_file_wrong_arguments_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "No overload of 'Exists' matches the provided arguments"
+add_hyrun_negative_test(
+    hyrun_file_wrong_arguments_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/file_wrong_arguments.hy
+    "No overload of 'Exists' matches the provided arguments"
 )
 
 # ---- new positive tests (interpreter) ----
@@ -419,74 +410,50 @@ add_test(
 
 # ---- new negative tests ----
 
-add_test(
-    NAME hyrun_ambiguous_constructor_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/ambiguous_constructor.hy
-)
-set_tests_properties(hyrun_ambiguous_constructor_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "ambiguous"
+add_hyrun_negative_test(
+    hyrun_ambiguous_constructor_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/ambiguous_constructor.hy
+    "ambiguous"
 )
 
-add_test(
-    NAME hyrun_ambiguous_overload_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/ambiguous_overload.hy
-)
-set_tests_properties(hyrun_ambiguous_overload_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "ambiguous"
+add_hyrun_negative_test(
+    hyrun_ambiguous_overload_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/ambiguous_overload.hy
+    "ambiguous"
 )
 
-add_test(
-    NAME hyrun_modulo_bad_types_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/modulo_bad_types.hy
-)
-set_tests_properties(hyrun_modulo_bad_types_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "Arithmetic operators require int operands"
+add_hyrun_negative_test(
+    hyrun_modulo_bad_types_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/modulo_bad_types.hy
+    "Arithmetic operators require int operands"
 )
 
-add_test(
-    NAME hyrun_enum_cross_compare_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/enum_cross_compare.hy
-)
-set_tests_properties(hyrun_enum_cross_compare_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "Enum equality requires operands of the same enum type"
+add_hyrun_negative_test(
+    hyrun_enum_cross_compare_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/enum_cross_compare.hy
+    "Enum equality requires operands of the same enum type"
 )
 
-add_test(
-    NAME hyrun_parser_recovery_member_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/parser_recovery_member.hy
-)
-set_tests_properties(hyrun_parser_recovery_member_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "Expected ';' after field declaration"
+add_hyrun_negative_test(
+    hyrun_parser_recovery_member_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/parser_recovery_member.hy
+    "Expected ';' after field declaration"
 )
 
-add_test(
-    NAME hyrun_parser_recovery_statement_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/parser_recovery_statement.hy
-)
-set_tests_properties(hyrun_parser_recovery_statement_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "Expected expression"
+add_hyrun_negative_test(
+    hyrun_parser_recovery_statement_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/parser_recovery_statement.hy
+    "Expected expression"
 )
 
-add_test(
-    NAME hyrun_string_index_type_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/string_index_type.hy
-)
-set_tests_properties(hyrun_string_index_type_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "Indices must be of type 'int'"
+add_hyrun_negative_test(
+    hyrun_string_index_type_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/string_index_type.hy
+    "Indices must be of type 'int'"
 )
 
-add_test(
-    NAME hyrun_string_index_runtime_fails
-    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/string_index_runtime.hy
-)
-set_tests_properties(hyrun_string_index_runtime_fails PROPERTIES
-    WILL_FAIL TRUE
-    PASS_REGULAR_EXPRESSION "String index out of range"
+add_hyrun_negative_test(
+    hyrun_string_index_runtime_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/string_index_runtime.hy
+    "String index out of range"
 )
