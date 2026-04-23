@@ -1,0 +1,6 @@
+1:1 Public public
+1:8 Class class
+1:14 Identifier Program
+1:22 OpenBrace {
+1:24 CloseBrace }
+1:25 EndOfFile <eof>

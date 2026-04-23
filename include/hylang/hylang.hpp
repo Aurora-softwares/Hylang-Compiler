@@ -22,6 +22,7 @@ struct RunOptions {
 struct RunResult {
     bool success = false;
     std::vector<Diagnostic> diagnostics;
+    int exit_code = 0;
 };
 
 struct BuildOptions {

@@ -90,6 +90,7 @@ enum class TokenKind {
     Minus,
     Star,
     Slash,
+    Percent,
     Bang,
     Equals,
     EqualsEquals,
@@ -103,6 +104,7 @@ enum class TokenKind {
     Using,
     Namespace,
     Class,
+    Enum,
     Public,
     Private,
     Protected,
@@ -205,6 +207,9 @@ public:
                     break;
                 case '/':
                     tokens.push_back(Token{TokenKind::Slash, "/", line, column});
+                    break;
+                case '%':
+                    tokens.push_back(Token{TokenKind::Percent, "%", line, column});
                     break;
                 case '!':
                     if (match('=')) {
@@ -330,6 +335,7 @@ private:
             {"using", TokenKind::Using},
             {"namespace", TokenKind::Namespace},
             {"class", TokenKind::Class},
+            {"enum", TokenKind::Enum},
             {"public", TokenKind::Public},
             {"private", TokenKind::Private},
             {"protected", TokenKind::Protected},
@@ -568,6 +574,21 @@ struct ConstructorDeclarationSyntax final : MemberSyntax {
     unique_ptr<BlockStatementSyntax> body;
 };
 
+struct EnumMemberDeclarationSyntax {
+    string name;
+    int line = 1;
+    int column = 1;
+};
+
+struct EnumDeclarationSyntax {
+    vector<ModifierKind> modifiers;
+    string namespace_name;
+    string name;
+    vector<EnumMemberDeclarationSyntax> members;
+    int line = 1;
+    int column = 1;
+};
+
 struct ClassDeclarationSyntax {
     vector<ModifierKind> modifiers;
     string namespace_name;
@@ -587,6 +608,7 @@ struct CompilationUnitSyntax {
     fs::path file;
     vector<UsingDirectiveSyntax> using_directives;
     vector<unique_ptr<ClassDeclarationSyntax>> classes;
+    vector<unique_ptr<EnumDeclarationSyntax>> enums;
 };
 
 class Parser {
@@ -610,13 +632,21 @@ public:
                 const auto namespace_name = join_qualified(parse_qualified_name());
                 consume(TokenKind::OpenBrace, "Expected '{' after namespace declaration");
                 while (!check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile)) {
-                    unit.classes.push_back(parse_class_declaration(namespace_name));
+                    const std::size_t before = index_;
+                    parse_namespace_member(unit, namespace_name);
+                    if (index_ == before) {
+                        advance();
+                    }
                 }
                 consume(TokenKind::CloseBrace, "Expected '}' after namespace block");
                 continue;
             }
 
-            unit.classes.push_back(parse_class_declaration(""));
+            const std::size_t before = index_;
+            parse_namespace_member(unit, "");
+            if (index_ == before) {
+                advance();
+            }
         }
 
         return unit;
@@ -655,16 +685,58 @@ private:
         return tokens_[index_ - 1];
     }
 
-    const Token& consume(TokenKind kind, const string& message) {
+    Token consume(TokenKind kind, const string& message) {
         if (check(kind)) {
             return advance();
         }
         diagnostics_.add(file_, current().line, current().column, message);
-        if (!check(TokenKind::EndOfFile)) {
+        if (!check(TokenKind::EndOfFile) && !should_hold_position_on_missing(kind)) {
             advance();
             return previous();
         }
-        return current();
+        return Token{kind, "", current().line, current().column};
+    }
+
+    bool should_hold_position_on_missing(TokenKind expected) const {
+        if (check(TokenKind::EndOfFile)) {
+            return true;
+        }
+
+        switch (expected) {
+            case TokenKind::Semicolon:
+                return check(TokenKind::CloseBrace) ||
+                       is_statement_start_token(current().kind) ||
+                       is_member_start_token(current().kind) ||
+                       is_type_declaration_start_token(current().kind);
+            case TokenKind::OpenBrace:
+                return check(TokenKind::CloseBrace) ||
+                       is_member_start_token(current().kind) ||
+                       is_type_declaration_start_token(current().kind) ||
+                       is_statement_start_token(current().kind);
+            case TokenKind::CloseBrace:
+                return is_member_start_token(current().kind) ||
+                       is_type_declaration_start_token(current().kind);
+            case TokenKind::CloseParen:
+                return check(TokenKind::OpenBrace) || check(TokenKind::Semicolon) || check(TokenKind::CloseBrace);
+            case TokenKind::CloseBracket:
+                return check(TokenKind::Semicolon) || check(TokenKind::CloseParen) || check(TokenKind::CloseBrace);
+            default:
+                return false;
+        }
+    }
+
+    void parse_namespace_member(CompilationUnitSyntax& unit, const string& namespace_name) {
+        const auto modifiers = parse_modifiers();
+        if (check(TokenKind::Class)) {
+            unit.classes.push_back(parse_class_declaration(namespace_name, modifiers));
+            return;
+        }
+        if (check(TokenKind::Enum)) {
+            unit.enums.push_back(parse_enum_declaration(namespace_name, modifiers));
+            return;
+        }
+
+        diagnostics_.add(file_, current().line, current().column, "Expected 'class' or 'enum' declaration");
     }
 
     vector<ModifierKind> parse_modifiers() {
@@ -706,9 +778,10 @@ private:
         return parts;
     }
 
-    unique_ptr<ClassDeclarationSyntax> parse_class_declaration(const string& namespace_name) {
+    unique_ptr<ClassDeclarationSyntax> parse_class_declaration(const string& namespace_name,
+                                                               vector<ModifierKind> modifiers) {
         auto syntax = std::make_unique<ClassDeclarationSyntax>();
-        syntax->modifiers = parse_modifiers();
+        syntax->modifiers = std::move(modifiers);
         const Token class_token = consume(TokenKind::Class, "Expected 'class' declaration");
         const Token name = consume(TokenKind::Identifier, "Expected class name");
         syntax->namespace_name = namespace_name;
@@ -720,6 +793,43 @@ private:
             syntax->members.push_back(parse_member_declaration(syntax->name));
         }
         consume(TokenKind::CloseBrace, "Expected '}' after class body");
+        return syntax;
+    }
+
+    unique_ptr<EnumDeclarationSyntax> parse_enum_declaration(const string& namespace_name,
+                                                             vector<ModifierKind> modifiers) {
+        auto syntax = std::make_unique<EnumDeclarationSyntax>();
+        syntax->modifiers = std::move(modifiers);
+        const Token enum_token = consume(TokenKind::Enum, "Expected 'enum' declaration");
+        const Token name = consume(TokenKind::Identifier, "Expected enum name");
+        syntax->namespace_name = namespace_name;
+        syntax->name = name.text;
+        syntax->line = enum_token.line;
+        syntax->column = enum_token.column;
+        consume(TokenKind::OpenBrace, "Expected '{' after enum declaration");
+        while (!check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile)) {
+            if (!check(TokenKind::Identifier)) {
+                diagnostics_.add(file_, current().line, current().column, "Expected enum member name");
+                if (!check(TokenKind::Comma) && !check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile)) {
+                    advance();
+                }
+                if (match(TokenKind::Comma)) {
+                    continue;
+                }
+                continue;
+            }
+
+            const Token member = advance();
+            syntax->members.push_back(EnumMemberDeclarationSyntax{member.text, member.line, member.column});
+            if (check(TokenKind::CloseBrace)) {
+                break;
+            }
+            consume(TokenKind::Comma, "Expected ',' after enum member");
+            if (check(TokenKind::CloseBrace)) {
+                break;
+            }
+        }
+        consume(TokenKind::CloseBrace, "Expected '}' after enum body");
         return syntax;
     }
 
@@ -1071,7 +1181,7 @@ private:
 
     unique_ptr<ExpressionSyntax> parse_multiplicative_expression() {
         auto expression = parse_unary_expression();
-        while (match(TokenKind::Star) || match(TokenKind::Slash)) {
+        while (match(TokenKind::Star) || match(TokenKind::Slash) || match(TokenKind::Percent)) {
             const Token token = previous();
             auto binary = std::make_unique<BinaryExpressionSyntax>();
             binary->line = token.line;
@@ -1225,6 +1335,52 @@ private:
         return kind == TokenKind::Int || kind == TokenKind::StringKeyword || kind == TokenKind::Bool;
     }
 
+    static bool is_modifier_token(TokenKind kind) {
+        return kind == TokenKind::Public ||
+               kind == TokenKind::Private ||
+               kind == TokenKind::Protected ||
+               kind == TokenKind::Internal ||
+               kind == TokenKind::Static;
+    }
+
+    static bool is_type_declaration_start_token(TokenKind kind) {
+        return kind == TokenKind::Class || kind == TokenKind::Enum || is_modifier_token(kind);
+    }
+
+    static bool is_member_start_token(TokenKind kind) {
+        return is_type_declaration_start_token(kind) ||
+               kind == TokenKind::Identifier ||
+               kind == TokenKind::Void ||
+               is_builtin_type_token(kind);
+    }
+
+    static bool is_expression_start_token(TokenKind kind) {
+        return kind == TokenKind::Identifier ||
+               kind == TokenKind::Number ||
+               kind == TokenKind::StringLiteral ||
+               kind == TokenKind::True ||
+               kind == TokenKind::False ||
+               kind == TokenKind::Null ||
+               kind == TokenKind::This ||
+               kind == TokenKind::New ||
+               kind == TokenKind::OpenParen ||
+               kind == TokenKind::Bang ||
+               kind == TokenKind::Minus ||
+               kind == TokenKind::Plus;
+    }
+
+    static bool is_statement_start_token(TokenKind kind) {
+        return kind == TokenKind::OpenBrace ||
+               kind == TokenKind::If ||
+               kind == TokenKind::While ||
+               kind == TokenKind::For ||
+               kind == TokenKind::Break ||
+               kind == TokenKind::Continue ||
+               kind == TokenKind::Return ||
+               is_expression_start_token(kind) ||
+               is_builtin_type_token(kind);
+    }
+
     fs::path file_;
     vector<Token> tokens_;
     DiagnosticBag& diagnostics_;
@@ -1239,6 +1395,7 @@ enum class TypeKind {
     Null,
     Array,
     Class,
+    Enum,
     Error,
 };
 
@@ -1250,12 +1407,14 @@ enum class Accessibility {
 };
 
 struct ClassSymbol;
+struct EnumSymbol;
 
 struct TypeSymbol {
     TypeKind kind = TypeKind::Error;
     string display_name = "error";
     const TypeSymbol* element_type = nullptr;
     const ClassSymbol* class_symbol = nullptr;
+    const EnumSymbol* enum_symbol = nullptr;
 };
 
 struct VariableSymbol {
@@ -1299,6 +1458,12 @@ struct ConstructorSymbol {
     const ConstructorDeclarationSyntax* syntax = nullptr;
 };
 
+struct EnumMemberSymbol {
+    string name;
+    int64_t value = 0;
+    const EnumSymbol* owner = nullptr;
+};
+
 struct ClassSymbol {
     string namespace_name;
     string name;
@@ -1312,6 +1477,16 @@ struct ClassSymbol {
     vector<std::unique_ptr<ConstructorSymbol>> constructors;
 };
 
+struct EnumSymbol {
+    string namespace_name;
+    string name;
+    string full_name;
+    fs::path source_file;
+    Accessibility accessibility = Accessibility::Private;
+    const EnumDeclarationSyntax* syntax = nullptr;
+    vector<std::unique_ptr<EnumMemberSymbol>> members;
+};
+
 struct BoundStatement;
 struct BoundExpression;
 
@@ -1323,6 +1498,7 @@ enum class BoundExpressionKind {
     Field,
     ArrayLength,
     ArrayIndex,
+    StringIndex,
     StringLength,
     Assignment,
     Unary,
@@ -1376,6 +1552,11 @@ struct BoundArrayLengthExpression final : BoundExpression {
 
 struct BoundArrayIndexExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> array_expression;
+    std::unique_ptr<BoundExpression> index_expression;
+};
+
+struct BoundStringIndexExpression final : BoundExpression {
+    std::unique_ptr<BoundExpression> string_expression;
     std::unique_ptr<BoundExpression> index_expression;
 };
 
@@ -1480,6 +1661,8 @@ struct SemanticModel {
     TypeSymbol error_type{TypeKind::Error, "error", nullptr, nullptr};
     std::vector<std::unique_ptr<ClassSymbol>> classes;
     std::unordered_map<string, ClassSymbol*> classes_by_full_name;
+    std::vector<std::unique_ptr<EnumSymbol>> enums;
+    std::unordered_map<string, EnumSymbol*> enums_by_full_name;
     std::unordered_set<string> namespaces;
     ClassSymbol* console_class = nullptr;
     ClassSymbol* file_class = nullptr;
@@ -1563,11 +1746,40 @@ string accessibility_text(Accessibility accessibility) {
     return "private";
 }
 
+bool are_types_equal(const TypeSymbol* left, const TypeSymbol* right) {
+    if (left == nullptr || right == nullptr) {
+        return false;
+    }
+    if (left == right) {
+        return true;
+    }
+    if (left->kind != right->kind) {
+        return false;
+    }
+
+    switch (left->kind) {
+        case TypeKind::Void:
+        case TypeKind::Int:
+        case TypeKind::Bool:
+        case TypeKind::String:
+        case TypeKind::Null:
+        case TypeKind::Error:
+            return true;
+        case TypeKind::Array:
+            return are_types_equal(left->element_type, right->element_type);
+        case TypeKind::Class:
+            return left->class_symbol == right->class_symbol || left->display_name == right->display_name;
+        case TypeKind::Enum:
+            return left->enum_symbol == right->enum_symbol || left->display_name == right->display_name;
+    }
+    return false;
+}
+
 bool is_type_assignable(const TypeSymbol* destination, const TypeSymbol* source) {
     if (destination == nullptr || source == nullptr) {
         return false;
     }
-    if (destination == source) {
+    if (are_types_equal(destination, source)) {
         return true;
     }
     if (destination->kind == source->kind) {
@@ -1576,9 +1788,12 @@ bool is_type_assignable(const TypeSymbol* destination, const TypeSymbol* source)
             case TypeKind::Int:
             case TypeKind::Bool:
             case TypeKind::String:
-                return true;
+                return false;
             case TypeKind::Class:
                 return destination->class_symbol == source->class_symbol ||
+                       destination->display_name == source->display_name;
+            case TypeKind::Enum:
+                return destination->enum_symbol == source->enum_symbol ||
                        destination->display_name == source->display_name;
             case TypeKind::Array:
                 return destination->element_type != nullptr && source->element_type != nullptr &&
@@ -1656,6 +1871,16 @@ const TypeSymbol* resolve_type_in_context(SemanticModel& model,
                 model.owned_types.push_back(std::move(type_symbol));
                 break;
             }
+            const auto enum_found = model.enums_by_full_name.find(candidate);
+            if (enum_found != model.enums_by_full_name.end()) {
+                auto type_symbol = std::make_unique<TypeSymbol>();
+                type_symbol->kind = TypeKind::Enum;
+                type_symbol->display_name = enum_found->second->full_name;
+                type_symbol->enum_symbol = enum_found->second;
+                base = type_symbol.get();
+                model.owned_types.push_back(std::move(type_symbol));
+                break;
+            }
         }
     }
 
@@ -1682,6 +1907,7 @@ public:
         install_builtins(program->semantic_model);
         declare_classes(program->semantic_model, program->units);
         validate_using_directives(program->semantic_model, program->units);
+        declare_enum_members(program->semantic_model);
         declare_members(program->semantic_model);
         bind_bodies(*program);
         return program;
@@ -1760,9 +1986,10 @@ private:
                 const string full_name = class_syntax->namespace_name.empty()
                                              ? class_syntax->name
                                              : class_syntax->namespace_name + "." + class_syntax->name;
-                if (model.classes_by_full_name.count(full_name) > 0) {
+                if (model.classes_by_full_name.count(full_name) > 0 ||
+                    model.enums_by_full_name.count(full_name) > 0) {
                     diagnostics_.add(unit.file, class_syntax->line, class_syntax->column,
-                                     "Duplicate class declaration for '" + full_name + "'");
+                                     "Duplicate type declaration for '" + full_name + "'");
                     continue;
                 }
 
@@ -1787,6 +2014,39 @@ private:
                     }
                 }
             }
+
+            for (const auto& enum_syntax : unit.enums) {
+                const string full_name = enum_syntax->namespace_name.empty()
+                                             ? enum_syntax->name
+                                             : enum_syntax->namespace_name + "." + enum_syntax->name;
+                if (model.classes_by_full_name.count(full_name) > 0 ||
+                    model.enums_by_full_name.count(full_name) > 0) {
+                    diagnostics_.add(unit.file, enum_syntax->line, enum_syntax->column,
+                                     "Duplicate type declaration for '" + full_name + "'");
+                    continue;
+                }
+
+                auto symbol = std::make_unique<EnumSymbol>();
+                symbol->namespace_name = enum_syntax->namespace_name;
+                symbol->name = enum_syntax->name;
+                symbol->full_name = full_name;
+                symbol->source_file = unit.file;
+                symbol->accessibility = accessibility_from_modifiers(enum_syntax->modifiers);
+                symbol->syntax = enum_syntax.get();
+                auto* raw = symbol.get();
+                model.enums_by_full_name[full_name] = raw;
+                model.enums.push_back(std::move(symbol));
+
+                if (!enum_syntax->namespace_name.empty()) {
+                    vector<string> parts;
+                    std::stringstream stream(enum_syntax->namespace_name);
+                    string segment;
+                    while (std::getline(stream, segment, '.')) {
+                        parts.push_back(segment);
+                        model.namespaces.insert(join_qualified(parts));
+                    }
+                }
+            }
         }
     }
 
@@ -1794,10 +2054,38 @@ private:
         for (const auto& unit : units) {
             for (const auto& directive : unit.using_directives) {
                 if (model.namespaces.count(directive.namespace_name) == 0 &&
-                    model.classes_by_full_name.count(directive.namespace_name) == 0) {
+                    model.classes_by_full_name.count(directive.namespace_name) == 0 &&
+                    model.enums_by_full_name.count(directive.namespace_name) == 0) {
                     diagnostics_.add(unit.file, directive.line, directive.column,
                                      "Unresolved using directive '" + directive.namespace_name + "'");
                 }
+            }
+        }
+    }
+
+    void declare_enum_members(SemanticModel& model) {
+        for (const auto& enum_holder : model.enums) {
+            EnumSymbol* enum_symbol = enum_holder.get();
+            if (enum_symbol->syntax == nullptr) {
+                continue;
+            }
+
+            std::unordered_set<string> member_names;
+            int64_t next_value = 0;
+            for (const auto& member : enum_symbol->syntax->members) {
+                if (!member_names.insert(member.name).second) {
+                    diagnostics_.add(enum_symbol->source_file,
+                                     member.line,
+                                     member.column,
+                                     "Duplicate enum member '" + member.name + "' in enum '" + enum_symbol->full_name + "'");
+                    continue;
+                }
+
+                auto symbol = std::make_unique<EnumMemberSymbol>();
+                symbol->name = member.name;
+                symbol->value = next_value++;
+                symbol->owner = enum_symbol;
+                enum_symbol->members.push_back(std::move(symbol));
             }
         }
     }
@@ -1861,8 +2149,12 @@ private:
                                                     klass->using_namespaces),
                             static_cast<int>(index)});
                     }
-                    const string signature =
-                        method->name + "#" + std::to_string(method->parameters.size()) + "#" + (symbol->is_static ? "S" : "I");
+                    std::ostringstream signature_builder;
+                    signature_builder << method->name << "#" << (symbol->is_static ? "S" : "I");
+                    for (const auto& parameter : symbol->parameters) {
+                        signature_builder << "#" << parameter.type->display_name;
+                    }
+                    const string signature = signature_builder.str();
                     if (!method_signatures.insert(signature).second) {
                         diagnostics_.add(find_file_for_class(klass), method->line, method->column,
                                          "Duplicate method '" + method->name + "' in class '" + klass->full_name + "'");
@@ -1890,7 +2182,12 @@ private:
                                                     klass->using_namespaces),
                             static_cast<int>(index)});
                     }
-                    const string signature = "ctor#" + std::to_string(constructor->parameters.size());
+                    std::ostringstream signature_builder;
+                    signature_builder << "ctor";
+                    for (const auto& parameter : symbol->parameters) {
+                        signature_builder << "#" << parameter.type->display_name;
+                    }
+                    const string signature = signature_builder.str();
                     if (!ctor_signatures.insert(signature).second) {
                         diagnostics_.add(find_file_for_class(klass), constructor->line, constructor->column,
                                          "Duplicate constructor in class '" + klass->full_name + "'");
@@ -1914,7 +2211,7 @@ private:
 
         Kind kind = Kind::Error;
         string namespace_name;
-        const ClassSymbol* type_symbol = nullptr;
+        const TypeSymbol* type_symbol = nullptr;
         std::unique_ptr<BoundExpression> value;
         vector<const MethodSymbol*> methods;
         std::unique_ptr<BoundExpression> receiver;
@@ -1962,6 +2259,26 @@ private:
         }
 
     private:
+        const TypeSymbol* make_named_type(const ClassSymbol& klass) {
+            auto type_symbol = std::make_unique<TypeSymbol>();
+            type_symbol->kind = TypeKind::Class;
+            type_symbol->display_name = klass.full_name;
+            type_symbol->class_symbol = &klass;
+            auto* raw = type_symbol.get();
+            program_.semantic_model.owned_types.push_back(std::move(type_symbol));
+            return raw;
+        }
+
+        const TypeSymbol* make_named_type(const EnumSymbol& enum_symbol) {
+            auto type_symbol = std::make_unique<TypeSymbol>();
+            type_symbol->kind = TypeKind::Enum;
+            type_symbol->display_name = enum_symbol.full_name;
+            type_symbol->enum_symbol = &enum_symbol;
+            auto* raw = type_symbol.get();
+            program_.semantic_model.owned_types.push_back(std::move(type_symbol));
+            return raw;
+        }
+
         const TypeSymbol* current_return_type() const {
             if (current_method_ != nullptr) {
                 return current_method_->return_type;
@@ -2043,6 +2360,121 @@ private:
                 }
             }
             return methods;
+        }
+
+        const EnumMemberSymbol* select_enum_member(const EnumSymbol& enum_symbol, const string& name) const {
+            for (const auto& member : enum_symbol.members) {
+                if (member->name == name) {
+                    return member.get();
+                }
+            }
+            return nullptr;
+        }
+
+        int parameter_match_score(const TypeSymbol* parameter_type,
+                                  const TypeSymbol* argument_type,
+                                  bool allow_console_enum_print = false) const {
+            if (are_types_equal(parameter_type, argument_type)) {
+                return 3;
+            }
+            if (allow_console_enum_print &&
+                parameter_type == &program_.semantic_model.int_type &&
+                argument_type != nullptr &&
+                argument_type->kind == TypeKind::Enum) {
+                return 2;
+            }
+            if (is_type_assignable(parameter_type, argument_type)) {
+                return 1;
+            }
+            return -1;
+        }
+
+        const MethodSymbol* select_best_method_overload(const vector<const MethodSymbol*>& candidates,
+                                                        const vector<const TypeSymbol*>& argument_types,
+                                                        bool* ambiguous) const {
+            const MethodSymbol* selected = nullptr;
+            int best_score = -1;
+            *ambiguous = false;
+            for (const auto* candidate : candidates) {
+                if (candidate->parameters.size() != argument_types.size()) {
+                    continue;
+                }
+
+                const bool allow_console_enum_print =
+                    candidate->owner == program_.semantic_model.console_class &&
+                    (candidate->name == "Write" || candidate->name == "WriteLine");
+                int total_score = 0;
+                bool compatible = true;
+                for (std::size_t index = 0; index < argument_types.size(); ++index) {
+                    const int score =
+                        parameter_match_score(candidate->parameters[index].type, argument_types[index], allow_console_enum_print);
+                    if (score < 0) {
+                        compatible = false;
+                        break;
+                    }
+                    total_score += score;
+                }
+                if (!compatible) {
+                    continue;
+                }
+                if (total_score > best_score) {
+                    best_score = total_score;
+                    selected = candidate;
+                    *ambiguous = false;
+                } else if (total_score == best_score) {
+                    *ambiguous = true;
+                }
+            }
+            if (*ambiguous) {
+                return nullptr;
+            }
+            return selected;
+        }
+
+        const ConstructorSymbol* select_best_constructor_overload(const ClassSymbol& klass,
+                                                                  const vector<const TypeSymbol*>& argument_types,
+                                                                  bool* ambiguous,
+                                                                  const ConstructorSymbol** inaccessible_match) const {
+            const ConstructorSymbol* selected = nullptr;
+            int best_score = -1;
+            *ambiguous = false;
+            *inaccessible_match = nullptr;
+            for (const auto& constructor : klass.constructors) {
+                if (constructor->parameters.size() != argument_types.size()) {
+                    continue;
+                }
+
+                int total_score = 0;
+                bool compatible = true;
+                for (std::size_t index = 0; index < argument_types.size(); ++index) {
+                    const int score = parameter_match_score(constructor->parameters[index].type, argument_types[index]);
+                    if (score < 0) {
+                        compatible = false;
+                        break;
+                    }
+                    total_score += score;
+                }
+                if (!compatible) {
+                    continue;
+                }
+
+                if (!is_accessible(*constructor)) {
+                    *inaccessible_match = constructor.get();
+                    continue;
+                }
+
+                if (total_score > best_score) {
+                    best_score = total_score;
+                    selected = constructor.get();
+                    *ambiguous = false;
+                } else if (total_score == best_score) {
+                    *ambiguous = true;
+                }
+            }
+            if (*ambiguous) {
+                return nullptr;
+            }
+            return selected;
         }
 
         void report_inaccessible(const string& member_name,
@@ -2346,6 +2778,7 @@ private:
                     case TokenKind::Minus:
                     case TokenKind::Star:
                     case TokenKind::Slash:
+                    case TokenKind::Percent:
                         if (bound->left->type != &program_.semantic_model.int_type ||
                             bound->right->type != &program_.semantic_model.int_type) {
                             diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
@@ -2364,9 +2797,22 @@ private:
                         break;
                     case TokenKind::EqualsEquals:
                     case TokenKind::BangEquals:
-                        if (!is_type_assignable(bound->left->type, bound->right->type) &&
-                            !is_type_assignable(bound->right->type, bound->left->type)) {
-                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                        if (bound->left->type != nullptr &&
+                            bound->right->type != nullptr &&
+                            (bound->left->type->kind == TypeKind::Enum || bound->right->type->kind == TypeKind::Enum)) {
+                            if (bound->left->type->kind != TypeKind::Enum ||
+                                bound->right->type->kind != TypeKind::Enum ||
+                                !are_types_equal(bound->left->type, bound->right->type)) {
+                                diagnostics_.add(find_file_for_class(&current_class_),
+                                                 expression.line,
+                                                 expression.column,
+                                                 "Enum equality requires operands of the same enum type");
+                            }
+                        } else if (!is_type_assignable(bound->left->type, bound->right->type) &&
+                                   !is_type_assignable(bound->right->type, bound->left->type)) {
+                            diagnostics_.add(find_file_for_class(&current_class_),
+                                             expression.line,
+                                             expression.column,
                                              "Equality operators require compatible operands");
                         }
                         bound->type = &program_.semantic_model.bool_type;
@@ -2401,26 +2847,37 @@ private:
         }
 
         std::unique_ptr<BoundExpression> bind_element_access(const ElementAccessExpressionSyntax& syntax) {
-            auto array_expression = bind_expression(*syntax.target);
+            auto target_expression = bind_expression(*syntax.target);
             auto index_expression = bind_expression(*syntax.index);
+            if (index_expression->type != &program_.semantic_model.int_type) {
+                diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                 "Indices must be of type 'int'");
+            }
+
+            if (target_expression->type == &program_.semantic_model.string_type) {
+                auto bound = std::make_unique<BoundStringIndexExpression>();
+                bound->kind = BoundExpressionKind::StringIndex;
+                bound->line = syntax.line;
+                bound->column = syntax.column;
+                bound->type = &program_.semantic_model.string_type;
+                bound->string_expression = std::move(target_expression);
+                bound->index_expression = std::move(index_expression);
+                return bound;
+            }
+
             auto bound = std::make_unique<BoundArrayIndexExpression>();
             bound->kind = BoundExpressionKind::ArrayIndex;
             bound->line = syntax.line;
             bound->column = syntax.column;
-            bound->array_expression = std::move(array_expression);
+            bound->array_expression = std::move(target_expression);
             bound->index_expression = std::move(index_expression);
 
             if (bound->array_expression->type == nullptr || bound->array_expression->type->kind != TypeKind::Array ||
                 bound->array_expression->type->element_type == nullptr) {
                 diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
-                                 "Element access requires an array value");
+                                 "Element access requires an array or string value");
                 bound->type = &program_.semantic_model.error_type;
                 return bound;
-            }
-
-            if (bound->index_expression->type != &program_.semantic_model.int_type) {
-                diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
-                                 "Array indices must be of type 'int'");
             }
 
             bound->type = bound->array_expression->type->element_type;
@@ -2519,22 +2976,19 @@ private:
                 return fallback;
             }
 
-            const MethodSymbol* selected = nullptr;
-            for (const auto* candidate : entity.methods) {
-                if (candidate->parameters.size() != arguments.size()) {
-                    continue;
-                }
-                bool compatible = true;
-                for (std::size_t index = 0; index < arguments.size(); ++index) {
-                    if (!is_type_assignable(candidate->parameters[index].type, argument_types[index])) {
-                        compatible = false;
-                        break;
-                    }
-                }
-                if (compatible) {
-                    selected = candidate;
-                    break;
-                }
+            bool ambiguous = false;
+            const MethodSymbol* selected = select_best_method_overload(entity.methods, argument_types, &ambiguous);
+
+            if (ambiguous) {
+                diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                 "Call to '" + render_callee_name(*syntax.callee) + "' is ambiguous for the provided arguments");
+                auto fallback = std::make_unique<BoundLiteralExpression>();
+                fallback->kind = BoundExpressionKind::Literal;
+                fallback->type = &program_.semantic_model.error_type;
+                fallback->line = syntax.line;
+                fallback->column = syntax.column;
+                fallback->value = nullptr;
+                return fallback;
             }
 
             if (selected == nullptr) {
@@ -2582,29 +3036,15 @@ private:
                 arguments.push_back(std::move(bound));
             }
 
-            const ConstructorSymbol* selected = nullptr;
+            bool ambiguous = false;
             const ConstructorSymbol* inaccessible_match = nullptr;
-            for (const auto& constructor : type->class_symbol->constructors) {
-                if (constructor->parameters.size() != syntax.arguments.size()) {
-                    continue;
-                }
-                bool compatible = true;
-                for (std::size_t index = 0; index < arguments.size(); ++index) {
-                    if (!is_type_assignable(constructor->parameters[index].type, argument_types[index])) {
-                        compatible = false;
-                    }
-                }
-                if (!compatible) {
-                    continue;
-                }
-                if (is_accessible(*constructor)) {
-                    selected = constructor.get();
-                    break;
-                }
-                inaccessible_match = constructor.get();
-            }
+            const ConstructorSymbol* selected =
+                select_best_constructor_overload(*type->class_symbol, argument_types, &ambiguous, &inaccessible_match);
 
-            if (selected == nullptr && !type->class_symbol->constructors.empty() && inaccessible_match != nullptr) {
+            if (ambiguous) {
+                diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                 "Constructor call for '" + type->display_name + "' is ambiguous for the provided arguments");
+            } else if (selected == nullptr && !type->class_symbol->constructors.empty() && inaccessible_match != nullptr) {
                 report_inaccessible(type->class_symbol->name, inaccessible_match->accessibility, *inaccessible_match->owner, syntax.line, syntax.column);
             } else if (selected == nullptr && !type->class_symbol->constructors.empty()) {
                 diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
@@ -2712,7 +3152,14 @@ private:
                 if (const ClassSymbol* type = resolve_class(name->name)) {
                     EntityResolution result;
                     result.kind = EntityResolution::Kind::Type;
-                    result.type_symbol = type;
+                    result.type_symbol = make_named_type(*type);
+                    return result;
+                }
+
+                if (const EnumSymbol* type = resolve_enum(name->name)) {
+                    EntityResolution result;
+                    result.kind = EntityResolution::Kind::Type;
+                    result.type_symbol = make_named_type(*type);
                     return result;
                 }
 
@@ -2754,7 +3201,14 @@ private:
                     if (class_found != program_.semantic_model.classes_by_full_name.end()) {
                         EntityResolution result;
                         result.kind = EntityResolution::Kind::Type;
-                        result.type_symbol = class_found->second;
+                        result.type_symbol = make_named_type(*class_found->second);
+                        return result;
+                    }
+                    const auto enum_found = program_.semantic_model.enums_by_full_name.find(candidate);
+                    if (enum_found != program_.semantic_model.enums_by_full_name.end()) {
+                        EntityResolution result;
+                        result.kind = EntityResolution::Kind::Type;
+                        result.type_symbol = make_named_type(*enum_found->second);
                         return result;
                     }
                     diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
@@ -2763,8 +3217,40 @@ private:
                 }
 
                 if (base.kind == EntityResolution::Kind::Type) {
+                    if (base.type_symbol != nullptr && base.type_symbol->kind == TypeKind::Enum &&
+                        base.type_symbol->enum_symbol != nullptr) {
+                        const auto* enum_member =
+                            select_enum_member(*base.type_symbol->enum_symbol, member->member_name);
+                        if (enum_member != nullptr) {
+                            EntityResolution result;
+                            result.kind = EntityResolution::Kind::Value;
+                            auto value = std::make_unique<BoundLiteralExpression>();
+                            value->kind = BoundExpressionKind::Literal;
+                            value->type = base.type_symbol;
+                            value->line = expression.line;
+                            value->column = expression.column;
+                            value->value = enum_member->value;
+                            result.value = std::move(value);
+                            return result;
+                        }
+
+                        diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                         "Unknown enum member '" + member->member_name + "' on enum '" +
+                                             base.type_symbol->display_name + "'");
+                        return {};
+                    }
+
+                    if (base.type_symbol == nullptr || base.type_symbol->kind != TypeKind::Class ||
+                        base.type_symbol->class_symbol == nullptr) {
+                        diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                         "Type '" + (base.type_symbol != nullptr ? base.type_symbol->display_name : string("error")) +
+                                             "' does not contain static members");
+                        return {};
+                    }
+
+                    const ClassSymbol& type_symbol = *base.type_symbol->class_symbol;
                     bool found_inaccessible = false;
-                    if (const auto* field = select_field(*base.type_symbol, member->member_name, true, &found_inaccessible)) {
+                    if (const auto* field = select_field(type_symbol, member->member_name, true, &found_inaccessible)) {
                         EntityResolution result;
                         result.kind = EntityResolution::Kind::Value;
                         result.type_symbol = base.type_symbol;
@@ -2774,12 +3260,12 @@ private:
                     EntityResolution result;
                     result.kind = EntityResolution::Kind::MethodGroup;
                     result.type_symbol = base.type_symbol;
-                    result.methods = select_methods(*base.type_symbol, member->member_name, true, &found_inaccessible);
+                    result.methods = select_methods(type_symbol, member->member_name, true, &found_inaccessible);
                     if (!result.methods.empty()) {
                         return result;
                     }
                     if (found_inaccessible) {
-                        for (const auto& field_candidate : base.type_symbol->fields) {
+                        for (const auto& field_candidate : type_symbol.fields) {
                             if (field_candidate->is_static && field_candidate->name == member->member_name) {
                                 report_inaccessible(member->member_name,
                                                     field_candidate->accessibility,
@@ -2789,7 +3275,7 @@ private:
                                 return {};
                             }
                         }
-                        for (const auto& method_candidate : base.type_symbol->methods) {
+                        for (const auto& method_candidate : type_symbol.methods) {
                             if (method_candidate->is_static && method_candidate->name == member->member_name) {
                                 report_inaccessible(member->member_name,
                                                     method_candidate->accessibility,
@@ -2803,7 +3289,7 @@ private:
                     {
                         diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                          "Unknown static member '" + member->member_name + "' on type '" +
-                                             base.type_symbol->full_name + "'");
+                                             type_symbol.full_name + "'");
                     }
                     return {};
                 }
@@ -2918,6 +3404,28 @@ private:
             for (const auto& candidate : candidates) {
                 const auto found = program_.semantic_model.classes_by_full_name.find(candidate);
                 if (found != program_.semantic_model.classes_by_full_name.end()) {
+                    return found->second;
+                }
+            }
+            return nullptr;
+        }
+
+        const EnumSymbol* resolve_enum(const string& name) const {
+            vector<string> candidates;
+            if (name.find('.') != string::npos) {
+                candidates.push_back(name);
+            } else {
+                if (!current_class_.namespace_name.empty()) {
+                    candidates.push_back(current_class_.namespace_name + "." + name);
+                }
+                for (const auto& using_namespace : current_class_.using_namespaces) {
+                    candidates.push_back(using_namespace + "." + name);
+                }
+                candidates.push_back(name);
+            }
+            for (const auto& candidate : candidates) {
+                const auto found = program_.semantic_model.enums_by_full_name.find(candidate);
+                if (found != program_.semantic_model.enums_by_full_name.end()) {
                     return found->second;
                 }
             }
@@ -3059,6 +3567,7 @@ struct RuntimeObject {
 Value default_value_for_type(const TypeSymbol* type) {
     switch (type->kind) {
         case TypeKind::Int:
+        case TypeKind::Enum:
             return Value{int64_t{0}};
         case TypeKind::Bool:
             return Value{false};
@@ -3072,6 +3581,17 @@ Value default_value_for_type(const TypeSymbol* type) {
             return Value{nullptr};
     }
     return Value{nullptr};
+}
+
+string enum_member_name(const EnumSymbol* enum_symbol, int64_t value) {
+    if (enum_symbol != nullptr) {
+        for (const auto& member : enum_symbol->members) {
+            if (member->value == value) {
+                return member->name;
+            }
+        }
+    }
+    return std::to_string(value);
 }
 
 bool values_equal(const Value& left, const Value& right) {
@@ -3108,7 +3628,7 @@ public:
         }
     }
 
-    bool run(const vector<string>& args) {
+    bool run(const vector<string>& args, int* exit_code) {
         if (program_.entry_point == nullptr) {
             return false;
         }
@@ -3123,7 +3643,15 @@ public:
             parameters.push_back(Value{array});
         }
 
-        invoke_method(*program_.entry_point, nullptr, parameters);
+        Value result = invoke_method(*program_.entry_point, nullptr, parameters);
+        if (exit_code != nullptr) {
+            if (program_.entry_point->return_type == &program_.semantic_model.int_type &&
+                std::holds_alternative<int64_t>(result.data)) {
+                *exit_code = static_cast<int>(std::get<int64_t>(result.data));
+            } else {
+                *exit_code = 0;
+            }
+        }
         return true;
     }
 
@@ -3162,8 +3690,10 @@ private:
         return "null";
     }
 
-    void write_console_value(const Value& value, bool newline) {
-        if (std::holds_alternative<string>(value.data)) {
+    void write_console_value(const Value& value, const TypeSymbol* static_type, bool newline) {
+        if (static_type != nullptr && static_type->kind == TypeKind::Enum && std::holds_alternative<int64_t>(value.data)) {
+            std::cout << enum_member_name(static_type->enum_symbol, std::get<int64_t>(value.data));
+        } else if (std::holds_alternative<string>(value.data)) {
             std::cout << std::get<string>(value.data);
         } else if (std::holds_alternative<int64_t>(value.data)) {
             std::cout << std::get<int64_t>(value.data);
@@ -3179,11 +3709,14 @@ private:
 
     Value invoke_method(const MethodSymbol& method,
                         std::shared_ptr<RuntimeObject> receiver,
-                        const vector<Value>& arguments) {
+                        const vector<Value>& arguments,
+                        const vector<const TypeSymbol*>* argument_types = nullptr) {
         if (method.is_builtin) {
             if (method.owner == program_.semantic_model.console_class &&
                 (method.name == "Write" || method.name == "WriteLine")) {
-                write_console_value(arguments.empty() ? Value{nullptr} : arguments[0], method.name == "WriteLine");
+                const TypeSymbol* argument_type =
+                    (argument_types != nullptr && !argument_types->empty()) ? (*argument_types)[0] : nullptr;
+                write_console_value(arguments.empty() ? Value{nullptr} : arguments[0], argument_type, method.name == "WriteLine");
                 return Value{nullptr};
             }
             if (method.owner == program_.semantic_model.file_class && method.name == "Exists") {
@@ -3421,6 +3954,20 @@ private:
                 }
                 return array->elements[static_cast<std::size_t>(index)];
             }
+            case BoundExpressionKind::StringIndex: {
+                const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
+                Value string_value = evaluate_expression(*access.string_expression, frame);
+                Value index_value = evaluate_expression(*access.index_expression, frame);
+                if (!std::holds_alternative<string>(string_value.data)) {
+                    return Value{nullptr};
+                }
+                const string& source = std::get<string>(string_value.data);
+                const int64_t index = std::get<int64_t>(index_value.data);
+                if (index < 0 || static_cast<std::size_t>(index) >= source.size()) {
+                    throw std::runtime_error("String index out of range");
+                }
+                return Value{string(1, source[static_cast<std::size_t>(index)])};
+            }
             case BoundExpressionKind::StringLength: {
                 const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
                 Value string_value = evaluate_expression(*length.string_expression, frame);
@@ -3465,6 +4012,8 @@ private:
                         return Value{std::get<int64_t>(left.data) * std::get<int64_t>(right.data)};
                     case TokenKind::Slash:
                         return Value{std::get<int64_t>(left.data) / std::get<int64_t>(right.data)};
+                    case TokenKind::Percent:
+                        return Value{std::get<int64_t>(left.data) % std::get<int64_t>(right.data)};
                     case TokenKind::AmpAmp:
                         return Value{std::get<bool>(left.data) && std::get<bool>(right.data)};
                     case TokenKind::PipePipe:
@@ -3495,7 +4044,11 @@ private:
                 if (call.receiver != nullptr) {
                     receiver = std::get<std::shared_ptr<RuntimeObject>>(evaluate_expression(*call.receiver, frame).data);
                 }
-                return invoke_method(*call.method, receiver, arguments);
+                vector<const TypeSymbol*> argument_types;
+                for (const auto& argument : call.arguments) {
+                    argument_types.push_back(argument->type);
+                }
+                return invoke_method(*call.method, receiver, arguments, &argument_types);
             }
             case BoundExpressionKind::NewObject: {
                 const auto& creation = static_cast<const BoundNewExpression&>(expression);
@@ -3530,6 +4083,8 @@ string c_type_name(const TypeSymbol* type) {
             return "void";
         case TypeKind::Int:
             return "int64_t";
+        case TypeKind::Enum:
+            return "int64_t";
         case TypeKind::Bool:
             return "bool";
         case TypeKind::String:
@@ -3553,6 +4108,7 @@ public:
     string emit_executable() {
         std::ostringstream out;
         emit_prelude(out);
+        emit_enum_helpers(out);
         emit_classes(out);
         emit_method_prototypes(out);
         emit_constructors(out);
@@ -3564,6 +4120,7 @@ public:
     string emit_library() {
         std::ostringstream out;
         emit_prelude(out);
+        emit_enum_helpers(out);
         emit_classes(out);
         emit_method_prototypes(out);
         emit_constructors(out);
@@ -3581,15 +4138,19 @@ private:
     }
 
     string method_name(const MethodSymbol& method) const {
-        return sanitize_c_name(method.owner->full_name + "_" + method.name + "_" + std::to_string(method.parameters.size()));
+        return sanitize_c_name(method.owner->full_name + "_method_" + std::to_string(method.slot) + "_" + method.name);
     }
 
     string constructor_name(const ConstructorSymbol& ctor) const {
-        return sanitize_c_name(ctor.owner->full_name + "_ctor_" + std::to_string(ctor.parameters.size()));
+        return sanitize_c_name(ctor.owner->full_name + "_ctor_" + std::to_string(ctor.slot));
     }
 
-    string new_helper_name(const ClassSymbol& klass, int arity) const {
-        return sanitize_c_name("hy_new_" + klass.full_name + "_" + std::to_string(arity));
+    string new_helper_name(const ClassSymbol& klass, int constructor_slot) const {
+        return sanitize_c_name("hy_new_" + klass.full_name + "_" + std::to_string(constructor_slot));
+    }
+
+    string enum_to_string_name(const EnumSymbol& enum_symbol) const {
+        return sanitize_c_name("hy_enum_to_string_" + enum_symbol.full_name);
     }
 
     void emit_prelude(std::ostringstream& out) {
@@ -3646,11 +4207,28 @@ private:
         out << "    fprintf(stderr, \"%s\\n\", message);\n";
         out << "    exit(1);\n";
         out << "}\n\n";
+        out << "static const char* hy_array_index(HyStringArray array, int64_t index) {\n";
+        out << "    if (array.items == NULL || index < 0 || index >= array.length) {\n";
+        out << "        hy_runtime_fail(\"Array index out of range\");\n";
+        out << "    }\n";
+        out << "    return array.items[index];\n";
+        out << "}\n";
         out << "static const char* hy_alloc_string_copy(const char* value) {\n";
         out << "    const char* safe_value = value == NULL ? \"null\" : value;\n";
         out << "    size_t length = strlen(safe_value);\n";
         out << "    char* result = (char*)hy_alloc_managed(length + 1);\n";
         out << "    memcpy(result, safe_value, length + 1);\n";
+        out << "    return result;\n";
+        out << "}\n";
+        out << "static const char* hy_string_index(const char* value, int64_t index) {\n";
+        out << "    const char* safe_value = value == NULL ? \"\" : value;\n";
+        out << "    size_t length = strlen(safe_value);\n";
+        out << "    if (index < 0 || (size_t)index >= length) {\n";
+        out << "        hy_runtime_fail(\"String index out of range\");\n";
+        out << "    }\n";
+        out << "    char* result = (char*)hy_alloc_managed(2);\n";
+        out << "    result[0] = safe_value[index];\n";
+        out << "    result[1] = '\\0';\n";
         out << "    return result;\n";
         out << "}\n";
         out << "static int64_t hy_string_length(const char* value) {\n";
@@ -3747,6 +4325,19 @@ private:
         out << "}\n\n";
     }
 
+    void emit_enum_helpers(std::ostringstream& out) {
+        for (const auto& enum_holder : program_.semantic_model.enums) {
+            out << "static const char* " << enum_to_string_name(*enum_holder) << "(int64_t value) {\n";
+            out << "    switch (value) {\n";
+            for (const auto& member : enum_holder->members) {
+                out << "        case " << member->value << ": return \"" << escape_c_string(member->name) << "\";\n";
+            }
+            out << "        default: return hy_string_from_int(value);\n";
+            out << "    }\n";
+            out << "}\n\n";
+        }
+    }
+
     void emit_classes(std::ostringstream& out) {
         for (const auto& class_holder : program_.semantic_model.classes) {
             if (class_holder->is_builtin) {
@@ -3787,7 +4378,7 @@ private:
                     out << ", " << c_type_name(parameter.type) << " " << sanitize_c_name(parameter.name);
                 }
                 out << ");\n";
-                out << class_struct_name(*class_holder) << "* " << new_helper_name(*class_holder, static_cast<int>(ctor->parameters.size()))
+                out << class_struct_name(*class_holder) << "* " << new_helper_name(*class_holder, ctor->slot)
                     << "(";
                 for (std::size_t index = 0; index < ctor->parameters.size(); ++index) {
                     if (index > 0) {
@@ -3846,7 +4437,7 @@ private:
                 emit_block(out, *program_.constructors.at(ctor.get())->body, 1);
                 out << "}\n\n";
 
-                out << class_struct_name(*class_holder) << "* " << new_helper_name(*class_holder, static_cast<int>(ctor->parameters.size()))
+                out << class_struct_name(*class_holder) << "* " << new_helper_name(*class_holder, ctor->slot)
                     << "(";
                 for (std::size_t index = 0; index < ctor->parameters.size(); ++index) {
                     if (index > 0) {
@@ -3912,11 +4503,20 @@ private:
             out << "    HyStringArray hy_args;\n";
             out << "    hy_args.length = argc > 1 ? argc - 1 : 0;\n";
             out << "    hy_args.items = argc > 1 ? (const char**)(argv + 1) : NULL;\n";
-            out << "    " << method_name(*program_.entry_point) << "(hy_args);\n";
+            if (program_.entry_point->return_type == &program_.semantic_model.int_type) {
+                out << "    return (int)" << method_name(*program_.entry_point) << "(hy_args);\n";
+            } else {
+                out << "    " << method_name(*program_.entry_point) << "(hy_args);\n";
+                out << "    return 0;\n";
+            }
         } else {
-            out << "    " << method_name(*program_.entry_point) << "();\n";
+            if (program_.entry_point->return_type == &program_.semantic_model.int_type) {
+                out << "    return (int)" << method_name(*program_.entry_point) << "();\n";
+            } else {
+                out << "    " << method_name(*program_.entry_point) << "();\n";
+                out << "    return 0;\n";
+            }
         }
-        out << "    return 0;\n";
         out << "}\n";
     }
 
@@ -4017,6 +4617,7 @@ private:
     string default_expression(const TypeSymbol* type) const {
         switch (type->kind) {
             case TypeKind::Int:
+            case TypeKind::Enum:
                 return "0";
             case TypeKind::Bool:
                 return "false";
@@ -4072,6 +4673,10 @@ private:
         return "\"null\"";
     }
 
+    string emit_enum_string(const BoundExpression& expression) {
+        return enum_to_string_name(*expression.type->enum_symbol) + "(" + emit_expression(expression) + ")";
+    }
+
     string emit_expression(const BoundExpression& expression) {
         switch (expression.kind) {
             case BoundExpressionKind::Literal: {
@@ -4110,7 +4715,13 @@ private:
             }
             case BoundExpressionKind::ArrayIndex: {
                 const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
-                return "(" + emit_expression(*access.array_expression) + ".items[" + emit_expression(*access.index_expression) + "])";
+                return "hy_array_index(" + emit_expression(*access.array_expression) + ", " +
+                       emit_expression(*access.index_expression) + ")";
+            }
+            case BoundExpressionKind::StringIndex: {
+                const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
+                return "hy_string_index(" + emit_expression(*access.string_expression) + ", " +
+                       emit_expression(*access.index_expression) + ")";
             }
             case BoundExpressionKind::StringLength: {
                 const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
@@ -4134,6 +4745,14 @@ private:
             case BoundExpressionKind::Call: {
                 const auto& call = static_cast<const BoundCallExpression&>(expression);
                 if (call.method->is_builtin && call.method->owner == program_.semantic_model.console_class) {
+                    if (!call.arguments.empty() &&
+                        call.arguments[0]->type != nullptr &&
+                        call.arguments[0]->type->kind == TypeKind::Enum &&
+                        call.arguments[0]->type->enum_symbol != nullptr) {
+                        const string function_name =
+                            call.method->name == "Write" ? "hy_console_write_string" : "hy_console_writeline_string";
+                        return function_name + "(" + emit_enum_string(*call.arguments[0]) + ")";
+                    }
                     string function_name = "hy_console_writeline_string";
                     if (call.method == program_.semantic_model.console_write_string) {
                         function_name = "hy_console_write_string";
@@ -4188,8 +4807,8 @@ private:
             case BoundExpressionKind::NewObject: {
                 const auto& creation = static_cast<const BoundNewExpression&>(expression);
                 std::ostringstream builder;
-                const int arity = creation.constructor != nullptr ? static_cast<int>(creation.constructor->parameters.size()) : 0;
-                builder << new_helper_name(*creation.class_symbol, arity) << "(";
+                const int constructor_slot = creation.constructor != nullptr ? creation.constructor->slot : 0;
+                builder << new_helper_name(*creation.class_symbol, constructor_slot) << "(";
                 for (std::size_t index = 0; index < creation.arguments.size(); ++index) {
                     if (index > 0) {
                         builder << ", ";
@@ -4220,6 +4839,8 @@ private:
                 return "*";
             case TokenKind::Slash:
                 return "/";
+            case TokenKind::Percent:
+                return "%";
             case TokenKind::Bang:
                 return "!";
             case TokenKind::EqualsEquals:
@@ -4515,24 +5136,24 @@ RunResult run_target(const RunOptions& options) {
     DiagnosticBag diagnostics;
     const auto program = load_program_from_target(options.input_path, diagnostics);
     if (!program) {
-        return RunResult{false, std::move(diagnostics.items)};
+        return RunResult{false, std::move(diagnostics.items), 1};
     }
     if (!locate_entry_point(*program, diagnostics)) {
-        return RunResult{false, std::move(diagnostics.items)};
+        return RunResult{false, std::move(diagnostics.items), 1};
     }
 
     Interpreter interpreter(*program);
     try {
-        if (!interpreter.run(options.args)) {
+        int exit_code = 0;
+        if (!interpreter.run(options.args, &exit_code)) {
             diagnostics.add(options.input_path, 1, 1, "Interpreter could not start the program");
-            return RunResult{false, std::move(diagnostics.items)};
+            return RunResult{false, std::move(diagnostics.items), 1};
         }
+        return RunResult{true, {}, exit_code};
     } catch (const std::exception& ex) {
         diagnostics.add(options.input_path, 1, 1, "Runtime error: " + string(ex.what()));
-        return RunResult{false, std::move(diagnostics.items)};
+        return RunResult{false, std::move(diagnostics.items), 1};
     }
-
-    return RunResult{true, {}};
 }
 
 BuildResult build_target(const BuildOptions& options) {

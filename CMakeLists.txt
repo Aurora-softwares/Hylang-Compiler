@@ -313,3 +313,180 @@ set_tests_properties(hyrun_file_wrong_arguments_fails PROPERTIES
     WILL_FAIL TRUE
     PASS_REGULAR_EXPRESSION "No overload of 'Exists' matches the provided arguments"
 )
+
+# ---- new positive tests (interpreter) ----
+
+add_test(
+    NAME hyrun_modulo
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/modulo.hy
+)
+set_tests_properties(hyrun_modulo PROPERTIES PASS_REGULAR_EXPRESSION "3")
+
+add_test(
+    NAME hyrun_enum_features
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/enum_features.hy
+)
+set_tests_properties(hyrun_enum_features PROPERTIES PASS_REGULAR_EXPRESSION "Scan Dump")
+
+add_test(
+    NAME hyrun_constructor_overload
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/constructor_overload.hy
+)
+set_tests_properties(hyrun_constructor_overload PROPERTIES PASS_REGULAR_EXPRESSION "2")
+
+add_test(
+    NAME hyrun_overload_resolution
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/overload_resolution.hy
+)
+set_tests_properties(hyrun_overload_resolution PROPERTIES PASS_REGULAR_EXPRESSION "bool")
+
+add_test(
+    NAME hyrun_string_index
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/string_index.hy
+)
+set_tests_properties(hyrun_string_index PROPERTIES PASS_REGULAR_EXPRESSION "tkn")
+
+add_test(
+    NAME hyrun_token_dump_sample
+    COMMAND hyrun
+        ${CMAKE_CURRENT_SOURCE_DIR}/samples/token_dump/TokenDump.hyproj
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/hello_world.hy
+)
+set_tests_properties(hyrun_token_dump_sample PROPERTIES PASS_REGULAR_EXPRESSION "Public public")
+
+# ---- new positive tests (compiler) ----
+
+add_test(
+    NAME hyc_build_and_run_modulo
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/modulo.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/modulo
+        -DEXPECTED_TEXT=3
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_enum_features
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/enum_features.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/enum_features
+        -DEXPECTED_TEXT=Scan\ Dump
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_constructor_overload
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/constructor_overload.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/constructor_overload
+        -DEXPECTED_TEXT=2
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_overload_resolution
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/overload_resolution.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/overload_resolution
+        -DEXPECTED_TEXT=bool
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_string_index
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/string_index.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/string_index
+        -DEXPECTED_TEXT=tkn
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_token_dump_sample
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DPROJECT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/token_dump/TokenDump.hyproj
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/token_dump
+        -DRUN_ARG=${CMAKE_CURRENT_SOURCE_DIR}/tests/hello_world.hy
+        -DEXPECTED_TEXT=Public\ public
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildProjectAndRunWithArgs.cmake
+)
+
+# ---- new negative tests ----
+
+add_test(
+    NAME hyrun_ambiguous_constructor_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/ambiguous_constructor.hy
+)
+set_tests_properties(hyrun_ambiguous_constructor_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "ambiguous"
+)
+
+add_test(
+    NAME hyrun_ambiguous_overload_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/ambiguous_overload.hy
+)
+set_tests_properties(hyrun_ambiguous_overload_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "ambiguous"
+)
+
+add_test(
+    NAME hyrun_modulo_bad_types_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/modulo_bad_types.hy
+)
+set_tests_properties(hyrun_modulo_bad_types_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "Arithmetic operators require int operands"
+)
+
+add_test(
+    NAME hyrun_enum_cross_compare_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/enum_cross_compare.hy
+)
+set_tests_properties(hyrun_enum_cross_compare_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "Enum equality requires operands of the same enum type"
+)
+
+add_test(
+    NAME hyrun_parser_recovery_member_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/parser_recovery_member.hy
+)
+set_tests_properties(hyrun_parser_recovery_member_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "Expected ';' after field declaration"
+)
+
+add_test(
+    NAME hyrun_parser_recovery_statement_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/parser_recovery_statement.hy
+)
+set_tests_properties(hyrun_parser_recovery_statement_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "Expected expression"
+)
+
+add_test(
+    NAME hyrun_string_index_type_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/string_index_type.hy
+)
+set_tests_properties(hyrun_string_index_type_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "Indices must be of type 'int'"
+)
+
+add_test(
+    NAME hyrun_string_index_runtime_fails
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/string_index_runtime.hy
+)
+set_tests_properties(hyrun_string_index_runtime_fails PROPERTIES
+    WILL_FAIL TRUE
+    PASS_REGULAR_EXPRESSION "String index out of range"
+)

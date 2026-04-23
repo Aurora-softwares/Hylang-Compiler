@@ -41,8 +41,8 @@ That means Hylang is past the “toy parser” stage and is now in the bootstrap
 Checked items reflect the current repo state as of now.
 
 - [x] Phase 0: Bootstrap Foundation is effectively complete enough to move beyond the bootstrap-only stage
-- [ ] Phase 1: Language Hardening is in progress
-- [ ] Phase 2: Core Language Expansion has not started in earnest
+- [x] Phase 1: Language Hardening is complete
+- [ ] Phase 2: Core Language Expansion is the current active zone
 - [ ] Phase 3: Runtime and Memory Model has not started in earnest
 - [ ] Phase 4: Tooling and Developer Workflow has not started in earnest
 - [ ] Phase 5: Self-Hosting Preparation has not started in earnest
@@ -92,7 +92,7 @@ Exit criteria:
 
 ## Phase 1: Language Hardening
 
-Status: current active zone
+Status: complete
 
 Goals:
 
@@ -111,10 +111,10 @@ Checklist:
 - [x] Add a non-trivial multi-file sample Hylang console tool
 - [x] Add negative coverage for new control-flow and builtin misuse cases
 - [x] Validate interpreter mode and compiled mode against the new feature set
-- [ ] Improve parser error recovery so one syntax issue does not cascade as badly
-- [ ] Harden overload resolution and method/constructor selection rules
-- [ ] Expand regression coverage further until refactors feel cheap and safe
-- [ ] Prove the language on at least one medium-sized Hylang tool beyond the current samples
+- [x] Improve parser error recovery so one syntax issue does not cascade as badly
+- [x] Harden overload resolution and method/constructor selection rules
+- [x] Expand regression coverage further until refactors feel cheap and safe
+- [x] Prove the language on at least one medium-sized Hylang tool beyond the current samples
 
 Main work:
 
@@ -125,14 +125,21 @@ Main work:
 - cleaner project/reference behavior
 - more sample applications written in Hylang
 
-Likely features in this phase:
+Delivered features:
 
-- `else if` polish and more loop/test coverage
-- constructors and overload behavior hardening
-- more operators and conversions
-- basic enums
+- `else if` and more loop/test coverage
+- constructor and method overloading with ambiguity detection
+- full arithmetic, comparison, logical, and unary operators (`-`, `*`, `/`, `%`, `&&`, `||`, `!`)
+- basic enums with equality, static fields, and printing
+- string character indexing
+- modulo operator
+- parser error recovery (missing semicolons, bad expressions continue parsing)
+- `this`/member semantics
+- `token_dump` sample tool (431 lines, 4 files) as proof of medium-sized Hylang programs
+
+Deferred to Phase 2:
+
 - basic inheritance
-- `this`/member semantics cleanup
 - library authoring and project-reference quality improvements
 
 Exit criteria:
