@@ -12,7 +12,7 @@ Hylang should become:
 - capable of both managed application development and low-level OS work
 - self-hosted, so the compiler can eventually be written in Hylang itself
 - backed by a real standard library, tooling ecosystem, and package/build workflow
-- the primary language for Aura OS userland and, over time, larger parts of the OS stack
+- the primary language for Australis OS userland and, over time, larger parts of the OS stack
 
 ## Current State
 
@@ -42,14 +42,14 @@ Checked items reflect the current repo state as of now.
 
 - [x] Phase 0: Bootstrap Foundation is effectively complete enough to move beyond the bootstrap-only stage
 - [x] Phase 1: Language Hardening is complete
-- [ ] Phase 2: Core Language Expansion is the current active zone
+- [ ] Phase 2: Core Language Expansion is the current active zone (Milestone 1 complete)
 - [ ] Phase 3: Runtime and Memory Model has not started in earnest
 - [ ] Phase 4: Tooling and Developer Workflow has not started in earnest
 - [ ] Phase 5: Self-Hosting Preparation has not started in earnest
 - [ ] Phase 6: Self-Hosted Compiler has not started
 - [ ] Phase 7: Full Standard Library has not started in earnest
 - [ ] Phase 8: Backend Evolution has not started in earnest
-- [ ] Phase 9: Hylang for Aura OS Userland has not started
+- [ ] Phase 9: Hylang for Australis OS Userland has not started
 - [ ] Phase 10: Hylang for System Software and Kernel-Adjacent Code has not started
 - [ ] Phase 11: Full OS and Ecosystem Vision remains the long-term destination
 
@@ -149,6 +149,16 @@ Exit criteria:
 
 ## Phase 2: Core Language Expansion
 
+Status: in progress, with Milestone 1 complete
+
+Milestone 1 delivered:
+
+- basic single inheritance with `class Derived : Base`
+- inherited member lookup for fields and methods
+- subclass `protected` access
+- derived-to-base assignability across locals, fields, parameters, returns, equality, and overload resolution
+- implicit parameterless base-constructor chaining across interpreter and compiled output
+
 Goals:
 
 - move from “small tool language” to “general-purpose application language”
@@ -156,27 +166,30 @@ Goals:
 
 Checklist:
 
-- [ ] Add inheritance
+- [x] Add basic inheritance
+- [x] Add inherited member lookup
+- [x] Add derived-to-base assignability
+- [x] Make `protected` work across subclasses
+- [x] Add implicit parameterless base-constructor chaining
+- [ ] Add `base(...)` constructor chaining and `base.Member`
 - [ ] Add virtual/override behavior
 - [ ] Add interfaces
-- [ ] Add enums
 - [ ] Decide and implement value-type or struct design
 - [ ] Add generics
-- [ ] Improve overload resolution
+- [ ] Improve overload resolution further
 - [ ] Improve namespace and import resolution behavior
 - [ ] Add any minimal type inference needed for ergonomic compiler/library code
 - [ ] Capture the implemented rules in language-spec notes
 
 Main work:
 
-- inheritance
+- `base(...)` and `base.Member`
 - virtual/override behavior
 - interfaces
-- enums
 - structs or value-type design
 - generics
 - namespaces/import resolution hardening
-- richer overload resolution
+- richer overload resolution beyond current inheritance-aware matching
 - better type inference where appropriate
 
 Supporting work:
@@ -429,25 +442,25 @@ Exit criteria:
 
 - Hylang can generate reliable native binaries for its target platforms without going through C for the main production path
 
-## Phase 9: Hylang for Aura OS Userland
+## Phase 9: Hylang for Australis OS Userland
 
 Goals:
 
-- make Hylang the primary language for user-space tooling and core applications on Aura OS
+- make Hylang the primary language for user-space tooling and core applications on Australis OS
 
 Checklist:
 
-- [ ] Define the Hylang runtime boundary for Aura OS processes
-- [ ] Add startup/runtime initialization for Aura OS targets
+- [ ] Define the Hylang runtime boundary for Australis OS processes
+- [ ] Add startup/runtime initialization for Australis OS targets
 - [ ] Add filesystem, process, console, and IPC bindings
 - [ ] Add any needed windowing/application bindings
 - [ ] Write shell and service tooling in Hylang
 - [ ] Write build/install/package-management tooling in Hylang
-- [ ] Prove that meaningful day-to-day Aura OS userland can ship in Hylang
+- [ ] Prove that meaningful day-to-day Australis OS userland can ship in Hylang
 
 Main work:
 
-- libc/runtime boundary for Aura OS
+- libc/runtime boundary for Australis OS
 - startup/runtime initialization for Hylang processes
 - filesystem, process, console, windowing, and IPC bindings
 - package manager / system distribution format support
@@ -459,7 +472,7 @@ Target outcome:
 
 Exit criteria:
 
-- Aura OS can ship meaningful day-to-day tooling written in Hylang
+- Australis OS can ship meaningful day-to-day tooling written in Hylang
 
 ## Phase 10: Hylang for System Software and Kernel-Adjacent Code
 
@@ -502,7 +515,7 @@ Checklist:
 
 - [ ] Hylang compiler is self-hosted
 - [ ] The standard library is substantial and mostly written in Hylang
-- [ ] Aura OS userland is primarily written in Hylang
+- [ ] Australis OS userland is primarily written in Hylang
 - [ ] Selected systems components are written in Hylang
 - [ ] Tooling, docs, package workflow, and ecosystem are mature
 - [ ] Third-party developers can build serious software in Hylang without depending on compiler internals
@@ -511,7 +524,7 @@ End-state goals:
 
 - Hylang compiler written in Hylang
 - substantial standard library written in Hylang
-- Aura OS userland primarily written in Hylang
+- Australis OS userland primarily written in Hylang
 - selected systems components written in Hylang
 - strong docs, package ecosystem, and tooling
 - enough maturity that third parties can build serious software in Hylang without depending on the compiler internals
@@ -543,4 +556,4 @@ This roadmap should be updated whenever one of these changes:
 - a major feature moves earlier or later
 - the runtime strategy changes
 - the self-hosting plan changes
-- Aura OS integration requirements become more concrete
+- Australis OS integration requirements become more concrete

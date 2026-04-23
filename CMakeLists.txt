@@ -39,6 +39,18 @@ function(add_hyrun_negative_test test_name source_file expected_regex)
     )
 endfunction()
 
+function(add_hyc_negative_test test_name source_file expected_regex)
+    add_test(
+        NAME ${test_name}
+        COMMAND ${CMAKE_COMMAND}
+            -DEXECUTE_BINARY=$<TARGET_FILE:hyc>
+            -DINPUT_TARGET=${source_file}
+            -DOUTPUT_ARTIFACT=${CMAKE_CURRENT_BINARY_DIR}/generated/${test_name}
+            "-DEXPECTED_OUTPUT_REGEX=${expected_regex}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectBuildFailure.cmake
+    )
+endfunction()
+
 add_test(
     NAME hyrun_hello_world
     COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/hello_world.hy
@@ -338,6 +350,18 @@ add_test(
 set_tests_properties(hyrun_string_index PROPERTIES PASS_REGULAR_EXPRESSION "tkn")
 
 add_test(
+    NAME hyrun_inheritance_features
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/inheritance_features.hy
+)
+set_tests_properties(hyrun_inheritance_features PROPERTIES PASS_REGULAR_EXPRESSION "5:7:11:7:7:11:1")
+
+add_test(
+    NAME hyrun_inheritance_ctor_order
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/inheritance_ctor_order.hy
+)
+set_tests_properties(hyrun_inheritance_ctor_order PROPERTIES PASS_REGULAR_EXPRESSION "123")
+
+add_test(
     NAME hyrun_token_dump_sample
     COMMAND hyrun
         ${CMAKE_CURRENT_SOURCE_DIR}/samples/token_dump/TokenDump.hyproj
@@ -398,6 +422,32 @@ add_test(
 )
 
 add_test(
+    NAME hyc_build_and_run_inheritance_features
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/inheritance_features.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/inheritance_features
+        -DEXPECTED_TEXT=5:7:11:7:7:11:1
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_inheritance_ctor_order
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/inheritance_ctor_order.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/inheritance_ctor_order
+        -DEXPECTED_TEXT=123
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyrun_symbol_model_project
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/projects/symbol_model/SymbolModel.hyproj
+)
+set_tests_properties(hyrun_symbol_model_project PROPERTIES PASS_REGULAR_EXPRESSION "type:Node:3:method:3:2")
+
+add_test(
     NAME hyc_build_and_run_token_dump_sample
     COMMAND ${CMAKE_COMMAND}
         -DHY_BINARY=$<TARGET_FILE:hyc>
@@ -405,6 +455,16 @@ add_test(
         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/token_dump
         -DRUN_ARG=${CMAKE_CURRENT_SOURCE_DIR}/tests/hello_world.hy
         -DEXPECTED_TEXT=Public\ public
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildProjectAndRunWithArgs.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_symbol_model_project
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DPROJECT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/projects/symbol_model/SymbolModel.hyproj
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/symbol_model
+        -DEXPECTED_TEXT=type:Node:3:method:3:2
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildProjectAndRunWithArgs.cmake
 )
 
@@ -456,4 +516,88 @@ add_hyrun_negative_test(
     hyrun_string_index_runtime_fails
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/string_index_runtime.hy
     "String index out of range"
+)
+
+add_hyrun_negative_test(
+    hyrun_inheritance_invalid_base_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_invalid_base.hy
+    "can only inherit from a non-builtin class"
+)
+
+add_hyrun_negative_test(
+    hyrun_inheritance_self_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_self.hy
+    "cannot inherit from itself"
+)
+
+add_hyrun_negative_test(
+    hyrun_inheritance_cycle_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_cycle.hy
+    "Inheritance cycle detected"
+)
+
+add_hyrun_negative_test(
+    hyrun_inheritance_missing_base_ctor_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_missing_base_ctor.hy
+    "parameterless constructor"
+)
+
+add_hyrun_negative_test(
+    hyrun_inheritance_private_access_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_private_access.hy
+    "protection level"
+)
+
+add_hyrun_negative_test(
+    hyrun_inheritance_field_conflict_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_field_conflict.hy
+    "conflicts with inherited field"
+)
+
+add_hyrun_negative_test(
+    hyrun_inheritance_method_conflict_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_method_conflict.hy
+    "conflicts with inherited method"
+)
+
+add_hyc_negative_test(
+    hyc_inheritance_invalid_base_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_invalid_base.hy
+    "can only inherit from a non-builtin class"
+)
+
+add_hyc_negative_test(
+    hyc_inheritance_self_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_self.hy
+    "cannot inherit from itself"
+)
+
+add_hyc_negative_test(
+    hyc_inheritance_cycle_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_cycle.hy
+    "Inheritance cycle detected"
+)
+
+add_hyc_negative_test(
+    hyc_inheritance_missing_base_ctor_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_missing_base_ctor.hy
+    "parameterless constructor"
+)
+
+add_hyc_negative_test(
+    hyc_inheritance_private_access_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_private_access.hy
+    "protection level"
+)
+
+add_hyc_negative_test(
+    hyc_inheritance_field_conflict_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_field_conflict.hy
+    "conflicts with inherited field"
+)
+
+add_hyc_negative_test(
+    hyc_inheritance_method_conflict_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_method_conflict.hy
+    "conflicts with inherited method"
 )

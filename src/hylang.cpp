@@ -126,6 +126,7 @@ enum class TokenKind {
     Return,
     New,
     This,
+    Colon,
 };
 
 struct Token {
@@ -195,6 +196,9 @@ public:
                     break;
                 case '.':
                     tokens.push_back(Token{TokenKind::Dot, ".", line, column});
+                    break;
+                case ':':
+                    tokens.push_back(Token{TokenKind::Colon, ":", line, column});
                     break;
                 case '+':
                     tokens.push_back(Token{TokenKind::Plus, "+", line, column});
@@ -596,6 +600,7 @@ struct ClassDeclarationSyntax {
     vector<ModifierKind> modifiers;
     string namespace_name;
     string name;
+    std::optional<TypeSyntax> base_type;
     vector<unique_ptr<MemberSyntax>> members;
     int line = 1;
     int column = 1;
@@ -791,6 +796,9 @@ private:
         syntax->name = name.text;
         syntax->line = class_token.line;
         syntax->column = class_token.column;
+        if (match(TokenKind::Colon)) {
+            syntax->base_type = parse_type_syntax();
+        }
         consume(TokenKind::OpenBrace, "Expected '{' after class declaration");
         while (!check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile)) {
             syntax->members.push_back(parse_member_declaration(syntax->name));
@@ -1439,6 +1447,7 @@ struct FieldSymbol {
     int slot = 0;
     const ClassSymbol* owner = nullptr;
     Accessibility accessibility = Accessibility::Private;
+    const FieldDeclarationSyntax* syntax = nullptr;
 };
 
 struct MethodSymbol {
@@ -1475,6 +1484,7 @@ struct ClassSymbol {
     bool is_builtin = false;
     vector<string> using_namespaces;
     const ClassDeclarationSyntax* syntax = nullptr;
+    const ClassSymbol* base_class = nullptr;
     vector<std::unique_ptr<FieldSymbol>> fields;
     vector<std::unique_ptr<MethodSymbol>> methods;
     vector<std::unique_ptr<ConstructorSymbol>> constructors;
@@ -1504,6 +1514,7 @@ enum class BoundExpressionKind {
     StringIndex,
     StringLength,
     Assignment,
+    Conversion,
     Unary,
     Binary,
     Call,
@@ -1569,6 +1580,10 @@ struct BoundStringLengthExpression final : BoundExpression {
 
 struct BoundAssignmentExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> target;
+    std::unique_ptr<BoundExpression> expression;
+};
+
+struct BoundConversionExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> expression;
 };
 
@@ -1709,6 +1724,19 @@ bool has_modifier(const vector<ModifierKind>& modifiers, ModifierKind kind) {
     return std::find(modifiers.begin(), modifiers.end(), kind) != modifiers.end();
 }
 
+bool is_same_or_derived_from(const ClassSymbol* derived, const ClassSymbol* base) {
+    for (auto current = derived; current != nullptr; current = current->base_class) {
+        if (current == base) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool is_inherited_accessible(Accessibility accessibility) {
+    return accessibility != Accessibility::Private;
+}
+
 Accessibility accessibility_from_modifiers(const vector<ModifierKind>& modifiers) {
     if (has_modifier(modifiers, ModifierKind::Public)) {
         return Accessibility::Public;
@@ -1728,8 +1756,9 @@ bool is_accessible_from(Accessibility accessibility, const ClassSymbol& owner, c
             return true;
         case Accessibility::Internal:
             return true;
-        case Accessibility::Private:
         case Accessibility::Protected:
+            return is_same_or_derived_from(&current_class, &owner);
+        case Accessibility::Private:
             return &owner == &current_class;
     }
     return false;
@@ -1793,8 +1822,7 @@ bool is_type_assignable(const TypeSymbol* destination, const TypeSymbol* source)
             case TypeKind::String:
                 return false;
             case TypeKind::Class:
-                return destination->class_symbol == source->class_symbol ||
-                       destination->display_name == source->display_name;
+                return is_same_or_derived_from(source->class_symbol, destination->class_symbol);
             case TypeKind::Enum:
                 return destination->enum_symbol == source->enum_symbol ||
                        destination->display_name == source->display_name;
@@ -1812,6 +1840,15 @@ bool is_type_assignable(const TypeSymbol* destination, const TypeSymbol* source)
         return true;
     }
     return false;
+}
+
+string member_signature_key(const string& name, bool is_static, const vector<ParameterSymbol>& parameters) {
+    std::ostringstream builder;
+    builder << name << "#" << (is_static ? "S" : "I");
+    for (const auto& parameter : parameters) {
+        builder << "#" << parameter.type->display_name;
+    }
+    return builder.str();
 }
 
 bool is_string_concat_operand(const SemanticModel& model, const TypeSymbol* type) {
@@ -1910,8 +1947,12 @@ public:
         install_builtins(program->semantic_model);
         declare_classes(program->semantic_model, program->units);
         validate_using_directives(program->semantic_model, program->units);
+        resolve_base_classes(program->semantic_model);
+        validate_inheritance_cycles(program->semantic_model);
         declare_enum_members(program->semantic_model);
         declare_members(program->semantic_model);
+        validate_inherited_members(program->semantic_model);
+        validate_base_constructors(program->semantic_model);
         bind_bodies(*program);
         return program;
     }
@@ -2066,6 +2107,61 @@ private:
         }
     }
 
+    void resolve_base_classes(SemanticModel& model) {
+        for (const auto& class_holder : model.classes) {
+            ClassSymbol* klass = class_holder.get();
+            if (klass->is_builtin || klass->syntax == nullptr || !klass->syntax->base_type.has_value()) {
+                continue;
+            }
+
+            const TypeSymbol* base_type = resolve_type_in_context(model,
+                                                                  diagnostics_,
+                                                                  klass->source_file,
+                                                                  *klass->syntax->base_type,
+                                                                  klass->namespace_name,
+                                                                  klass->using_namespaces);
+            if (base_type == &model.error_type) {
+                continue;
+            }
+            if (base_type->kind != TypeKind::Class || base_type->class_symbol == nullptr || base_type->class_symbol->is_builtin) {
+                diagnostics_.add(klass->source_file,
+                                 klass->syntax->base_type->line,
+                                 klass->syntax->base_type->column,
+                                 "Class '" + klass->full_name + "' can only inherit from a non-builtin class");
+                continue;
+            }
+            if (base_type->class_symbol == klass) {
+                diagnostics_.add(klass->source_file,
+                                 klass->syntax->base_type->line,
+                                 klass->syntax->base_type->column,
+                                 "Class '" + klass->full_name + "' cannot inherit from itself");
+                continue;
+            }
+            klass->base_class = base_type->class_symbol;
+        }
+    }
+
+    void validate_inheritance_cycles(SemanticModel& model) {
+        for (const auto& class_holder : model.classes) {
+            ClassSymbol* klass = class_holder.get();
+            if (klass->is_builtin || klass->base_class == nullptr || klass->syntax == nullptr) {
+                continue;
+            }
+
+            std::unordered_set<const ClassSymbol*> seen;
+            for (const ClassSymbol* current = klass; current != nullptr; current = current->base_class) {
+                if (!seen.insert(current).second) {
+                    diagnostics_.add(klass->source_file,
+                                     klass->syntax->line,
+                                     klass->syntax->column,
+                                     "Inheritance cycle detected for class '" + klass->full_name + "'");
+                    klass->base_class = nullptr;
+                    break;
+                }
+            }
+        }
+    }
+
     void declare_enum_members(SemanticModel& model) {
         for (const auto& enum_holder : model.enums) {
             EnumSymbol* enum_symbol = enum_holder.get();
@@ -2123,6 +2219,7 @@ private:
                     symbol->accessibility = accessibility_from_modifiers(field->modifiers);
                     symbol->slot = static_cast<int>(klass->fields.size());
                     symbol->owner = klass;
+                    symbol->syntax = field;
                     klass->fields.push_back(std::move(symbol));
                     continue;
                 }
@@ -2152,12 +2249,7 @@ private:
                                                     klass->using_namespaces),
                             static_cast<int>(index)});
                     }
-                    std::ostringstream signature_builder;
-                    signature_builder << method->name << "#" << (symbol->is_static ? "S" : "I");
-                    for (const auto& parameter : symbol->parameters) {
-                        signature_builder << "#" << parameter.type->display_name;
-                    }
-                    const string signature = signature_builder.str();
+                    const string signature = member_signature_key(method->name, symbol->is_static, symbol->parameters);
                     if (!method_signatures.insert(signature).second) {
                         diagnostics_.add(find_file_for_class(klass), method->line, method->column,
                                          "Duplicate method '" + method->name + "' in class '" + klass->full_name + "'");
@@ -2199,6 +2291,93 @@ private:
                     symbol->slot = static_cast<int>(klass->constructors.size());
                     klass->constructors.push_back(std::move(symbol));
                 }
+            }
+        }
+    }
+
+    void validate_inherited_members(SemanticModel& model) {
+        for (const auto& class_holder : model.classes) {
+            ClassSymbol* klass = class_holder.get();
+            if (klass->is_builtin || klass->syntax == nullptr) {
+                continue;
+            }
+
+            for (const auto& field : klass->fields) {
+                for (auto base = klass->base_class; base != nullptr; base = base->base_class) {
+                    bool conflict_found = false;
+                    for (const auto& base_field : base->fields) {
+                        if (!is_inherited_accessible(base_field->accessibility) || base_field->name != field->name) {
+                            continue;
+                        }
+                        diagnostics_.add(klass->source_file,
+                                         field->syntax != nullptr ? field->syntax->line : klass->syntax->line,
+                                         field->syntax != nullptr ? field->syntax->column : klass->syntax->column,
+                                         "Field '" + field->name + "' in class '" + klass->full_name +
+                                             "' conflicts with inherited field from '" + base->full_name + "'");
+                        conflict_found = true;
+                        break;
+                    }
+                    if (conflict_found) {
+                        break;
+                    }
+                }
+            }
+
+            for (const auto& method : klass->methods) {
+                const string signature = member_signature_key(method->name, method->is_static, method->parameters);
+                for (auto base = klass->base_class; base != nullptr; base = base->base_class) {
+                    bool conflict_found = false;
+                    for (const auto& base_method : base->methods) {
+                        if (!is_inherited_accessible(base_method->accessibility)) {
+                            continue;
+                        }
+                        if (member_signature_key(base_method->name, base_method->is_static, base_method->parameters) != signature) {
+                            continue;
+                        }
+                        diagnostics_.add(klass->source_file,
+                                         method->syntax != nullptr ? method->syntax->line : klass->syntax->line,
+                                         method->syntax != nullptr ? method->syntax->column : klass->syntax->column,
+                                         "Method '" + method->name + "' in class '" + klass->full_name +
+                                             "' conflicts with inherited method from '" + base->full_name + "'");
+                        conflict_found = true;
+                        break;
+                    }
+                    if (conflict_found) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    void validate_base_constructors(SemanticModel& model) {
+        for (const auto& class_holder : model.classes) {
+            ClassSymbol* klass = class_holder.get();
+            if (klass->is_builtin || klass->base_class == nullptr || klass->syntax == nullptr) {
+                continue;
+            }
+
+            const ClassSymbol* base = klass->base_class;
+            if (base->constructors.empty()) {
+                continue;
+            }
+
+            bool has_accessible_parameterless = false;
+            for (const auto& constructor : base->constructors) {
+                if (!constructor->parameters.empty()) {
+                    continue;
+                }
+                if (is_accessible_from(constructor->accessibility, *constructor->owner, *klass)) {
+                    has_accessible_parameterless = true;
+                    break;
+                }
+            }
+
+            if (!has_accessible_parameterless) {
+                diagnostics_.add(klass->source_file,
+                                 klass->syntax->line,
+                                 klass->syntax->column,
+                                 "Base class '" + base->full_name + "' must have an accessible parameterless constructor");
             }
         }
     }
@@ -2307,6 +2486,10 @@ private:
                                                                const FieldSymbol* field,
                                                                int line,
                                                                int column) {
+            if (!field->is_static && receiver != nullptr && receiver->type != nullptr &&
+                receiver->type->kind == TypeKind::Class && receiver->type->class_symbol != field->owner) {
+                receiver = convert_expression(make_named_type(*field->owner), std::move(receiver));
+            }
             auto field_expression = std::make_unique<BoundFieldExpression>();
             field_expression->kind = BoundExpressionKind::Field;
             field_expression->type = field->type;
@@ -2329,19 +2512,47 @@ private:
             return constructor.owner != nullptr && is_accessible_from(constructor.accessibility, *constructor.owner, current_class_);
         }
 
+        const FieldSymbol* find_matching_field(const ClassSymbol& klass,
+                                               const string& name,
+                                               bool require_static) const {
+            for (auto current = &klass; current != nullptr; current = current->base_class) {
+                for (const auto& field : current->fields) {
+                    if (field->name == name && field->is_static == require_static) {
+                        return field.get();
+                    }
+                }
+            }
+            return nullptr;
+        }
+
+        const MethodSymbol* find_matching_method(const ClassSymbol& klass,
+                                                 const string& name,
+                                                 bool require_static) const {
+            for (auto current = &klass; current != nullptr; current = current->base_class) {
+                for (const auto& method : current->methods) {
+                    if (method->name == name && method->is_static == require_static) {
+                        return method.get();
+                    }
+                }
+            }
+            return nullptr;
+        }
+
         const FieldSymbol* select_field(const ClassSymbol& klass,
                                         const string& name,
                                         bool require_static,
                                         bool* found_inaccessible = nullptr) const {
-            for (const auto& field : klass.fields) {
-                if (field->name != name || field->is_static != require_static) {
-                    continue;
-                }
-                if (is_accessible(*field)) {
-                    return field.get();
-                }
-                if (found_inaccessible != nullptr) {
-                    *found_inaccessible = true;
+            for (auto current = &klass; current != nullptr; current = current->base_class) {
+                for (const auto& field : current->fields) {
+                    if (field->name != name || field->is_static != require_static) {
+                        continue;
+                    }
+                    if (is_accessible(*field)) {
+                        return field.get();
+                    }
+                    if (found_inaccessible != nullptr) {
+                        *found_inaccessible = true;
+                    }
                 }
             }
             return nullptr;
@@ -2352,14 +2563,16 @@ private:
                                                    bool require_static,
                                                    bool* found_inaccessible = nullptr) const {
             vector<const MethodSymbol*> methods;
-            for (const auto& method : klass.methods) {
-                if (method->name != name || method->is_static != require_static) {
-                    continue;
-                }
-                if (is_accessible(*method)) {
-                    methods.push_back(method.get());
-                } else if (found_inaccessible != nullptr) {
-                    *found_inaccessible = true;
+            for (auto current = &klass; current != nullptr; current = current->base_class) {
+                for (const auto& method : current->methods) {
+                    if (method->name != name || method->is_static != require_static) {
+                        continue;
+                    }
+                    if (is_accessible(*method)) {
+                        methods.push_back(method.get());
+                    } else if (found_inaccessible != nullptr) {
+                        *found_inaccessible = true;
+                    }
                 }
             }
             return methods;
@@ -2488,8 +2701,46 @@ private:
             diagnostics_.add(find_file_for_class(&current_class_),
                              line,
                              column,
-                             "'" + owner.full_name + "." + member_name + "' is inaccessible due to its " +
-                                 accessibility_text(accessibility) + " protection level");
+                                 "'" + owner.full_name + "." + member_name + "' is inaccessible due to its " +
+                                     accessibility_text(accessibility) + " protection level");
+        }
+
+        std::unique_ptr<BoundExpression> convert_expression(const TypeSymbol* destination,
+                                                            std::unique_ptr<BoundExpression> expression) {
+            if (destination == nullptr || expression == nullptr || expression->type == nullptr ||
+                expression->type == &program_.semantic_model.error_type || are_types_equal(destination, expression->type)) {
+                return expression;
+            }
+            if (destination->kind == TypeKind::Class &&
+                expression->type->kind == TypeKind::Class &&
+                expression->type->class_symbol != nullptr &&
+                destination->class_symbol != nullptr &&
+                is_type_assignable(destination, expression->type)) {
+                auto conversion = std::make_unique<BoundConversionExpression>();
+                conversion->kind = BoundExpressionKind::Conversion;
+                conversion->type = destination;
+                conversion->line = expression->line;
+                conversion->column = expression->column;
+                conversion->expression = std::move(expression);
+                return conversion;
+            }
+            return expression;
+        }
+
+        void harmonize_class_operands(std::unique_ptr<BoundExpression>& left, std::unique_ptr<BoundExpression>& right) {
+            if (left == nullptr || right == nullptr || left->type == nullptr || right->type == nullptr) {
+                return;
+            }
+            if (left->type->kind != TypeKind::Class || right->type->kind != TypeKind::Class || are_types_equal(left->type, right->type)) {
+                return;
+            }
+            if (is_type_assignable(left->type, right->type)) {
+                right = convert_expression(left->type, std::move(right));
+                return;
+            }
+            if (is_type_assignable(right->type, left->type)) {
+                left = convert_expression(right->type, std::move(left));
+            }
         }
 
         void push_scope() {
@@ -2555,6 +2806,8 @@ private:
                         diagnostics_.add(find_file_for_class(&current_class_), variable->line, variable->column,
                                          "Cannot assign expression of type '" + bound->initializer->type->display_name +
                                              "' to variable of type '" + type->display_name + "'");
+                    } else {
+                        bound->initializer = convert_expression(type, std::move(bound->initializer));
                     }
                 }
                 return bound;
@@ -2666,6 +2919,8 @@ private:
                     diagnostics_.add(find_file_for_class(&current_class_), return_statement->line, return_statement->column,
                                      "Return expression type '" + bound->expression->type->display_name +
                                          "' is not assignable to '" + expected->display_name + "'");
+                } else if (bound->expression != nullptr) {
+                    bound->expression = convert_expression(expected, std::move(bound->expression));
                 }
                 return bound;
             }
@@ -2718,6 +2973,8 @@ private:
                     diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                      "Cannot assign expression of type '" + value->type->display_name +
                                          "' to target of type '" + target->type->display_name + "'");
+                } else {
+                    value = convert_expression(target->type, std::move(value));
                 }
                 bound->type = target->type;
                 bound->target = std::move(target);
@@ -2756,6 +3013,9 @@ private:
             if (const auto* binary = dynamic_cast<const BinaryExpressionSyntax*>(&expression)) {
                 auto left = bind_expression(*binary->left);
                 auto right = bind_expression(*binary->right);
+                if (binary->op == TokenKind::EqualsEquals || binary->op == TokenKind::BangEquals) {
+                    harmonize_class_operands(left, right);
+                }
                 auto bound = std::make_unique<BoundBinaryExpression>();
                 bound->kind = BoundExpressionKind::Binary;
                 bound->line = expression.line;
@@ -3012,8 +3272,14 @@ private:
             call->line = syntax.line;
             call->column = syntax.column;
             call->method = selected;
-            call->receiver = std::move(entity.receiver);
-            call->arguments = std::move(arguments);
+            if (entity.receiver != nullptr && selected->owner != nullptr) {
+                call->receiver = convert_expression(make_named_type(*selected->owner), std::move(entity.receiver));
+            } else {
+                call->receiver = std::move(entity.receiver);
+            }
+            for (std::size_t index = 0; index < arguments.size(); ++index) {
+                call->arguments.push_back(convert_expression(selected->parameters[index].type, std::move(arguments[index])));
+            }
             return call;
         }
 
@@ -3061,7 +3327,13 @@ private:
             bound->column = syntax.column;
             bound->class_symbol = type->class_symbol;
             bound->constructor = selected;
-            bound->arguments = std::move(arguments);
+            if (selected != nullptr) {
+                for (std::size_t index = 0; index < arguments.size(); ++index) {
+                    bound->arguments.push_back(convert_expression(selected->parameters[index].type, std::move(arguments[index])));
+                }
+            } else {
+                bound->arguments = std::move(arguments);
+            }
             return bound;
         }
 
@@ -3094,8 +3366,9 @@ private:
                     return result;
                 }
 
+                bool found_inaccessible_instance_field = false;
                 if (!is_current_static_context()) {
-                    if (const auto* field = select_field(current_class_, name->name, false)) {
+                    if (const auto* field = select_field(current_class_, name->name, false, &found_inaccessible_instance_field)) {
                         EntityResolution result;
                         result.kind = EntityResolution::Kind::Value;
                         result.value = make_field_expression(make_this_expression(expression.line, expression.column),
@@ -3106,11 +3379,26 @@ private:
                     }
                 }
 
-                if (const auto* field = select_field(current_class_, name->name, true)) {
+                bool found_inaccessible_static_field = false;
+                if (const auto* field = select_field(current_class_, name->name, true, &found_inaccessible_static_field)) {
                     EntityResolution result;
                     result.kind = EntityResolution::Kind::Value;
                     result.value = make_field_expression(nullptr, field, expression.line, expression.column);
                     return result;
+                }
+
+                if (found_inaccessible_instance_field) {
+                    if (const auto* field = find_matching_field(current_class_, name->name, false)) {
+                        report_inaccessible(name->name, field->accessibility, *field->owner, expression.line, expression.column);
+                        return {};
+                    }
+                }
+
+                if (found_inaccessible_static_field) {
+                    if (const auto* field = find_matching_field(current_class_, name->name, true)) {
+                        report_inaccessible(name->name, field->accessibility, *field->owner, expression.line, expression.column);
+                        return {};
+                    }
                 }
 
                 if (!is_current_static_context()) {
@@ -3124,11 +3412,9 @@ private:
                         return result;
                     }
                     if (found_inaccessible) {
-                        for (const auto& method : current_class_.methods) {
-                            if (method->name == name->name && !method->is_static) {
-                                report_inaccessible(name->name, method->accessibility, *method->owner, expression.line, expression.column);
-                                return {};
-                            }
+                        if (const auto* method = find_matching_method(current_class_, name->name, false)) {
+                            report_inaccessible(name->name, method->accessibility, *method->owner, expression.line, expression.column);
+                            return {};
                         }
                     }
                 }
@@ -3143,11 +3429,9 @@ private:
                         return result;
                     }
                     if (found_inaccessible) {
-                        for (const auto& method : current_class_.methods) {
-                            if (method->name == name->name && method->is_static) {
-                                report_inaccessible(name->name, method->accessibility, *method->owner, expression.line, expression.column);
-                                return {};
-                            }
+                        if (const auto* method = find_matching_method(current_class_, name->name, true)) {
+                            report_inaccessible(name->name, method->accessibility, *method->owner, expression.line, expression.column);
+                            return {};
                         }
                     }
                 }
@@ -3268,25 +3552,21 @@ private:
                         return result;
                     }
                     if (found_inaccessible) {
-                        for (const auto& field_candidate : type_symbol.fields) {
-                            if (field_candidate->is_static && field_candidate->name == member->member_name) {
-                                report_inaccessible(member->member_name,
-                                                    field_candidate->accessibility,
-                                                    *field_candidate->owner,
-                                                    expression.line,
-                                                    expression.column);
-                                return {};
-                            }
+                        if (const auto* field_candidate = find_matching_field(type_symbol, member->member_name, true)) {
+                            report_inaccessible(member->member_name,
+                                                field_candidate->accessibility,
+                                                *field_candidate->owner,
+                                                expression.line,
+                                                expression.column);
+                            return {};
                         }
-                        for (const auto& method_candidate : type_symbol.methods) {
-                            if (method_candidate->is_static && method_candidate->name == member->member_name) {
-                                report_inaccessible(member->member_name,
-                                                    method_candidate->accessibility,
-                                                    *method_candidate->owner,
-                                                    expression.line,
-                                                    expression.column);
-                                return {};
-                            }
+                        if (const auto* method_candidate = find_matching_method(type_symbol, member->member_name, true)) {
+                            report_inaccessible(member->member_name,
+                                                method_candidate->accessibility,
+                                                *method_candidate->owner,
+                                                expression.line,
+                                                expression.column);
+                            return {};
                         }
                     }
                     {
@@ -3348,25 +3628,21 @@ private:
                         return result;
                     }
                     if (found_inaccessible) {
-                        for (const auto& field_candidate : klass->fields) {
-                            if (!field_candidate->is_static && field_candidate->name == member->member_name) {
-                                report_inaccessible(member->member_name,
-                                                    field_candidate->accessibility,
-                                                    *field_candidate->owner,
-                                                    expression.line,
-                                                    expression.column);
-                                return {};
-                            }
+                        if (const auto* field_candidate = find_matching_field(*klass, member->member_name, false)) {
+                            report_inaccessible(member->member_name,
+                                                field_candidate->accessibility,
+                                                *field_candidate->owner,
+                                                expression.line,
+                                                expression.column);
+                            return {};
                         }
-                        for (const auto& method_candidate : klass->methods) {
-                            if (!method_candidate->is_static && method_candidate->name == member->member_name) {
-                                report_inaccessible(member->member_name,
-                                                    method_candidate->accessibility,
-                                                    *method_candidate->owner,
-                                                    expression.line,
-                                                    expression.column);
-                                return {};
-                            }
+                        if (const auto* method_candidate = find_matching_method(*klass, member->member_name, false)) {
+                            report_inaccessible(member->member_name,
+                                                method_candidate->accessibility,
+                                                *method_candidate->owner,
+                                                expression.line,
+                                                expression.column);
+                            return {};
                         }
                     }
 
@@ -3713,6 +3989,40 @@ private:
         }
     }
 
+    const ConstructorSymbol* find_parameterless_declared_constructor(const ClassSymbol& klass) const {
+        for (const auto& constructor : klass.constructors) {
+            if (constructor->parameters.empty()) {
+                return constructor.get();
+            }
+        }
+        return nullptr;
+    }
+
+    void initialize_instance_fields(const ClassSymbol& klass, const std::shared_ptr<RuntimeObject>& instance) {
+        if (klass.base_class != nullptr) {
+            initialize_instance_fields(*klass.base_class, instance);
+        }
+        for (const auto& field : klass.fields) {
+            if (field->is_static) {
+                continue;
+            }
+            instance->fields[field.get()] = default_value_for_type(field->type);
+        }
+    }
+
+    void invoke_implicit_constructor(const ClassSymbol& klass, const std::shared_ptr<RuntimeObject>& receiver) {
+        if (klass.base_class == nullptr) {
+            return;
+        }
+
+        if (const auto* constructor = find_parameterless_declared_constructor(*klass.base_class)) {
+            invoke_constructor(*constructor, receiver, {});
+            return;
+        }
+
+        invoke_implicit_constructor(*klass.base_class, receiver);
+    }
+
     Value invoke_method(const MethodSymbol& method,
                         std::shared_ptr<RuntimeObject> receiver,
                         const vector<Value>& arguments,
@@ -3780,6 +4090,9 @@ private:
     void invoke_constructor(const ConstructorSymbol& constructor,
                             const std::shared_ptr<RuntimeObject>& receiver,
                             const vector<Value>& arguments) {
+        if (constructor.owner != nullptr) {
+            invoke_implicit_constructor(*constructor.owner, receiver);
+        }
         Frame frame;
         frame.self = receiver;
         for (std::size_t index = 0; index < constructor.parameters.size() && index < arguments.size(); ++index) {
@@ -3988,6 +4301,10 @@ private:
                 access_assignable(*assignment.target, frame) = value;
                 return value;
             }
+            case BoundExpressionKind::Conversion: {
+                const auto& conversion = static_cast<const BoundConversionExpression&>(expression);
+                return evaluate_expression(*conversion.expression, frame);
+            }
             case BoundExpressionKind::Unary: {
                 const auto& unary = static_cast<const BoundUnaryExpression&>(expression);
                 Value operand = evaluate_expression(*unary.operand, frame);
@@ -4060,18 +4377,15 @@ private:
                 const auto& creation = static_cast<const BoundNewExpression&>(expression);
                 auto instance = std::make_shared<RuntimeObject>();
                 instance->class_symbol = creation.class_symbol;
-                for (const auto& field : creation.class_symbol->fields) {
-                    if (field->is_static) {
-                        continue;
-                    }
-                    instance->fields[field.get()] = default_value_for_type(field->type);
-                }
+                initialize_instance_fields(*creation.class_symbol, instance);
                 vector<Value> arguments;
                 for (const auto& argument : creation.arguments) {
                     arguments.push_back(evaluate_expression(*argument, frame));
                 }
                 if (creation.constructor != nullptr) {
                     invoke_constructor(*creation.constructor, instance, arguments);
+                } else {
+                    invoke_implicit_constructor(*creation.class_symbol, instance);
                 }
                 return Value{instance};
             }
@@ -4116,6 +4430,7 @@ public:
         emit_prelude(out);
         emit_enum_helpers(out);
         emit_classes(out);
+        emit_upcast_helpers(out);
         emit_method_prototypes(out);
         emit_constructors(out);
         emit_methods(out);
@@ -4128,6 +4443,7 @@ public:
         emit_prelude(out);
         emit_enum_helpers(out);
         emit_classes(out);
+        emit_upcast_helpers(out);
         emit_method_prototypes(out);
         emit_constructors(out);
         emit_methods(out);
@@ -4135,6 +4451,27 @@ public:
     }
 
 private:
+    void collect_class_emission_order(const ClassSymbol& klass,
+                                      std::unordered_set<const ClassSymbol*>& visited,
+                                      vector<const ClassSymbol*>& order) const {
+        if (klass.is_builtin || !visited.insert(&klass).second) {
+            return;
+        }
+        if (klass.base_class != nullptr) {
+            collect_class_emission_order(*klass.base_class, visited, order);
+        }
+        order.push_back(&klass);
+    }
+
+    vector<const ClassSymbol*> class_emission_order() const {
+        vector<const ClassSymbol*> order;
+        std::unordered_set<const ClassSymbol*> visited;
+        for (const auto& class_holder : program_.semantic_model.classes) {
+            collect_class_emission_order(*class_holder, visited, order);
+        }
+        return order;
+    }
+
     string class_struct_name(const ClassSymbol& klass) const {
         return sanitize_c_name(klass.full_name);
     }
@@ -4151,12 +4488,33 @@ private:
         return sanitize_c_name(ctor.owner->full_name + "_ctor_" + std::to_string(ctor.slot));
     }
 
+    string implicit_constructor_name(const ClassSymbol& klass) const {
+        return sanitize_c_name("hy_ctor_implicit_" + klass.full_name);
+    }
+
     string new_helper_name(const ClassSymbol& klass, int constructor_slot) const {
         return sanitize_c_name("hy_new_" + klass.full_name + "_" + std::to_string(constructor_slot));
     }
 
+    string base_field_name() const {
+        return "__base";
+    }
+
+    string upcast_name(const ClassSymbol& derived, const ClassSymbol& base) const {
+        return sanitize_c_name("hy_upcast_" + derived.full_name + "_to_" + base.full_name);
+    }
+
     string enum_to_string_name(const EnumSymbol& enum_symbol) const {
         return sanitize_c_name("hy_enum_to_string_" + enum_symbol.full_name);
+    }
+
+    const ConstructorSymbol* find_parameterless_declared_constructor(const ClassSymbol& klass) const {
+        for (const auto& ctor : klass.constructors) {
+            if (ctor->parameters.empty()) {
+                return ctor.get();
+            }
+        }
+        return nullptr;
     }
 
     void emit_prelude(std::ostringstream& out) {
@@ -4351,24 +4709,22 @@ private:
     }
 
     void emit_classes(std::ostringstream& out) {
-        for (const auto& class_holder : program_.semantic_model.classes) {
-            if (class_holder->is_builtin) {
-                continue;
+        const auto classes = class_emission_order();
+        for (const auto* klass : classes) {
+            out << "typedef struct " << class_struct_name(*klass) << " {\n";
+            if (klass->base_class != nullptr) {
+                out << "    " << class_struct_name(*klass->base_class) << " " << base_field_name() << ";\n";
             }
-            out << "typedef struct " << class_struct_name(*class_holder) << " {\n";
-            for (const auto& field : class_holder->fields) {
+            for (const auto& field : klass->fields) {
                 if (field->is_static) {
                     continue;
                 }
                 out << "    " << c_type_name(field->type) << " " << sanitize_c_name(field->name) << ";\n";
             }
-            out << "} " << class_struct_name(*class_holder) << ";\n\n";
+            out << "} " << class_struct_name(*klass) << ";\n\n";
         }
-        for (const auto& class_holder : program_.semantic_model.classes) {
-            if (class_holder->is_builtin) {
-                continue;
-            }
-            for (const auto& field : class_holder->fields) {
+        for (const auto* klass : classes) {
+            for (const auto& field : klass->fields) {
                 if (!field->is_static) {
                     continue;
                 }
@@ -4379,18 +4735,30 @@ private:
         out << "\n";
     }
 
-    void emit_method_prototypes(std::ostringstream& out) {
-        for (const auto& class_holder : program_.semantic_model.classes) {
-            if (class_holder->is_builtin) {
+    void emit_upcast_helpers(std::ostringstream& out) {
+        for (const auto* klass : class_emission_order()) {
+            if (klass->base_class == nullptr) {
                 continue;
             }
-            for (const auto& ctor : class_holder->constructors) {
-                out << "void " << constructor_name(*ctor) << "(" << class_struct_name(*class_holder) << "* self";
+            out << "static " << class_struct_name(*klass->base_class) << "* "
+                << upcast_name(*klass, *klass->base_class) << "("
+                << class_struct_name(*klass) << "* value) {\n";
+            out << "    return value == NULL ? NULL : &value->" << base_field_name() << ";\n";
+            out << "}\n\n";
+        }
+    }
+
+    void emit_method_prototypes(std::ostringstream& out) {
+        for (const auto* klass : class_emission_order()) {
+            out << "void " << implicit_constructor_name(*klass) << "(" << class_struct_name(*klass)
+                << "* self);\n";
+            for (const auto& ctor : klass->constructors) {
+                out << "void " << constructor_name(*ctor) << "(" << class_struct_name(*klass) << "* self";
                 for (const auto& parameter : ctor->parameters) {
                     out << ", " << c_type_name(parameter.type) << " " << sanitize_c_name(parameter.name);
                 }
                 out << ");\n";
-                out << class_struct_name(*class_holder) << "* " << new_helper_name(*class_holder, ctor->slot)
+                out << class_struct_name(*klass) << "* " << new_helper_name(*klass, ctor->slot)
                     << "(";
                 for (std::size_t index = 0; index < ctor->parameters.size(); ++index) {
                     if (index > 0) {
@@ -4400,14 +4768,14 @@ private:
                 }
                 out << ");\n";
             }
-            if (class_holder->constructors.empty()) {
-                out << class_struct_name(*class_holder) << "* " << new_helper_name(*class_holder, 0) << "(void);\n";
+            if (klass->constructors.empty()) {
+                out << class_struct_name(*klass) << "* " << new_helper_name(*klass, 0) << "(void);\n";
             }
-            for (const auto& method : class_holder->methods) {
+            for (const auto& method : klass->methods) {
                 out << c_type_name(method->return_type) << " " << method_name(*method) << "(";
                 bool wrote = false;
                 if (!method->is_static) {
-                    out << class_struct_name(*class_holder) << "* self";
+                    out << class_struct_name(*klass) << "* self";
                     wrote = true;
                 }
                 for (const auto& parameter : method->parameters) {
@@ -4427,29 +4795,42 @@ private:
     }
 
     void emit_constructors(std::ostringstream& out) {
-        for (const auto& class_holder : program_.semantic_model.classes) {
-            if (class_holder->is_builtin) {
-                continue;
+        for (const auto* klass : class_emission_order()) {
+            out << "void " << implicit_constructor_name(*klass) << "(" << class_struct_name(*klass)
+                << "* self) {\n";
+            if (klass->base_class != nullptr) {
+                if (const auto* base_ctor = find_parameterless_declared_constructor(*klass->base_class)) {
+                    out << "    " << constructor_name(*base_ctor) << "("
+                        << emit_class_upcast("self", *klass, *klass->base_class) << ");\n";
+                } else {
+                    out << "    " << implicit_constructor_name(*klass->base_class) << "("
+                        << emit_class_upcast("self", *klass, *klass->base_class) << ");\n";
+                }
             }
-            if (class_holder->constructors.empty()) {
-                out << class_struct_name(*class_holder) << "* " << new_helper_name(*class_holder, 0) << "(void) {\n";
-                out << "    " << class_struct_name(*class_holder) << "* self = (" << class_struct_name(*class_holder)
-                    << "*)hy_alloc_managed(sizeof(" << class_struct_name(*class_holder) << "));\n";
+            out << "    return;\n";
+            out << "}\n\n";
+
+            if (klass->constructors.empty()) {
+                out << class_struct_name(*klass) << "* " << new_helper_name(*klass, 0) << "(void) {\n";
+                out << "    " << class_struct_name(*klass) << "* self = (" << class_struct_name(*klass)
+                    << "*)hy_alloc_managed(sizeof(" << class_struct_name(*klass) << "));\n";
+                out << "    " << implicit_constructor_name(*klass) << "(self);\n";
                 out << "    return self;\n";
                 out << "}\n\n";
                 continue;
             }
 
-            for (const auto& ctor : class_holder->constructors) {
-                out << "void " << constructor_name(*ctor) << "(" << class_struct_name(*class_holder) << "* self";
+            for (const auto& ctor : klass->constructors) {
+                out << "void " << constructor_name(*ctor) << "(" << class_struct_name(*klass) << "* self";
                 for (const auto& parameter : ctor->parameters) {
                     out << ", " << c_type_name(parameter.type) << " " << sanitize_c_name(parameter.name);
                 }
                 out << ") {\n";
+                out << "    " << implicit_constructor_name(*klass) << "(self);\n";
                 emit_block(out, *program_.constructors.at(ctor.get())->body, 1);
                 out << "}\n\n";
 
-                out << class_struct_name(*class_holder) << "* " << new_helper_name(*class_holder, ctor->slot)
+                out << class_struct_name(*klass) << "* " << new_helper_name(*klass, ctor->slot)
                     << "(";
                 for (std::size_t index = 0; index < ctor->parameters.size(); ++index) {
                     if (index > 0) {
@@ -4461,8 +4842,8 @@ private:
                     out << "void";
                 }
                 out << ") {\n";
-                out << "    " << class_struct_name(*class_holder) << "* self = (" << class_struct_name(*class_holder)
-                    << "*)hy_alloc_managed(sizeof(" << class_struct_name(*class_holder) << "));\n";
+                out << "    " << class_struct_name(*klass) << "* self = (" << class_struct_name(*klass)
+                    << "*)hy_alloc_managed(sizeof(" << class_struct_name(*klass) << "));\n";
                 out << "    " << constructor_name(*ctor) << "(self";
                 for (const auto& parameter : ctor->parameters) {
                     out << ", " << sanitize_c_name(parameter.name);
@@ -4475,15 +4856,12 @@ private:
     }
 
     void emit_methods(std::ostringstream& out) {
-        for (const auto& class_holder : program_.semantic_model.classes) {
-            if (class_holder->is_builtin) {
-                continue;
-            }
-            for (const auto& method : class_holder->methods) {
+        for (const auto* klass : class_emission_order()) {
+            for (const auto& method : klass->methods) {
                 out << c_type_name(method->return_type) << " " << method_name(*method) << "(";
                 bool wrote = false;
                 if (!method->is_static) {
-                    out << class_struct_name(*class_holder) << "* self";
+                    out << class_struct_name(*klass) << "* self";
                     wrote = true;
                 }
                 for (const auto& parameter : method->parameters) {
@@ -4689,6 +5067,23 @@ private:
         return enum_to_string_name(*expression.type->enum_symbol) + "(" + emit_expression(expression) + ")";
     }
 
+    string emit_class_upcast(const string& expression, const ClassSymbol& source, const ClassSymbol& target) const {
+        if (&source == &target) {
+            return expression;
+        }
+
+        string result = expression;
+        const ClassSymbol* current = &source;
+        while (current != nullptr && current != &target) {
+            if (current->base_class == nullptr) {
+                break;
+            }
+            result = upcast_name(*current, *current->base_class) + "(" + result + ")";
+            current = current->base_class;
+        }
+        return result;
+    }
+
     string emit_expression(const BoundExpression& expression) {
         switch (expression.kind) {
             case BoundExpressionKind::Literal: {
@@ -4742,6 +5137,21 @@ private:
             case BoundExpressionKind::Assignment: {
                 const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
                 return "(" + emit_expression(*assignment.target) + " = " + emit_expression(*assignment.expression) + ")";
+            }
+            case BoundExpressionKind::Conversion: {
+                const auto& conversion = static_cast<const BoundConversionExpression&>(expression);
+                if (conversion.expression != nullptr &&
+                    conversion.expression->type != nullptr &&
+                    conversion.expression->type->kind == TypeKind::Class &&
+                    expression.type != nullptr &&
+                    expression.type->kind == TypeKind::Class &&
+                    conversion.expression->type->class_symbol != nullptr &&
+                    expression.type->class_symbol != nullptr) {
+                    return emit_class_upcast(emit_expression(*conversion.expression),
+                                             *conversion.expression->type->class_symbol,
+                                             *expression.type->class_symbol);
+                }
+                return conversion.expression != nullptr ? emit_expression(*conversion.expression) : "NULL";
             }
             case BoundExpressionKind::Unary: {
                 const auto& unary = static_cast<const BoundUnaryExpression&>(expression);

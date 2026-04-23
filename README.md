@@ -3,10 +3,10 @@
 [![Language](https://img.shields.io/badge/language-C%2B%2B20-blue?style=flat-square)](https://en.cppreference.com/w/cpp/20)
 [![Language](https://img.shields.io/badge/language-Hydrogen-blue?style=flat-square)](https://en.cppreference.com/w/cpp/20)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20x64-lightgrey?style=flat-square)](#build)
-[![Phase](https://img.shields.io/badge/phase-1%20%E2%80%93%20Language%20Hardening-orange?style=flat-square)](ROADMAP.md)
+[![Phase](https://img.shields.io/badge/phase-2%20%E2%80%93%20Core%20Language%20Expansion-orange?style=flat-square)](ROADMAP.md)
 [![Docs](https://img.shields.io/badge/docs-online-brightgreen?style=flat-square)](https://aurora-softwares.github.io/Hylang-Docs/)
 
-A C#-inspired systems programming language for [Aura OS](https://github.com/Aurora-Softwares) and general x64 systems.
+A C#-inspired systems programming language for [Australis OS](https://github.com/Aurora-Softwares) and general x64 systems.
 
 ---
 
@@ -26,10 +26,11 @@ using  namespace  class  enum
 public  private  internal  protected  static
 int  bool  string  string[]  null
 if  else  while  for  break  continue  return
-new  this  +  -  *  /  %  ==  !=  <  <=  >  >=  &&  ||  !
+new  this  :  +  -  *  /  %  ==  !=  <  <=  >  >=  &&  ||  !
 ```
 
 - Fields, constructors, and methods — with overloading
+- Basic single inheritance with inherited member lookup and `protected` access
 - Object creation, method calls, field access, and assignment
 - String concatenation across `string`, `int`, and `bool`
 - Array and string `.Length`, array indexing, string character indexing
@@ -81,6 +82,6 @@ build/hyc build tests/projects/mathlib/Math.hyproj --target lib -o build/libmath
 
 ## Roadmap
 
-Hylang is developed in phases toward a self-hosted compiler and first-class support for Aura OS userland. The current active zone is **Phase 1 — Language Hardening**.
+Hylang is developed in phases toward a self-hosted compiler and first-class support for Australis OS userland. The current active zone is **Phase 2 — Core Language Expansion**, with the inheritance-first Milestone 1 complete.
 
 See [ROADMAP.md](ROADMAP.md) for the full plan.
