@@ -1,0 +1,12 @@
+format = 2
+name = "HexLab.Core"
+version = "0.1.0"
+type = "lib"
+sources = ["HexLabCore.hy"]
+project_references = []
+
+[package]
+id = "HexLab.Core"
+description = "Core binary inspection helpers"
+authors = []
+license = ""

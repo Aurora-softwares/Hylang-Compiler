@@ -1,0 +1,11 @@
+format = 2
+name = "HexLab"
+version = "0.1.0"
+type = "workspace"
+members = ["HexLab.Core/HexLab.Core.hyproj", "HexLab.Cli/HexLab.Cli.hyproj", "HexLab.Tests/HexLab.Tests.hyproj"]
+
+[package]
+id = "HexLab"
+description = "Binary inspection showcase workspace"
+authors = []
+license = ""

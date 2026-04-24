@@ -44,3 +44,4 @@ cmake-build*/
 *.dwo
 
 PLAN.md
+.claude/

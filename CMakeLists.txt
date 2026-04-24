@@ -26,6 +26,9 @@ target_link_libraries(hyrun PRIVATE hylang)
 add_executable(hyc src/hyc_main.cpp)
 target_link_libraries(hyc PRIVATE hylang)
 
+add_executable(hy src/hy_main.cpp)
+target_link_libraries(hy PRIVATE hylang)
+
 enable_testing()
 
 function(add_hyrun_negative_test test_name source_file expected_regex)
@@ -808,4 +811,70 @@ add_test(
         -DRUN_ENV=HYLANG_GC_STRESS=1
         "-DEXPECTED_TEXT=Count=1000.*Sum=500500.*Children=3.*NameBytes=4"
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildProjectAndRunWithArgs.cmake
+)
+
+# ---- Phase 4: Workflow and HexLab Tests ----
+
+add_test(
+    NAME hy_build_hexlab_workspace
+    COMMAND hy build ${CMAKE_CURRENT_SOURCE_DIR}/samples/hexlab/HexLab.hyproj
+)
+set_tests_properties(hy_build_hexlab_workspace PROPERTIES PASS_REGULAR_EXPRESSION "HexLab.Core.*HexLab.Cli.*HexLab.Tests")
+
+add_test(
+    NAME hy_test_hexlab_workspace
+    COMMAND hy test ${CMAKE_CURRENT_SOURCE_DIR}/samples/hexlab/HexLab.hyproj
+)
+
+add_test(
+    NAME hy_fmt_hexlab_check
+    COMMAND hy fmt --check ${CMAKE_CURRENT_SOURCE_DIR}/samples/hexlab
+)
+
+add_test(
+    NAME hy_package_hexlab_cli
+    COMMAND hy package pack ${CMAKE_CURRENT_SOURCE_DIR}/samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj
+)
+set_tests_properties(hy_package_hexlab_cli PROPERTIES PASS_REGULAR_EXPRESSION "HexLab.Cli-0.1.0.hypkg")
+
+add_test(
+    NAME hy_run_hexlab_inspect_demo
+    COMMAND hy run ${CMAKE_CURRENT_SOURCE_DIR}/samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- inspect
+            ${CMAKE_CURRENT_SOURCE_DIR}/samples/hexlab/demo.bin
+)
+set_tests_properties(hy_run_hexlab_inspect_demo PROPERTIES PASS_REGULAR_EXPRESSION "format=PNG width=1 height=1")
+
+add_test(
+    NAME hy_new_test_scaffold
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_new_test_scaffold
+        -DPROJECT_NAME=Phase4Scaffold
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyNewAndCheck.cmake
+)
+
+add_test(
+    NAME hy_check_json_hello
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/hello_world.hy
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCheckJson.cmake
+)
+
+add_test(
+    NAME hy_build_debug_emits_hymap
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/hello_world.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/hello_world_debug
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBuildDebug.cmake
+)
+
+add_test(
+    NAME hy_package_add_local_dependency
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_package_add_local_dependency
+        -DDEPENDENCY_PROJECT=${CMAKE_CURRENT_SOURCE_DIR}/samples/hexlab/HexLab.Core/HexLab.Core.hyproj
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyPackageAdd.cmake
 )

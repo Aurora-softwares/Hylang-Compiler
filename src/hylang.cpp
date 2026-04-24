@@ -35,11 +35,17 @@ struct DiagnosticBag {
     std::vector<Diagnostic> items;
 
     void add(const fs::path& file, int line, int column, std::string message) {
-        items.push_back(Diagnostic{file, line, column, std::move(message)});
+        items.push_back(Diagnostic{file, line, column, std::move(message), false});
+    }
+
+    void warn(const fs::path& file, int line, int column, std::string message) {
+        items.push_back(Diagnostic{file, line, column, std::move(message), true});
     }
 
     bool has_errors() const {
-        return !items.empty();
+        return std::any_of(items.begin(), items.end(), [](const Diagnostic& diagnostic) {
+            return !diagnostic.is_warning;
+        });
     }
 
     void append(std::vector<Diagnostic> diagnostics) {
@@ -115,7 +121,16 @@ enum class TokenKind {
     Virtual,
     Override,
     Void,
+    Byte,
+    SByte,
+    Short,
+    UShort,
     Int,
+    UInt,
+    Long,
+    ULong,
+    NInt,
+    NUInt,
     StringKeyword,
     Bool,
     Var,
@@ -356,7 +371,16 @@ private:
             {"virtual", TokenKind::Virtual},
             {"override", TokenKind::Override},
             {"void", TokenKind::Void},
+            {"byte", TokenKind::Byte},
+            {"sbyte", TokenKind::SByte},
+            {"short", TokenKind::Short},
+            {"ushort", TokenKind::UShort},
             {"int", TokenKind::Int},
+            {"uint", TokenKind::UInt},
+            {"long", TokenKind::Long},
+            {"ulong", TokenKind::ULong},
+            {"nint", TokenKind::NInt},
+            {"nuint", TokenKind::NUInt},
             {"string", TokenKind::StringKeyword},
             {"bool", TokenKind::Bool},
             {"var", TokenKind::Var},
@@ -1537,7 +1561,18 @@ private:
     }
 
     static bool is_builtin_type_token(TokenKind kind) {
-        return kind == TokenKind::Int || kind == TokenKind::StringKeyword || kind == TokenKind::Bool;
+        return kind == TokenKind::Byte ||
+               kind == TokenKind::SByte ||
+               kind == TokenKind::Short ||
+               kind == TokenKind::UShort ||
+               kind == TokenKind::Int ||
+               kind == TokenKind::UInt ||
+               kind == TokenKind::Long ||
+               kind == TokenKind::ULong ||
+               kind == TokenKind::NInt ||
+               kind == TokenKind::NUInt ||
+               kind == TokenKind::StringKeyword ||
+               kind == TokenKind::Bool;
     }
 
     static bool is_modifier_token(TokenKind kind) {
@@ -1906,7 +1941,16 @@ struct SemanticModel {
     std::vector<std::unique_ptr<TypeSymbol>> owned_types;
     std::unordered_map<string, TypeSymbol*> array_types;
     TypeSymbol void_type{TypeKind::Void, "void", nullptr, nullptr, nullptr, nullptr, {}};
+    TypeSymbol byte_type{TypeKind::Int, "byte", nullptr, nullptr, nullptr, nullptr, {}};
+    TypeSymbol sbyte_type{TypeKind::Int, "sbyte", nullptr, nullptr, nullptr, nullptr, {}};
+    TypeSymbol short_type{TypeKind::Int, "short", nullptr, nullptr, nullptr, nullptr, {}};
+    TypeSymbol ushort_type{TypeKind::Int, "ushort", nullptr, nullptr, nullptr, nullptr, {}};
     TypeSymbol int_type{TypeKind::Int, "int", nullptr, nullptr, nullptr, nullptr, {}};
+    TypeSymbol uint_type{TypeKind::Int, "uint", nullptr, nullptr, nullptr, nullptr, {}};
+    TypeSymbol long_type{TypeKind::Int, "long", nullptr, nullptr, nullptr, nullptr, {}};
+    TypeSymbol ulong_type{TypeKind::Int, "ulong", nullptr, nullptr, nullptr, nullptr, {}};
+    TypeSymbol nint_type{TypeKind::Int, "nint", nullptr, nullptr, nullptr, nullptr, {}};
+    TypeSymbol nuint_type{TypeKind::Int, "nuint", nullptr, nullptr, nullptr, nullptr, {}};
     TypeSymbol bool_type{TypeKind::Bool, "bool", nullptr, nullptr, nullptr, nullptr, {}};
     TypeSymbol string_type{TypeKind::String, "string", nullptr, nullptr, nullptr, nullptr, {}};
     TypeSymbol null_type{TypeKind::Null, "null", nullptr, nullptr, nullptr, nullptr, {}};
@@ -1920,6 +1964,9 @@ struct SemanticModel {
     std::unordered_set<string> namespaces;
     ClassSymbol* console_class = nullptr;
     ClassSymbol* file_class = nullptr;
+    ClassSymbol* convert_class = nullptr;
+    ClassSymbol* assert_class = nullptr;
+    ClassSymbol* intrinsics_class = nullptr;
     MethodSymbol* console_write_string = nullptr;
     MethodSymbol* console_write_int = nullptr;
     MethodSymbol* console_write_bool = nullptr;
@@ -1929,6 +1976,15 @@ struct SemanticModel {
     MethodSymbol* file_exists = nullptr;
     MethodSymbol* file_read_all_text = nullptr;
     MethodSymbol* file_write_all_text = nullptr;
+    MethodSymbol* file_read_all_bytes = nullptr;
+    MethodSymbol* file_write_all_bytes = nullptr;
+    MethodSymbol* convert_to_int32 = nullptr;
+    MethodSymbol* assert_true = nullptr;
+    MethodSymbol* assert_false = nullptr;
+    MethodSymbol* assert_equal = nullptr;
+    MethodSymbol* assert_not_equal = nullptr;
+    MethodSymbol* assert_fail = nullptr;
+    MethodSymbol* intrinsics_fail = nullptr;
     int next_variable_id = 1;
 
     const TypeSymbol* get_array_type(const TypeSymbol* element_type) {
@@ -2024,6 +2080,10 @@ bool is_reference_type(const TypeSymbol* type) {
            type->kind == TypeKind::Interface ||
            type->kind == TypeKind::String ||
            type->kind == TypeKind::Array;
+}
+
+bool is_integral_type(const TypeSymbol* type) {
+    return type != nullptr && type->kind == TypeKind::Int;
 }
 
 bool does_type_implement_interface_symbol(const ClassSymbol* candidate, const ClassSymbol* interface_symbol) {
@@ -2174,7 +2234,7 @@ string member_signature_key(const string& name, bool is_static, const vector<Par
 }
 
 bool is_string_concat_operand(const SemanticModel& model, const TypeSymbol* type) {
-    return type == &model.string_type || type == &model.int_type || type == &model.bool_type;
+    return type == &model.string_type || is_integral_type(type) || type == &model.bool_type;
 }
 
 bool is_string_concatenation(const SemanticModel& model, const TypeSymbol* left, const TypeSymbol* right) {
@@ -2207,8 +2267,26 @@ const TypeSymbol* resolve_type_in_context(SemanticModel& model,
 
     if (name == "void") {
         base = &model.void_type;
+    } else if (name == "byte") {
+        base = &model.byte_type;
+    } else if (name == "sbyte") {
+        base = &model.sbyte_type;
+    } else if (name == "short") {
+        base = &model.short_type;
+    } else if (name == "ushort") {
+        base = &model.ushort_type;
     } else if (name == "int") {
         base = &model.int_type;
+    } else if (name == "uint") {
+        base = &model.uint_type;
+    } else if (name == "long") {
+        base = &model.long_type;
+    } else if (name == "ulong") {
+        base = &model.ulong_type;
+    } else if (name == "nint") {
+        base = &model.nint_type;
+    } else if (name == "nuint") {
+        base = &model.nuint_type;
     } else if (name == "bool") {
         base = &model.bool_type;
     } else if (name == "string") {
@@ -2383,6 +2461,8 @@ private:
         model.namespaces.insert("System");
         model.namespaces.insert("System.IO");
         model.namespaces.insert("System.Collections");
+        model.namespaces.insert("System.Runtime");
+        model.namespaces.insert("System.Testing");
 
         auto create_builtin_class = [&](const string& namespace_name, const string& class_name) -> ClassSymbol* {
             auto klass = std::make_unique<ClassSymbol>();
@@ -2439,6 +2519,72 @@ private:
                                                    "WriteAllText",
                                                    &model.void_type,
                                                    {{"path", &model.string_type}, {"content", &model.string_type}});
+        model.file_read_all_bytes =
+            create_builtin(model.file_class,
+                           "ReadAllBytes",
+                           model.get_array_type(&model.byte_type),
+                           {{"path", &model.string_type}});
+        model.file_write_all_bytes = create_builtin(model.file_class,
+                                                    "WriteAllBytes",
+                                                    &model.void_type,
+                                                    {{"path", &model.string_type},
+                                                     {"content", model.get_array_type(&model.byte_type)}});
+
+        model.convert_class = create_builtin_class("System", "Convert");
+        model.convert_to_int32 =
+            create_builtin(model.convert_class, "ToInt32", &model.int_type, {{"value", &model.string_type}});
+
+        model.assert_class = create_builtin_class("System.Testing", "Assert");
+        model.assert_true = create_builtin(model.assert_class,
+                                           "True",
+                                           &model.void_type,
+                                           {{"value", &model.bool_type}, {"message", &model.string_type}});
+        model.assert_false = create_builtin(model.assert_class,
+                                            "False",
+                                            &model.void_type,
+                                            {{"value", &model.bool_type}, {"message", &model.string_type}});
+        model.assert_equal = create_builtin(model.assert_class,
+                                            "Equal",
+                                            &model.void_type,
+                                            {{"expected", &model.int_type},
+                                             {"actual", &model.int_type},
+                                             {"message", &model.string_type}});
+        create_builtin(model.assert_class,
+                       "Equal",
+                       &model.void_type,
+                       {{"expected", &model.string_type},
+                        {"actual", &model.string_type},
+                        {"message", &model.string_type}});
+        create_builtin(model.assert_class,
+                       "Equal",
+                       &model.void_type,
+                       {{"expected", &model.bool_type},
+                        {"actual", &model.bool_type},
+                        {"message", &model.string_type}});
+        model.assert_not_equal = create_builtin(model.assert_class,
+                                                "NotEqual",
+                                                &model.void_type,
+                                                {{"expected", &model.int_type},
+                                                 {"actual", &model.int_type},
+                                                 {"message", &model.string_type}});
+        create_builtin(model.assert_class,
+                       "NotEqual",
+                       &model.void_type,
+                       {{"expected", &model.string_type},
+                        {"actual", &model.string_type},
+                        {"message", &model.string_type}});
+        create_builtin(model.assert_class,
+                       "NotEqual",
+                       &model.void_type,
+                       {{"expected", &model.bool_type},
+                        {"actual", &model.bool_type},
+                        {"message", &model.string_type}});
+        model.assert_fail =
+            create_builtin(model.assert_class, "Fail", &model.void_type, {{"message", &model.string_type}});
+
+        model.intrinsics_class = create_builtin_class("System.Runtime", "Intrinsics");
+        model.intrinsics_fail =
+            create_builtin(model.intrinsics_class, "Fail", &model.void_type, {{"message", &model.string_type}});
     }
 
     void declare_classes(SemanticModel& model, const vector<CompilationUnitSyntax>& units) {
@@ -3813,11 +3959,11 @@ private:
                     }
                     bound->type = &program_.semantic_model.bool_type;
                 } else {
-                    if (bound->operand->type != &program_.semantic_model.int_type) {
+                    if (!is_integral_type(bound->operand->type)) {
                         diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                          "Unary '+' and '-' require int operands");
                     }
-                    bound->type = &program_.semantic_model.int_type;
+                    bound->type = bound->operand->type;
                 }
                 return bound;
             }
@@ -3837,9 +3983,9 @@ private:
                 bound->op = binary->op;
                 switch (binary->op) {
                     case TokenKind::Plus:
-                        if (bound->left->type == &program_.semantic_model.int_type &&
-                            bound->right->type == &program_.semantic_model.int_type) {
-                            bound->type = &program_.semantic_model.int_type;
+                        if (is_integral_type(bound->left->type) &&
+                            is_integral_type(bound->right->type)) {
+                            bound->type = bound->left->type;
                             break;
                         }
                         if (is_string_concatenation(program_.semantic_model, bound->left->type, bound->right->type)) {
@@ -3854,12 +4000,12 @@ private:
                     case TokenKind::Star:
                     case TokenKind::Slash:
                     case TokenKind::Percent:
-                        if (bound->left->type != &program_.semantic_model.int_type ||
-                            bound->right->type != &program_.semantic_model.int_type) {
+                        if (!is_integral_type(bound->left->type) ||
+                            !is_integral_type(bound->right->type)) {
                             diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                              "Arithmetic operators require int operands");
                         }
-                        bound->type = &program_.semantic_model.int_type;
+                        bound->type = bound->left->type;
                         break;
                     case TokenKind::AmpAmp:
                     case TokenKind::PipePipe:
@@ -3896,8 +4042,8 @@ private:
                     case TokenKind::LessEquals:
                     case TokenKind::Greater:
                     case TokenKind::GreaterEquals:
-                        if (bound->left->type != &program_.semantic_model.int_type ||
-                            bound->right->type != &program_.semantic_model.int_type) {
+                        if (!is_integral_type(bound->left->type) ||
+                            !is_integral_type(bound->right->type)) {
                             diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                              "Relational operators require int operands");
                         }
@@ -5146,6 +5292,105 @@ private:
                 }
                 return Value{nullptr};
             }
+            if (method.owner == program_.semantic_model.file_class && method.name == "ReadAllBytes") {
+                if (arguments.empty() || !std::holds_alternative<string>(arguments[0].data)) {
+                    return Value{nullptr};
+                }
+                std::ifstream input(std::get<string>(arguments[0].data), std::ios::binary);
+                if (!input) {
+                    return Value{nullptr};
+                }
+                auto array = std::make_shared<RuntimeArray>();
+                array->element_type = &program_.semantic_model.byte_type;
+                vector<char> buffer((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+                array->elements.reserve(buffer.size());
+                for (unsigned char byte : buffer) {
+                    array->elements.push_back(Value{static_cast<int64_t>(byte)});
+                }
+                return Value{array};
+            }
+            if (method.owner == program_.semantic_model.file_class && method.name == "WriteAllBytes") {
+                if (arguments.size() < 2 || !std::holds_alternative<string>(arguments[0].data)) {
+                    throw std::runtime_error("System.IO.File.WriteAllBytes requires a valid path");
+                }
+                if (!std::holds_alternative<std::shared_ptr<RuntimeArray>>(arguments[1].data)) {
+                    throw std::runtime_error("System.IO.File.WriteAllBytes requires a byte array");
+                }
+                const string& path = std::get<string>(arguments[0].data);
+                std::ofstream output(path, std::ios::binary);
+                if (!output) {
+                    throw std::runtime_error("Could not write file '" + path + "'");
+                }
+                const auto& array = std::get<std::shared_ptr<RuntimeArray>>(arguments[1].data);
+                if (array != nullptr) {
+                    for (const auto& element : array->elements) {
+                        const unsigned char byte = static_cast<unsigned char>(std::get<int64_t>(element.data) & 0xFF);
+                        output.write(reinterpret_cast<const char*>(&byte), 1);
+                    }
+                }
+                return Value{nullptr};
+            }
+            if (method.owner == program_.semantic_model.convert_class && method.name == "ToInt32") {
+                if (arguments.empty() || !std::holds_alternative<string>(arguments[0].data)) {
+                    return Value{int64_t{0}};
+                }
+                const string& raw = std::get<string>(arguments[0].data);
+                try {
+                    std::size_t offset = 0;
+                    int64_t value = 0;
+                    if (starts_with(raw, "0x") || starts_with(raw, "0X")) {
+                        value = std::stoll(raw, &offset, 16);
+                    } else {
+                        value = std::stoll(raw, &offset, 10);
+                    }
+                    if (offset != raw.size()) {
+                        throw std::runtime_error("trailing characters");
+                    }
+                    return Value{value};
+                } catch (const std::exception&) {
+                    throw std::runtime_error("Could not parse integer '" + raw + "'");
+                }
+            }
+            if ((method.owner == program_.semantic_model.assert_class && method.name == "Fail") ||
+                (method.owner == program_.semantic_model.intrinsics_class && method.name == "Fail")) {
+                const string message =
+                    (!arguments.empty() && std::holds_alternative<string>(arguments[0].data))
+                        ? std::get<string>(arguments[0].data)
+                        : string("runtime failure");
+                throw std::runtime_error(message);
+            }
+            if (method.owner == program_.semantic_model.assert_class) {
+                const string message =
+                    arguments.size() >= 2 && std::holds_alternative<string>(arguments.back().data)
+                        ? std::get<string>(arguments.back().data)
+                        : string("assertion failed");
+                if (method.name == "True") {
+                    if (arguments.empty() || !std::holds_alternative<bool>(arguments[0].data) ||
+                        !std::get<bool>(arguments[0].data)) {
+                        throw std::runtime_error(message);
+                    }
+                    return Value{nullptr};
+                }
+                if (method.name == "False") {
+                    if (arguments.empty() || !std::holds_alternative<bool>(arguments[0].data) ||
+                        std::get<bool>(arguments[0].data)) {
+                        throw std::runtime_error(message);
+                    }
+                    return Value{nullptr};
+                }
+                if (method.name == "Equal") {
+                    if (arguments.size() < 3 || !values_equal(arguments[0], arguments[1])) {
+                        throw std::runtime_error(message);
+                    }
+                    return Value{nullptr};
+                }
+                if (method.name == "NotEqual") {
+                    if (arguments.size() < 3 || values_equal(arguments[0], arguments[1])) {
+                        throw std::runtime_error(message);
+                    }
+                    return Value{nullptr};
+                }
+            }
         }
 
         const MethodSymbol* body_key = &method;
@@ -5970,6 +6215,13 @@ private:
         out << "    if (cstr == NULL) return hy_string_new(\"\", 0);\n";
         out << "    return hy_string_new(cstr, (int64_t)strlen(cstr));\n";
         out << "}\n\n";
+        out << "static int64_t hy_string_to_int(HyString* s) {\n";
+        out << "    if (s == NULL || s->bytes == NULL) return 0;\n";
+        out << "    if (s->length > 2 && s->bytes[0] == '0' && (s->bytes[1] == 'x' || s->bytes[1] == 'X')) {\n";
+        out << "        return (int64_t)strtoll(s->bytes + 2, NULL, 16);\n";
+        out << "    }\n";
+        out << "    return (int64_t)strtoll(s->bytes, NULL, 10);\n";
+        out << "}\n";
         out << "static int64_t hy_string_length(HyString* s) {\n";
         out << "    return s == NULL ? 0 : s->length;\n";
         out << "}\n";
@@ -6064,6 +6316,43 @@ private:
         out << "        }\n";
         out << "    }\n";
         out << "    if (fclose(file) != 0) hy_runtime_fail(\"File close failed\");\n";
+        out << "}\n\n";
+
+        out << "static HyArray* hy_file_read_all_bytes(HyString* path) {\n";
+        out << "    if (path == NULL || path->bytes == NULL) return NULL;\n";
+        out << "    FILE* file = fopen(path->bytes, \"rb\");\n";
+        out << "    if (file == NULL) return NULL;\n";
+        out << "    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return NULL; }\n";
+        out << "    long size = ftell(file);\n";
+        out << "    if (size < 0) { fclose(file); return NULL; }\n";
+        out << "    rewind(file);\n";
+        out << "    HyArray* result = hy_array_new((int64_t)size, 0);\n";
+        out << "    for (long i = 0; i < size; ++i) {\n";
+        out << "        int ch = fgetc(file);\n";
+        out << "        if (ch == EOF) break;\n";
+        out << "        ((int64_t*)result->elements)[i] = (int64_t)(unsigned char)ch;\n";
+        out << "    }\n";
+        out << "    fclose(file);\n";
+        out << "    return result;\n";
+        out << "}\n";
+        out << "static void hy_file_write_all_bytes(HyString* path, HyArray* content) {\n";
+        out << "    if (path == NULL || path->bytes == NULL) hy_runtime_fail(\"File write: null path\");\n";
+        out << "    FILE* file = fopen(path->bytes, \"wb\");\n";
+        out << "    if (file == NULL) hy_runtime_fail(\"File write failed\");\n";
+        out << "    if (content != NULL) {\n";
+        out << "        for (int64_t i = 0; i < content->length; ++i) {\n";
+        out << "            unsigned char byte = (unsigned char)(((int64_t*)content->elements)[i] & 0xFF);\n";
+        out << "            fwrite(&byte, 1, 1, file);\n";
+        out << "        }\n";
+        out << "    }\n";
+        out << "    if (fclose(file) != 0) hy_runtime_fail(\"File close failed\");\n";
+        out << "}\n";
+        out << "static void hy_assert_fail(HyString* message) {\n";
+        out << "    if (message != NULL && message->bytes != NULL) {\n";
+        out << "        fprintf(stderr, \"%s\\n\", message->bytes);\n";
+        out << "        exit(1);\n";
+        out << "    }\n";
+        out << "    hy_runtime_fail(\"assertion failed\");\n";
         out << "}\n\n";
     }
 
@@ -6499,7 +6788,9 @@ private:
         }
         out << "int main(int argc, char** argv) {\n";
         out << "    volatile char hy__stack_probe;\n";
-        out << "    hy_gc_init((void*)&hy__stack_probe);\n";
+        // Scan 2 KB above the probe so any locals declared earlier in main's
+        // frame (argc, argv, etc.) are covered by the conservative scanner.
+        out << "    hy_gc_init((void*)((char*)&hy__stack_probe + 2048));\n";
         out << "    atexit(hy_gc_shutdown);\n";
         if (!program_.entry_point->parameters.empty()) {
             out << "    int64_t hy__argc = argc > 1 ? argc - 1 : 0;\n";
@@ -6835,7 +7126,7 @@ private:
         if (expression.type == &program_.semantic_model.string_type) {
             return emit_expression(expression);
         }
-        if (expression.type == &program_.semantic_model.int_type) {
+        if (is_integral_type(expression.type)) {
             return "hy_string_from_int(" + emit_expression(expression) + ")";
         }
         if (expression.type == &program_.semantic_model.bool_type) {
@@ -7018,9 +7309,61 @@ private:
                     if (call.method == program_.semantic_model.file_read_all_text) {
                         return "hy_file_read_all_text(" + emit_expression(*call.arguments[0]) + ")";
                     }
+                    if (call.method == program_.semantic_model.file_read_all_bytes) {
+                        return "hy_file_read_all_bytes(" + emit_expression(*call.arguments[0]) + ")";
+                    }
                     if (call.method == program_.semantic_model.file_write_all_text) {
                         return "hy_file_write_all_text(" + emit_expression(*call.arguments[0]) + ", " +
                                emit_expression(*call.arguments[1]) + ")";
+                    }
+                    if (call.method == program_.semantic_model.file_write_all_bytes) {
+                        return "hy_file_write_all_bytes(" + emit_expression(*call.arguments[0]) + ", " +
+                               emit_expression(*call.arguments[1]) + ")";
+                    }
+                }
+                if (call.method->is_builtin && call.method->owner == program_.semantic_model.convert_class) {
+                    if (call.method == program_.semantic_model.convert_to_int32) {
+                        return "hy_string_to_int(" + emit_expression(*call.arguments[0]) + ")";
+                    }
+                }
+                if ((call.method->is_builtin && call.method->owner == program_.semantic_model.assert_class) ||
+                    (call.method->is_builtin && call.method->owner == program_.semantic_model.intrinsics_class)) {
+                    if (call.method->name == "Fail") {
+                        return "hy_assert_fail(" + emit_expression(*call.arguments[0]) + ")";
+                    }
+                    if (call.method->name == "True") {
+                        return "((!" + emit_expression(*call.arguments[0]) + ") ? (hy_assert_fail(" +
+                               emit_expression(*call.arguments[1]) + "), (void)0) : (void)0)";
+                    }
+                    if (call.method->name == "False") {
+                        return "((" + emit_expression(*call.arguments[0]) + ") ? (hy_assert_fail(" +
+                               emit_expression(*call.arguments[1]) + "), (void)0) : (void)0)";
+                    }
+                    if (call.method->name == "Equal") {
+                        string comparison;
+                        if (!call.arguments.empty() &&
+                            call.arguments[0]->type == &program_.semantic_model.string_type) {
+                            comparison = "hy_string_equals(" + emit_expression(*call.arguments[0]) + ", " +
+                                         emit_expression(*call.arguments[1]) + ")";
+                        } else {
+                            comparison = "(" + emit_expression(*call.arguments[0]) + " == " +
+                                         emit_expression(*call.arguments[1]) + ")";
+                        }
+                        return "((!(" + comparison + ")) ? (hy_assert_fail(" + emit_expression(*call.arguments[2]) +
+                               "), (void)0) : (void)0)";
+                    }
+                    if (call.method->name == "NotEqual") {
+                        string comparison;
+                        if (!call.arguments.empty() &&
+                            call.arguments[0]->type == &program_.semantic_model.string_type) {
+                            comparison = "hy_string_equals(" + emit_expression(*call.arguments[0]) + ", " +
+                                         emit_expression(*call.arguments[1]) + ")";
+                        } else {
+                            comparison = "(" + emit_expression(*call.arguments[0]) + " == " +
+                                         emit_expression(*call.arguments[1]) + ")";
+                        }
+                        return "((" + comparison + ") ? (hy_assert_fail(" + emit_expression(*call.arguments[2]) +
+                               "), (void)0) : (void)0)";
                     }
                 }
 
@@ -7185,11 +7528,226 @@ private:
 };
 
 struct ProjectManifest {
+    int format = 1;
     string name;
+    string version = "0.1.0";
     string type = "exe";
     vector<fs::path> sources;
-    vector<fs::path> references;
+    vector<fs::path> project_references;
+    vector<fs::path> members;
+    struct PackageMetadata {
+        string id;
+        string description;
+        vector<string> authors;
+        string license;
+    } package;
+    struct DependencySpec {
+        fs::path path;
+        string id;
+        string version;
+        bool has_path = false;
+    };
+    std::map<string, DependencySpec> dependencies;
+    fs::path manifest_path;
 };
+
+bool is_workspace_manifest(const ProjectManifest& manifest) {
+    return manifest.type == "workspace";
+}
+
+bool is_test_manifest(const ProjectManifest& manifest) {
+    return manifest.type == "test";
+}
+
+bool is_runnable_manifest(const ProjectManifest& manifest) {
+    return manifest.type == "exe" || manifest.type == "test";
+}
+
+string parse_manifest_string(const fs::path& path,
+                             DiagnosticBag& diagnostics,
+                             int line_number,
+                             int column,
+                             const string& raw) {
+    if (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"') {
+        return raw.substr(1, raw.size() - 2);
+    }
+    diagnostics.add(path, line_number, column, "Expected quoted string value");
+    return {};
+}
+
+vector<string> parse_manifest_string_list(const fs::path& path,
+                                          DiagnosticBag& diagnostics,
+                                          int line_number,
+                                          int column,
+                                          const string& raw) {
+    vector<string> result;
+    if (raw.size() < 2 || raw.front() != '[' || raw.back() != ']') {
+        diagnostics.add(path, line_number, column, "Expected array value");
+        return result;
+    }
+
+    string inner = trim(raw.substr(1, raw.size() - 2));
+    std::size_t cursor = 0;
+    while (cursor < inner.size()) {
+        while (cursor < inner.size() && std::isspace(static_cast<unsigned char>(inner[cursor]))) {
+            ++cursor;
+        }
+        if (cursor >= inner.size()) {
+            break;
+        }
+        if (inner[cursor] != '"') {
+            diagnostics.add(path, line_number, column + static_cast<int>(cursor), "Expected string element");
+            break;
+        }
+        ++cursor;
+        string item;
+        while (cursor < inner.size() && inner[cursor] != '"') {
+            item.push_back(inner[cursor++]);
+        }
+        if (cursor >= inner.size()) {
+            diagnostics.add(path, line_number, column + static_cast<int>(cursor), "Unterminated string in array");
+            break;
+        }
+        ++cursor;
+        result.push_back(item);
+        while (cursor < inner.size() && std::isspace(static_cast<unsigned char>(inner[cursor]))) {
+            ++cursor;
+        }
+        if (cursor < inner.size()) {
+            if (inner[cursor] != ',') {
+                diagnostics.add(path, line_number, column + static_cast<int>(cursor), "Expected ',' between array items");
+                break;
+            }
+            ++cursor;
+        }
+    }
+    return result;
+}
+
+vector<fs::path> parse_manifest_path_list(const fs::path& path,
+                                          DiagnosticBag& diagnostics,
+                                          int line_number,
+                                          int column,
+                                          const string& raw) {
+    vector<fs::path> result;
+    for (const auto& item : parse_manifest_string_list(path, diagnostics, line_number, column, raw)) {
+        result.emplace_back(item);
+    }
+    return result;
+}
+
+std::map<string, string> parse_manifest_inline_table(const fs::path& path,
+                                                     DiagnosticBag& diagnostics,
+                                                     int line_number,
+                                                     int column,
+                                                     const string& raw) {
+    std::map<string, string> result;
+    if (raw.size() < 2 || raw.front() != '{' || raw.back() != '}') {
+        diagnostics.add(path, line_number, column, "Expected inline table value");
+        return result;
+    }
+
+    string inner = trim(raw.substr(1, raw.size() - 2));
+    std::size_t cursor = 0;
+    while (cursor < inner.size()) {
+        while (cursor < inner.size() && std::isspace(static_cast<unsigned char>(inner[cursor]))) {
+            ++cursor;
+        }
+        if (cursor >= inner.size()) {
+            break;
+        }
+
+        const std::size_t key_start = cursor;
+        while (cursor < inner.size() &&
+               (std::isalnum(static_cast<unsigned char>(inner[cursor])) || inner[cursor] == '_' || inner[cursor] == '-')) {
+            ++cursor;
+        }
+        if (cursor == key_start) {
+            diagnostics.add(path, line_number, column + static_cast<int>(cursor), "Expected key in inline table");
+            break;
+        }
+        string key = inner.substr(key_start, cursor - key_start);
+        while (cursor < inner.size() && std::isspace(static_cast<unsigned char>(inner[cursor]))) {
+            ++cursor;
+        }
+        if (cursor >= inner.size() || inner[cursor] != '=') {
+            diagnostics.add(path, line_number, column + static_cast<int>(cursor), "Expected '=' in inline table");
+            break;
+        }
+        ++cursor;
+        while (cursor < inner.size() && std::isspace(static_cast<unsigned char>(inner[cursor]))) {
+            ++cursor;
+        }
+        if (cursor >= inner.size()) {
+            diagnostics.add(path, line_number, column + static_cast<int>(cursor), "Expected value in inline table");
+            break;
+        }
+        string value;
+        if (inner[cursor] == '"') {
+            const std::size_t start = cursor++;
+            while (cursor < inner.size() && inner[cursor] != '"') {
+                ++cursor;
+            }
+            if (cursor >= inner.size()) {
+                diagnostics.add(path, line_number, column + static_cast<int>(start), "Unterminated string in inline table");
+                break;
+            }
+            ++cursor;
+            value = inner.substr(start, cursor - start);
+        } else {
+            const std::size_t start = cursor;
+            while (cursor < inner.size() && inner[cursor] != ',') {
+                ++cursor;
+            }
+            value = trim(inner.substr(start, cursor - start));
+        }
+        result[key] = trim(value);
+        while (cursor < inner.size() && std::isspace(static_cast<unsigned char>(inner[cursor]))) {
+            ++cursor;
+        }
+        if (cursor < inner.size()) {
+            if (inner[cursor] != ',') {
+                diagnostics.add(path, line_number, column + static_cast<int>(cursor), "Expected ',' between inline table items");
+                break;
+            }
+            ++cursor;
+        }
+    }
+    return result;
+}
+
+void validate_manifest_metadata(const fs::path& path, ProjectManifest& manifest, DiagnosticBag& diagnostics) {
+    if (manifest.name.empty()) {
+        manifest.name = path.stem().string();
+    }
+
+    if (manifest.type != "exe" &&
+        manifest.type != "lib" &&
+        manifest.type != "test" &&
+        manifest.type != "workspace") {
+        diagnostics.add(path, 1, 1, "Unsupported project type '" + manifest.type + "'");
+    }
+
+    if (is_workspace_manifest(manifest) && !manifest.sources.empty()) {
+        diagnostics.warn(path, 1, 1, "Workspace manifests ignore 'sources'");
+        manifest.sources.clear();
+    }
+
+    if (is_workspace_manifest(manifest) && manifest.members.empty()) {
+        diagnostics.warn(path, 1, 1, "Workspace manifest has no members");
+    }
+
+    if (!is_workspace_manifest(manifest) && !manifest.members.empty()) {
+        diagnostics.warn(path, 1, 1, "Non-workspace manifests ignore 'members'");
+        manifest.members.clear();
+    }
+
+    for (const auto& [name, dependency] : manifest.dependencies) {
+        if (!dependency.has_path) {
+            diagnostics.add(path, 1, 1, "Registry support is not implemented yet for dependency '" + name + "'");
+        }
+    }
+}
 
 std::optional<ProjectManifest> load_project_manifest(const fs::path& path, DiagnosticBag& diagnostics) {
     std::ifstream input(path);
@@ -7199,12 +7757,19 @@ std::optional<ProjectManifest> load_project_manifest(const fs::path& path, Diagn
     }
 
     ProjectManifest manifest;
+    manifest.manifest_path = path;
     string line;
     int line_number = 0;
+    string current_section;
     while (std::getline(input, line)) {
         ++line_number;
         line = trim(line);
-        if (line.empty() || starts_with(line, "#")) {
+        if (line.empty() || starts_with(line, "#") || starts_with(line, "//")) {
+            continue;
+        }
+
+        if (line.front() == '[' && line.back() == ']') {
+            current_section = trim(line.substr(1, line.size() - 2));
             continue;
         }
 
@@ -7216,75 +7781,71 @@ std::optional<ProjectManifest> load_project_manifest(const fs::path& path, Diagn
 
         const string key = trim(line.substr(0, equals));
         const string value = trim(line.substr(equals + 1));
-        auto parse_string_value = [&](const string& raw) -> string {
-            if (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"') {
-                return raw.substr(1, raw.size() - 2);
-            }
-            diagnostics.add(path, line_number, static_cast<int>(equals + 2), "Expected quoted string value");
-            return {};
-        };
+        const int value_column = static_cast<int>(equals + 2);
 
-        auto parse_array = [&](const string& raw) -> vector<fs::path> {
-            vector<fs::path> result;
-            if (raw.size() < 2 || raw.front() != '[' || raw.back() != ']') {
-                diagnostics.add(path, line_number, static_cast<int>(equals + 2), "Expected array value");
-                return result;
+        if (current_section.empty()) {
+            if (key == "format") {
+                if (value == "2") {
+                    manifest.format = 2;
+                } else {
+                    diagnostics.add(path, line_number, value_column, "Unsupported project manifest format");
+                }
+            } else if (key == "name") {
+                manifest.name = parse_manifest_string(path, diagnostics, line_number, value_column, value);
+            } else if (key == "version") {
+                manifest.version = parse_manifest_string(path, diagnostics, line_number, value_column, value);
+            } else if (key == "type") {
+                manifest.type = parse_manifest_string(path, diagnostics, line_number, value_column, value);
+            } else if (key == "sources") {
+                manifest.sources = parse_manifest_path_list(path, diagnostics, line_number, value_column, value);
+            } else if (key == "references" || key == "project_references") {
+                manifest.project_references = parse_manifest_path_list(path, diagnostics, line_number, value_column, value);
+            } else if (key == "members") {
+                manifest.members = parse_manifest_path_list(path, diagnostics, line_number, value_column, value);
+            } else {
+                diagnostics.add(path, line_number, 1, "Unknown project key '" + key + "'");
             }
-            string inner = trim(raw.substr(1, raw.size() - 2));
-            if (inner.empty()) {
-                return result;
-            }
-            std::size_t cursor = 0;
-            while (cursor < inner.size()) {
-                while (cursor < inner.size() && std::isspace(static_cast<unsigned char>(inner[cursor]))) {
-                    ++cursor;
-                }
-                if (cursor >= inner.size() || inner[cursor] != '"') {
-                    diagnostics.add(path, line_number, static_cast<int>(equals + 2 + cursor), "Expected string element");
-                    break;
-                }
-                ++cursor;
-                string item;
-                while (cursor < inner.size() && inner[cursor] != '"') {
-                    item.push_back(inner[cursor++]);
-                }
-                if (cursor >= inner.size()) {
-                    diagnostics.add(path, line_number, static_cast<int>(equals + 2 + cursor), "Unterminated string in array");
-                    break;
-                }
-                ++cursor;
-                result.push_back(item);
-                while (cursor < inner.size() && std::isspace(static_cast<unsigned char>(inner[cursor]))) {
-                    ++cursor;
-                }
-                if (cursor < inner.size()) {
-                    if (inner[cursor] != ',') {
-                        diagnostics.add(path, line_number, static_cast<int>(equals + 2 + cursor), "Expected ',' between array items");
-                        break;
-                    }
-                    ++cursor;
-                }
-            }
-            return result;
-        };
-
-        if (key == "name") {
-            manifest.name = parse_string_value(value);
-        } else if (key == "type") {
-            manifest.type = parse_string_value(value);
-        } else if (key == "sources") {
-            manifest.sources = parse_array(value);
-        } else if (key == "references") {
-            manifest.references = parse_array(value);
-        } else {
-            diagnostics.add(path, line_number, 1, "Unknown project key '" + key + "'");
+            continue;
         }
+
+        if (current_section == "package") {
+            if (key == "id") {
+                manifest.package.id = parse_manifest_string(path, diagnostics, line_number, value_column, value);
+            } else if (key == "description") {
+                manifest.package.description = parse_manifest_string(path, diagnostics, line_number, value_column, value);
+            } else if (key == "authors") {
+                manifest.package.authors = parse_manifest_string_list(path, diagnostics, line_number, value_column, value);
+            } else if (key == "license") {
+                manifest.package.license = parse_manifest_string(path, diagnostics, line_number, value_column, value);
+            } else {
+                diagnostics.add(path, line_number, 1, "Unknown package key '" + key + "'");
+            }
+            continue;
+        }
+
+        if (current_section == "dependencies") {
+            ProjectManifest::DependencySpec dependency;
+            const auto entries = parse_manifest_inline_table(path, diagnostics, line_number, value_column, value);
+            for (const auto& [entry_key, entry_value] : entries) {
+                if (entry_key == "path") {
+                    dependency.path = parse_manifest_string(path, diagnostics, line_number, value_column, entry_value);
+                    dependency.has_path = !dependency.path.empty();
+                } else if (entry_key == "id") {
+                    dependency.id = parse_manifest_string(path, diagnostics, line_number, value_column, entry_value);
+                } else if (entry_key == "version") {
+                    dependency.version = parse_manifest_string(path, diagnostics, line_number, value_column, entry_value);
+                } else {
+                    diagnostics.add(path, line_number, value_column, "Unknown dependency key '" + entry_key + "'");
+                }
+            }
+            manifest.dependencies[key] = std::move(dependency);
+            continue;
+        }
+
+        diagnostics.add(path, line_number, 1, "Unknown manifest section '" + current_section + "'");
     }
 
-    if (manifest.name.empty()) {
-        manifest.name = path.stem().string();
-    }
-
+    validate_manifest_metadata(path, manifest, diagnostics);
     return manifest;
 }
 
@@ -7314,11 +7875,49 @@ void collect_project_sources(const fs::path& path,
     }
 
     const fs::path base_dir = canonical.parent_path();
+    if (is_workspace_manifest(*manifest)) {
+        for (const auto& member : manifest->members) {
+            collect_project_sources(base_dir / member, sources, visited_projects, diagnostics);
+        }
+        return;
+    }
+
     for (const auto& source : manifest->sources) {
         sources.push_back(fs::weakly_canonical(base_dir / source));
     }
-    for (const auto& reference : manifest->references) {
+    for (const auto& reference : manifest->project_references) {
         collect_project_sources(base_dir / reference, sources, visited_projects, diagnostics);
+    }
+    for (const auto& [name, dependency] : manifest->dependencies) {
+        (void)name;
+        if (dependency.has_path) {
+            collect_project_sources(base_dir / dependency.path, sources, visited_projects, diagnostics);
+        }
+    }
+}
+
+void collect_workspace_projects(const fs::path& path,
+                                std::vector<fs::path>& projects,
+                                std::unordered_set<string>& visited_projects,
+                                DiagnosticBag& diagnostics) {
+    const fs::path canonical = fs::weakly_canonical(path);
+    if (!visited_projects.insert(canonical.string()).second) {
+        return;
+    }
+
+    const auto manifest = load_project_manifest(canonical, diagnostics);
+    if (!manifest.has_value()) {
+        return;
+    }
+
+    if (!is_workspace_manifest(*manifest)) {
+        projects.push_back(canonical);
+        return;
+    }
+
+    const fs::path base_dir = canonical.parent_path();
+    for (const auto& member : manifest->members) {
+        collect_workspace_projects(base_dir / member, projects, visited_projects, diagnostics);
     }
 }
 
@@ -7376,6 +7975,72 @@ namespace System.Collections {
         }
     }
 }
+
+namespace System.Runtime {
+    public class BinaryPrimitives {
+        public static int ReadUInt16LE(byte[] data, int offset) {
+            return data[offset] + data[offset + 1] * 256;
+        }
+
+        public static int ReadUInt16BE(byte[] data, int offset) {
+            return data[offset] * 256 + data[offset + 1];
+        }
+
+        public static int ReadUInt32LE(byte[] data, int offset) {
+            return data[offset] +
+                   data[offset + 1] * 256 +
+                   data[offset + 2] * 65536 +
+                   data[offset + 3] * 16777216;
+        }
+
+        public static int ReadUInt32BE(byte[] data, int offset) {
+            return data[offset] * 16777216 +
+                   data[offset + 1] * 65536 +
+                   data[offset + 2] * 256 +
+                   data[offset + 3];
+        }
+
+        public static int ReadInt16LE(byte[] data, int offset) {
+            return ReadUInt16LE(data, offset);
+        }
+
+        public static int ReadInt16BE(byte[] data, int offset) {
+            return ReadUInt16BE(data, offset);
+        }
+
+        public static int ReadInt32LE(byte[] data, int offset) {
+            return ReadUInt32LE(data, offset);
+        }
+
+        public static int ReadInt32BE(byte[] data, int offset) {
+            return ReadUInt32BE(data, offset);
+        }
+
+        public static void WriteUInt16LE(byte[] data, int offset, int value) {
+            data[offset] = value % 256;
+            data[offset + 1] = (value / 256) % 256;
+        }
+
+        public static void WriteUInt16BE(byte[] data, int offset, int value) {
+            data[offset] = (value / 256) % 256;
+            data[offset + 1] = value % 256;
+        }
+
+        public static void WriteUInt32LE(byte[] data, int offset, int value) {
+            data[offset] = value % 256;
+            data[offset + 1] = (value / 256) % 256;
+            data[offset + 2] = (value / 65536) % 256;
+            data[offset + 3] = (value / 16777216) % 256;
+        }
+
+        public static void WriteUInt32BE(byte[] data, int offset, int value) {
+            data[offset] = (value / 16777216) % 256;
+            data[offset + 1] = (value / 65536) % 256;
+            data[offset + 2] = (value / 256) % 256;
+            data[offset + 3] = value % 256;
+        }
+    }
+}
 )";
 
 CompilationUnitSyntax parse_stdlib_unit(DiagnosticBag& diagnostics) {
@@ -7385,7 +8050,7 @@ CompilationUnitSyntax parse_stdlib_unit(DiagnosticBag& diagnostics) {
     return parser.parse();
 }
 
-std::unique_ptr<BoundProgram> load_program_from_target(const fs::path& input_path, DiagnosticBag& diagnostics) {
+vector<fs::path> collect_target_source_files(const fs::path& input_path, DiagnosticBag& diagnostics) {
     vector<fs::path> source_files;
     if (input_path.extension() == ".hyproj") {
         std::unordered_set<string> visited_projects;
@@ -7393,9 +8058,13 @@ std::unique_ptr<BoundProgram> load_program_from_target(const fs::path& input_pat
     } else {
         source_files.push_back(fs::weakly_canonical(input_path));
     }
-
     std::sort(source_files.begin(), source_files.end());
     source_files.erase(std::unique(source_files.begin(), source_files.end()), source_files.end());
+    return source_files;
+}
+
+std::unique_ptr<BoundProgram> load_program_from_target(const fs::path& input_path, DiagnosticBag& diagnostics) {
+    vector<fs::path> source_files = collect_target_source_files(input_path, diagnostics);
     auto units = parse_units(source_files, diagnostics);
     if (diagnostics.has_errors()) {
         return nullptr;
@@ -7503,6 +8172,91 @@ bool write_text_file(const fs::path& path, const string& contents) {
 
 }  // namespace
 
+uint64_t hash_bytes(uint64_t seed, const string& data) {
+    uint64_t value = seed;
+    for (unsigned char ch : data) {
+        value ^= static_cast<uint64_t>(ch);
+        value *= 1099511628211ull;
+    }
+    return value;
+}
+
+string compute_target_fingerprint(const fs::path& input_path,
+                                  const ProjectManifest& manifest,
+                                  const vector<fs::path>& source_files,
+                                  const string& target_type,
+                                  bool debug) {
+    uint64_t hash = 1469598103934665603ull;
+    hash = hash_bytes(hash, input_path.string());
+    hash = hash_bytes(hash, manifest.name);
+    hash = hash_bytes(hash, manifest.version);
+    hash = hash_bytes(hash, target_type);
+    hash = hash_bytes(hash, debug ? "debug" : "nodebug");
+    for (const auto& source_file : source_files) {
+        string text;
+        if (read_text_file(source_file, text)) {
+            hash = hash_bytes(hash, source_file.string());
+            hash = hash_bytes(hash, text);
+        }
+    }
+    std::ostringstream out;
+    out << std::hex << hash;
+    return out.str();
+}
+
+bool write_source_map_file(const fs::path& path,
+                           const ProjectManifest& manifest,
+                           const vector<fs::path>& source_files,
+                           const fs::path& generated_c) {
+    std::ostringstream out;
+    out << "{\n";
+    out << "  \"name\": \"" << manifest.name << "\",\n";
+    out << "  \"type\": \"" << manifest.type << "\",\n";
+    out << "  \"generated_c\": \"" << generated_c.string() << "\",\n";
+    out << "  \"sources\": [\n";
+    for (std::size_t index = 0; index < source_files.size(); ++index) {
+        out << "    \"" << source_files[index].string() << "\"";
+        if (index + 1 < source_files.size()) {
+            out << ",";
+        }
+        out << "\n";
+    }
+    out << "  ]\n";
+    out << "}\n";
+    return write_text_file(path, out.str());
+}
+
+CheckResult check_single_target(const fs::path& input_path) {
+    DiagnosticBag diagnostics;
+    const auto program = load_program_from_target(input_path, diagnostics);
+    if (program != nullptr && is_runnable_manifest(manifest_for_target(input_path, diagnostics).value_or(ProjectManifest{}))) {
+        locate_entry_point(*program, diagnostics);
+    }
+    return CheckResult{!diagnostics.has_errors(), std::move(diagnostics.items)};
+}
+
+vector<fs::path> collect_workspace_test_projects(const fs::path& input_path, DiagnosticBag& diagnostics) {
+    vector<fs::path> projects;
+    if (input_path.extension() != ".hyproj") {
+        projects.push_back(input_path);
+        return projects;
+    }
+
+    std::unordered_set<string> visited_projects;
+    collect_workspace_projects(input_path, projects, visited_projects, diagnostics);
+    vector<fs::path> filtered;
+    for (const auto& project_path : projects) {
+        const auto manifest = load_project_manifest(project_path, diagnostics);
+        if (manifest.has_value() && is_test_manifest(*manifest)) {
+            filtered.push_back(project_path);
+        }
+    }
+    if (filtered.empty() && !projects.empty()) {
+        filtered = std::move(projects);
+    }
+    return filtered;
+}
+
 RunResult run_target(const RunOptions& options) {
     DiagnosticBag diagnostics;
     const auto program = load_program_from_target(options.input_path, diagnostics);
@@ -7531,39 +8285,75 @@ BuildResult build_target(const BuildOptions& options) {
     DiagnosticBag diagnostics;
     const auto manifest = manifest_for_target(options.input_path, diagnostics);
     if (!manifest.has_value()) {
-        return BuildResult{false, std::move(diagnostics.items), {}};
+        return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
 
+    if (is_workspace_manifest(*manifest)) {
+        diagnostics.add(options.input_path, 1, 1, "Workspaces cannot be built directly; build a member project instead");
+        return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
+    }
+
+    const vector<fs::path> source_files = collect_target_source_files(options.input_path, diagnostics);
     const auto program = load_program_from_target(options.input_path, diagnostics);
     if (!program) {
-        return BuildResult{false, std::move(diagnostics.items), {}};
+        return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
 
-    const string target_type = options.forced_target.value_or(manifest->type);
+    string target_type = options.forced_target.value_or(manifest->type);
+    if (target_type == "test") {
+        target_type = "exe";
+    }
     if (target_type != "exe" && target_type != "lib") {
         diagnostics.add(options.input_path, 1, 1, "Unsupported build target '" + target_type + "'");
-        return BuildResult{false, std::move(diagnostics.items), {}};
+        return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
     if (target_type == "exe" && !locate_entry_point(*program, diagnostics)) {
-        return BuildResult{false, std::move(diagnostics.items), {}};
+        return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
 
     const auto toolchain = detect_host_toolchain();
     if (!toolchain.has_value()) {
         diagnostics.add(options.input_path, 1, 1, "Could not find a host C compiler");
-        return BuildResult{false, std::move(diagnostics.items), {}};
+        return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
 
     const fs::path output_path = options.output_path.value_or(default_output_path(options.input_path, *manifest, target_type));
     const fs::path build_dir = output_path.parent_path().empty() ? fs::current_path() : output_path.parent_path();
+    const fs::path cache_dir = build_dir / ".hylang" / "cache";
     fs::create_directories(build_dir);
+    fs::create_directories(cache_dir);
+
+    const string fingerprint = compute_target_fingerprint(options.input_path, *manifest, source_files, target_type, options.debug);
+    const fs::path cache_key_path = cache_dir / (manifest->name + "." + target_type + ".fingerprint");
+    string cached_fingerprint;
+    if (read_text_file(cache_key_path, cached_fingerprint) &&
+        trim(cached_fingerprint) == fingerprint &&
+        fs::exists(output_path)) {
+        BuildResult cached;
+        cached.success = true;
+        cached.output_path = output_path;
+        cached.cache_hit = true;
+        if (options.debug) {
+            cached.source_map_path = build_dir / (manifest->name + ".hymap.json");
+        }
+        return cached;
+    }
 
     CEmitter emitter(*program);
     const string c_source = target_type == "lib" ? emitter.emit_library() : emitter.emit_executable();
     const fs::path generated_c = build_dir / (manifest->name + ".generated.c");
     if (!write_text_file(generated_c, c_source)) {
         diagnostics.add(generated_c, 1, 1, "Could not write generated C file");
-        return BuildResult{false, std::move(diagnostics.items), {}};
+        return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
+    }
+
+    fs::path source_map_path;
+    if (options.debug) {
+        source_map_path = build_dir / (manifest->name + ".hymap.json");
+        if (!write_source_map_file(source_map_path, *manifest, source_files, generated_c)) {
+            diagnostics.add(source_map_path, 1, 1, "Could not write source map file");
+            return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
+        }
     }
 
     int result = 0;
@@ -7592,7 +8382,7 @@ BuildResult build_target(const BuildOptions& options) {
                 archive_command = toolchain->archiver + " rcs " + quote(output_path) + " " + quote(object_path);
             } else {
                 diagnostics.add(options.input_path, 1, 1, "Could not find a host archiver for static library output");
-                return BuildResult{false, std::move(diagnostics.items), {}};
+                return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
             }
             result = std::system(archive_command.c_str());
         }
@@ -7600,10 +8390,65 @@ BuildResult build_target(const BuildOptions& options) {
 
     if (result != 0) {
         diagnostics.add(generated_c, 1, 1, "Host toolchain failed while compiling generated C");
-        return BuildResult{false, std::move(diagnostics.items), {}};
+        return BuildResult{false, std::move(diagnostics.items), {}, source_map_path, false};
     }
 
-    return BuildResult{true, {}, output_path};
+    write_text_file(cache_key_path, fingerprint + "\n");
+
+    BuildResult built;
+    built.success = true;
+    built.output_path = output_path;
+    built.source_map_path = source_map_path;
+    return built;
+}
+
+CheckResult check_target(const CheckOptions& options) {
+    DiagnosticBag diagnostics;
+    if (options.input_path.extension() == ".hyproj") {
+        std::unordered_set<string> visited_projects;
+        vector<fs::path> projects;
+        collect_workspace_projects(options.input_path, projects, visited_projects, diagnostics);
+        if (!diagnostics.has_errors() && projects.empty()) {
+            projects.push_back(options.input_path);
+        }
+        for (const auto& project_path : projects) {
+            const auto result = check_single_target(project_path);
+            diagnostics.append(result.diagnostics);
+        }
+    } else {
+        const auto result = check_single_target(options.input_path);
+        diagnostics.append(result.diagnostics);
+    }
+
+    return CheckResult{!diagnostics.has_errors(), std::move(diagnostics.items)};
+}
+
+TestResult test_target(const TestOptions& options) {
+    DiagnosticBag diagnostics;
+    vector<TestRun> runs;
+    const vector<fs::path> projects = collect_workspace_test_projects(options.input_path, diagnostics);
+    if (diagnostics.has_errors()) {
+        return TestResult{false, std::move(diagnostics.items), {}};
+    }
+
+    for (const auto& project_path : projects) {
+        BuildOptions build_options;
+        build_options.input_path = project_path;
+        const auto build = build_target(build_options);
+        diagnostics.append(build.diagnostics);
+        if (!build.success) {
+            continue;
+        }
+
+        string command = quote(build.output_path);
+        const int exit_code = std::system(command.c_str());
+        runs.push_back(TestRun{project_path, exit_code});
+        if (exit_code != 0) {
+            diagnostics.add(project_path, 1, 1, "Test project exited with code " + std::to_string(exit_code));
+        }
+    }
+
+    return TestResult{!diagnostics.has_errors(), std::move(diagnostics.items), std::move(runs)};
 }
 
 std::string format_diagnostics(const std::vector<Diagnostic>& diagnostics) {
@@ -7612,7 +8457,11 @@ std::string format_diagnostics(const std::vector<Diagnostic>& diagnostics) {
         if (!diagnostic.file.empty()) {
             out << diagnostic.file.string() << ":";
         }
-        out << diagnostic.line << ":" << diagnostic.column << ": " << diagnostic.message << "\n";
+        out << diagnostic.line << ":" << diagnostic.column << ": ";
+        if (diagnostic.is_warning) {
+            out << "warning: ";
+        }
+        out << diagnostic.message << "\n";
     }
     return out.str();
 }

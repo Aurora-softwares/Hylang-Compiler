@@ -18,14 +18,19 @@ Hylang should become:
 
 Today the project already has:
 
+- `hy` as the primary workflow CLI for scaffolding, build/run/test/check/fmt/package tasks
 - `hyrun` for direct `.hy` and `.hyproj` execution
 - `hyc build` for host-native executables and static libraries through a C backend
+- v2 `.hyproj` manifests with workspace support and local path dependencies
 - a real pipeline: lexer, parser, AST, binder, type checker, and shared bound IR
 - classes, structs, interfaces, enums, namespaces, fields, constructors, methods, access modifiers, and static members
 - control flow including `if`, `while`, `for`, `break`, `continue`, and `return`
 - inheritance, `base(...)`, `base.Member`, `virtual`, `override`, generics, and `var`
 - strings, arrays, `.Length`, indexing, basic string concatenation, and console/file builtins
 - enough language surface to build compiler-flavored multi-file console tools
+- build caching, basic debug/source-map metadata, and JSON diagnostics
+- byte-oriented helpers including `ReadAllBytes`, `WriteAllBytes`, bootstrap `BinaryPrimitives`, and `System.Testing.Assert`
+- `samples/hexlab` as the current end-to-end workflow showcase
 
 That means Hylang is past the “toy parser” stage and is now in the bootstrap language phase.
 
@@ -44,8 +49,8 @@ Checked items reflect the current repo state as of now.
 - [x] Phase 0: Bootstrap Foundation is effectively complete enough to move beyond the bootstrap-only stage
 - [x] Phase 1: Language Hardening is complete
 - [x] Phase 2: Core Language Expansion is complete
-- [ ] Phase 3: Runtime and Memory Model is the current active zone
-- [ ] Phase 4: Tooling and Developer Workflow has not started in earnest
+- [ ] Phase 3: Runtime and Memory Model is largely complete, with raw-memory systems work still open
+- [ ] Phase 4: Tooling and Developer Workflow is now in progress
 - [ ] Phase 5: Self-Hosting Preparation has not started in earnest
 - [ ] Phase 6: Self-Hosted Compiler has not started
 - [ ] Phase 7: Full Standard Library has not started in earnest
@@ -226,6 +231,8 @@ Exit criteria:
 
 ## Phase 3: Runtime and Memory Model
 
+Status: runtime foundation complete, systems-memory follow-on still open
+
 Goals:
 
 - define how Hylang manages memory in normal applications
@@ -272,6 +279,7 @@ Delivered foundation:
 Current note:
 
 - the language/runtime behavior is aligned across both execution modes, while the interpreter still keeps a bootstrap reference-managed implementation internally
+- the remaining raw-memory and buffer work now overlaps with the active Phase 4 systems/tooling track
 
 Exit criteria:
 
@@ -280,21 +288,24 @@ Exit criteria:
 
 ## Phase 4: Tooling and Developer Workflow
 
+Status: in progress
+
 Goals:
 
 - make Hylang pleasant to use for real projects, not just experiments
 
 Checklist:
 
-- [ ] Stabilize the project/package manifest format
-- [ ] Add a first-class `hy` CLI workflow
-- [ ] Add a formatter
-- [ ] Add a test runner workflow
+- [x] Stabilize the project/package manifest format
+- [x] Add a first-class `hy` CLI workflow
+- [x] Add a formatter
+- [x] Add a test runner workflow
 - [ ] Add linting or static analysis
 - [ ] Add language-server/editor support
-- [ ] Improve diagnostics and incremental build behavior
-- [ ] Add debug metadata/source mapping support
-- [ ] Make project creation and dependency management coherent for new users
+- [x] Improve diagnostics and incremental build behavior
+- [x] Add debug metadata/source mapping support
+- [x] Make project creation and dependency management coherent for new users
+- [x] Add a showcase workspace that proves the end-to-end workflow
 
 Main work:
 
@@ -307,14 +318,34 @@ Main work:
 - source maps or debug metadata
 - better build diagnostics and incremental compilation
 
+Delivered slice:
+
+- `hy new`, `hy build`, `hy run`, `hy test`, `hy fmt`, `hy check`, `hy package pack`, and `hy package add`
+- v2 `.hyproj` manifests with workspaces, package metadata, and local path dependencies
+- backward-compatible loading of older v1 manifests
+- explicit `type = "test"` projects and workspace test discovery
+- `.hylang/cache/` build caching
+- simple `.hymap.json` files from `hy build --debug`
+- JSON diagnostics from `hy check --json`
+- bootstrap `System.Testing.Assert`
+- byte-oriented file helpers and bootstrap `BinaryPrimitives`
+- `samples/hexlab` as the current workflow showcase
+
 Desired tools:
 
-- `hy new`
-- `hy build`
-- `hy run`
-- `hy test`
-- `hy fmt`
-- `hy package`
+- [x] `hy new`
+- [x] `hy build`
+- [x] `hy run`
+- [x] `hy test`
+- [x] `hy fmt`
+- [x] `hy package`
+
+Still open inside Phase 4:
+
+- real lint warnings and broader static analysis
+- editor assets / VS Code integration
+- stronger runtime/source mapping for compiled failures
+- the raw-memory and executable unsafe systems surface originally planned alongside this phase
 
 Exit criteria:
 

@@ -60,26 +60,28 @@ This is intentionally small. Richer collections belong to later library phases.
 The C backend now emits:
 
 - an in-tree non-moving mark-sweep collector
-- managed string objects
-- managed array objects
-- class-specific GC trace helpers
-- precise emitted root frames for `self`, reference-like parameters, and reference-like locals
+- managed `HyString` string objects
+- managed `HyArray` array objects with typed element storage
+- class-specific GC trace helpers (one per user-defined class, called by the dispatch table)
+- a conservative C stack scanner for runtime roots (static roots are precise)
 
 Collection model:
 
 - single-threaded
 - stop-the-world
-- non-moving
+- non-moving (object addresses are stable)
+- conservative stack scanning: the entire C call stack is scanned for candidate pointers
+- precise static roots: every reference-type static field is explicitly registered
 - no finalizers
 - no weak references
 - no compaction
 - no pinning
 
-Safe points:
+Collection trigger:
 
-- the compiled runtime collects at emitted runtime safe points rather than in the middle of arbitrary expression evaluation
-- `HYLANG_GC_STRESS=1` forces collection at those safe points
-- `HYLANG_GC_THRESHOLD=<bytes>` lowers or raises the compiled-runtime collection threshold
+- `HYLANG_GC_STRESS=1` forces collection before every allocation
+- `HYLANG_GC_THRESHOLD=<bytes>` sets the byte threshold between collections (default 1 MiB)
+- In both cases collection runs before the new object is allocated, so no in-flight allocation needs to be protected
 
 ## Interpreter Note
 
