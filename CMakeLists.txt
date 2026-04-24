@@ -109,6 +109,18 @@ add_test(
 set_tests_properties(hyrun_array_features PROPERTIES PASS_REGULAR_EXPRESSION "Ints=7.*Strings=4.*Nodes=ok.*Pairs=9.*Len=4")
 
 add_test(
+    NAME hyrun_buffer_features
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/buffer_features.hy
+)
+set_tests_properties(hyrun_buffer_features PROPERTIES PASS_REGULAR_EXPRESSION "Shared=77.*Copy=77.*Len=2.*Fill=9")
+
+add_test(
+    NAME hyrun_binary_primitives_64
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/binary_primitives_64.hy
+)
+set_tests_properties(hyrun_binary_primitives_64 PROPERTIES PASS_REGULAR_EXPRESSION "U=72623859790382856.*I=-72623859790382856")
+
+add_test(
     NAME hyrun_file_roundtrip
     COMMAND ${CMAKE_COMMAND}
         -DMODE=run
@@ -222,6 +234,26 @@ add_test(
         -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/array_features.hy
         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/array_features
         "-DEXPECTED_TEXT=Ints=7.*Strings=4.*Nodes=ok.*Pairs=9.*Len=4"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_buffer_features
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/buffer_features.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/buffer_features
+        "-DEXPECTED_TEXT=Shared=77.*Copy=77.*Len=2.*Fill=9"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_binary_primitives_64
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/binary_primitives_64.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/binary_primitives_64
+        "-DEXPECTED_TEXT=U=72623859790382856.*I=-72623859790382856"
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
 )
 
@@ -354,6 +386,12 @@ add_hyrun_negative_test(
     "Cannot assign expression of type 'string' to target of type 'int'"
 )
 
+add_hyrun_negative_test(
+    hyrun_buffer_use_after_free_runtime_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/buffer_use_after_free_runtime.hy
+    "Buffer has been freed"
+)
+
 add_hyc_negative_test(
     hyc_array_size_type_fails
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/array_size_type.hy
@@ -370,6 +408,16 @@ add_hyc_negative_test(
     hyc_array_wrong_assign_fails
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/array_wrong_assign.hy
     "Cannot assign expression of type 'string' to target of type 'int'"
+)
+
+add_test(
+    NAME hyc_build_and_run_buffer_use_after_free_runtime_fails
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/buffer_use_after_free_runtime.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/buffer_use_after_free_runtime
+        "-DEXPECTED_OUTPUT_REGEX=Buffer has been freed"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndExpectRunFailure.cmake
 )
 
 # ---- new positive tests (interpreter) ----
@@ -845,6 +893,56 @@ add_test(
 set_tests_properties(hy_run_hexlab_inspect_demo PROPERTIES PASS_REGULAR_EXPRESSION "format=PNG width=1 height=1")
 
 add_test(
+    NAME hy_run_hexlab_dump_demo
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_run_hexlab_dump_demo
+        -DINPUT_TEXT=Hello
+        "-DRUN_ARGS=dump;@INPUT@;4"
+        "-DEXPECTED_OUTPUT_REGEX=0: 48 65 6C 6C.*4: 6F"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunHexLabCommand.cmake
+)
+
+add_test(
+    NAME hy_run_hexlab_diff_demo
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_run_hexlab_diff_demo
+        -DLEFT_TEXT=abc
+        -DRIGHT_TEXT=axc
+        "-DRUN_ARGS=diff;@LEFT@;@RIGHT@"
+        "-DEXPECTED_OUTPUT_REGEX=diff offset=1 left=62 right=78"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunHexLabCommand.cmake
+)
+
+add_test(
+    NAME hy_run_hexlab_search_demo
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_run_hexlab_search_demo
+        -DINPUT_TEXT=abcabc
+        "-DRUN_ARGS=search;@INPUT@;6263"
+        "-DEXPECTED_OUTPUT_REGEX=found offset=1"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunHexLabCommand.cmake
+)
+
+add_test(
+    NAME hy_run_hexlab_slice_demo
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_run_hexlab_slice_demo
+        -DINPUT_TEXT=abcdef
+        "-DRUN_ARGS=slice;@INPUT@;1;3;@OUTPUT@"
+        "-DEXPECTED_OUTPUT_REGEX=wrote=3"
+        -DEXPECTED_OUTPUT_FILE_TEXT=bcd
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunHexLabCommand.cmake
+)
+
+add_test(
     NAME hy_new_test_scaffold
     COMMAND ${CMAKE_COMMAND}
         -DHY_BINARY=$<TARGET_FILE:hy>
@@ -854,10 +952,29 @@ add_test(
 )
 
 add_test(
-    NAME hy_check_json_hello
+    NAME hy_check_json_clean
     COMMAND ${CMAKE_COMMAND}
         -DHY_BINARY=$<TARGET_FILE:hy>
-        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/hello_world.hy
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/check/clean.hy
+        -DEXPECT_EMPTY_ARRAY=ON
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCheckJson.cmake
+)
+
+add_test(
+    NAME hy_check_json_lint_warnings
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/check/lint_warnings.hy
+        "-DEXPECTED_MESSAGE_REGEXES=Using directive for namespace 'System\\.IO' is unused;Local variable 'unusedLocal' is never used;Parameter 'value' is never used;Local variable 'args' shadows an existing local or parameter;Statement is unreachable because previous control flow already terminates"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCheckJson.cmake
+)
+
+add_test(
+    NAME hy_check_json_buffer_use_after_free_warning
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/check/buffer_use_after_free.hy
+        "-DEXPECTED_MESSAGE_REGEXES=Potential use-after-free of Buffer local 'buffer'"
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCheckJson.cmake
 )
 

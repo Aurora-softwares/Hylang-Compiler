@@ -1940,6 +1940,7 @@ struct BoundConstructorBody {
 struct SemanticModel {
     std::vector<std::unique_ptr<TypeSymbol>> owned_types;
     std::unordered_map<string, TypeSymbol*> array_types;
+    std::unordered_map<string, std::unordered_set<string>> used_namespaces_by_file;
     TypeSymbol void_type{TypeKind::Void, "void", nullptr, nullptr, nullptr, nullptr, {}};
     TypeSymbol byte_type{TypeKind::Int, "byte", nullptr, nullptr, nullptr, nullptr, {}};
     TypeSymbol sbyte_type{TypeKind::Int, "sbyte", nullptr, nullptr, nullptr, nullptr, {}};
@@ -2299,30 +2300,32 @@ const TypeSymbol* resolve_type_in_context(SemanticModel& model,
     }
 
     if (base == nullptr) {
-        vector<string> candidates;
+        vector<std::pair<string, string>> candidates;
         if (name.find('.') != string::npos) {
-            candidates.push_back(name);
+            candidates.push_back({name, ""});
         } else {
             if (!current_namespace.empty()) {
-                candidates.push_back(current_namespace + "." + name);
+                candidates.push_back({current_namespace + "." + name, ""});
             }
             for (const auto& using_namespace : using_namespaces) {
-                candidates.push_back(using_namespace + "." + name);
+                candidates.push_back({using_namespace + "." + name, using_namespace});
             }
-            candidates.push_back(name);
+            candidates.push_back({name, ""});
         }
 
         const ClassSymbol* resolved_named_type = nullptr;
+        string resolved_using_namespace;
         for (const auto& candidate : candidates) {
-            const auto found = model.classes_by_full_name.find(candidate);
+            const auto found = model.classes_by_full_name.find(candidate.first);
             if (found != model.classes_by_full_name.end()) {
                 if (resolved_named_type != nullptr && resolved_named_type != found->second) {
                     diagnostics.add(file, type.line, type.column, "Ambiguous type reference '" + name + "'");
                     return &model.error_type;
                 }
                 resolved_named_type = found->second;
+                resolved_using_namespace = candidate.second;
             }
-            const auto enum_found = model.enums_by_full_name.find(candidate);
+            const auto enum_found = model.enums_by_full_name.find(candidate.first);
             if (enum_found != model.enums_by_full_name.end()) {
                 auto type_symbol = std::make_unique<TypeSymbol>();
                 type_symbol->kind = TypeKind::Enum;
@@ -2330,11 +2333,17 @@ const TypeSymbol* resolve_type_in_context(SemanticModel& model,
                 type_symbol->enum_symbol = enum_found->second;
                 base = type_symbol.get();
                 model.owned_types.push_back(std::move(type_symbol));
+                if (!candidate.second.empty()) {
+                    model.used_namespaces_by_file[file.string()].insert(candidate.second);
+                }
                 break;
             }
         }
 
         if (base == nullptr && resolved_named_type != nullptr) {
+            if (!resolved_using_namespace.empty()) {
+                model.used_namespaces_by_file[file.string()].insert(resolved_using_namespace);
+            }
             if (!type.type_arguments.empty() &&
                 resolved_named_type->type_parameters.size() != type.type_arguments.size()) {
                 diagnostics.add(file, type.line, type.column,
@@ -3729,6 +3738,11 @@ private:
                 if (scopes_.back().count(variable->name) > 0) {
                     diagnostics_.add(find_file_for_class(&current_class_), variable->line, variable->column,
                                      "Local variable '" + variable->name + "' is already declared in this scope");
+                } else if (lookup_local(variable->name) != nullptr || parameter_lookup_.count(variable->name) > 0) {
+                    diagnostics_.warn(find_file_for_class(&current_class_),
+                                      variable->line,
+                                      variable->column,
+                                      "Local variable '" + variable->name + "' shadows an existing local or parameter");
                 }
                 if (variable->initializer != nullptr) {
                     bound->initializer = bind_expression(*variable->initializer);
@@ -4073,7 +4087,7 @@ private:
         std::unique_ptr<BoundExpression> bind_element_access(const ElementAccessExpressionSyntax& syntax) {
             auto target_expression = bind_expression(*syntax.target);
             auto index_expression = bind_expression(*syntax.index);
-            if (index_expression->type != &program_.semantic_model.int_type) {
+            if (!is_integral_type(index_expression->type)) {
                 diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
                                  "Indices must be of type 'int'");
             }
@@ -4409,7 +4423,7 @@ private:
                 return fallback;
             }
             auto count_expr = bind_expression(*syntax.count);
-            if (count_expr->type != &program_.semantic_model.int_type) {
+            if (!is_integral_type(count_expr->type)) {
                 diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
                                  "Array size must be of type 'int'");
             }
@@ -7742,6 +7756,21 @@ void validate_manifest_metadata(const fs::path& path, ProjectManifest& manifest,
         manifest.members.clear();
     }
 
+    if (manifest.format == 2) {
+        if (manifest.version.empty()) {
+            diagnostics.warn(path, 1, 1, "Manifest version is empty");
+        }
+        if (manifest.package.id.empty()) {
+            diagnostics.warn(path, 1, 1, "Package metadata is missing 'id'");
+        }
+        if (!manifest.package.id.empty() && manifest.package.id.find(' ') != string::npos) {
+            diagnostics.warn(path, 1, 1, "Package id should not contain spaces");
+        }
+        if (manifest.package.license.empty()) {
+            diagnostics.warn(path, 1, 1, "Package metadata is missing 'license'");
+        }
+    }
+
     for (const auto& [name, dependency] : manifest.dependencies) {
         if (!dependency.has_path) {
             diagnostics.add(path, 1, 1, "Registry support is not implemented yet for dependency '" + name + "'");
@@ -7977,6 +8006,120 @@ namespace System.Collections {
 }
 
 namespace System.Runtime {
+    public class BufferState {
+        public byte[] Data;
+        public bool Alive;
+
+        public BufferState(byte[] data) {
+            Data = data;
+            Alive = true;
+        }
+    }
+
+    public class Buffer {
+        private BufferState _state;
+        private int _offset;
+        private int _length;
+
+        private Buffer(BufferState state, int offset, int length) {
+            _state = state;
+            _offset = offset;
+            _length = length;
+        }
+
+        private static void Fail(string message) {
+            Intrinsics.Fail(message);
+        }
+
+        private void EnsureAlive() {
+            if (_state == null || !_state.Alive) {
+                Fail("Buffer has been freed");
+            }
+        }
+
+        private void EnsureRange(int index) {
+            EnsureAlive();
+            if (index < 0 || index >= _length) {
+                Fail("Buffer index out of range");
+            }
+        }
+
+        public static Buffer Allocate(nuint length) {
+            if (length < 0) {
+                Fail("Buffer length cannot be negative");
+            }
+            return new Buffer(new BufferState(new byte[length]), 0, length);
+        }
+
+        public static Buffer FromArray(byte[] data) {
+            if (data == null) {
+                return Allocate(0);
+            }
+            Buffer buffer = Allocate(data.Length);
+            int index = 0;
+            while (index < data.Length) {
+                buffer._state.Data[index] = data[index];
+                index = index + 1;
+            }
+            return buffer;
+        }
+
+        public nuint Length() {
+            EnsureAlive();
+            return _length;
+        }
+
+        public byte Get(nuint index) {
+            EnsureRange(index);
+            return _state.Data[_offset + index];
+        }
+
+        public void Set(nuint index, byte value) {
+            EnsureRange(index);
+            _state.Data[_offset + index] = value;
+        }
+
+        public Buffer Slice(nuint offset, nuint length) {
+            EnsureAlive();
+            if (offset < 0 || length < 0 || offset > _length || offset + length > _length) {
+                Fail("Invalid buffer slice");
+            }
+            return new Buffer(_state, _offset + offset, length);
+        }
+
+        public void Fill(byte value) {
+            EnsureAlive();
+            int index = 0;
+            while (index < _length) {
+                _state.Data[_offset + index] = value;
+                index = index + 1;
+            }
+        }
+
+        public byte[] ToArray() {
+            EnsureAlive();
+            byte[] copy = new byte[_length];
+            int index = 0;
+            while (index < _length) {
+                copy[index] = _state.Data[_offset + index];
+                index = index + 1;
+            }
+            return copy;
+        }
+
+        public nint DangerousData() {
+            EnsureAlive();
+            Fail("Buffer.DangerousData requires executable unsafe support");
+            return 0;
+        }
+
+        public void Free() {
+            EnsureAlive();
+            _state.Alive = false;
+            _state.Data = new byte[0];
+        }
+    }
+
     public class BinaryPrimitives {
         public static int ReadUInt16LE(byte[] data, int offset) {
             return data[offset] + data[offset + 1] * 256;
@@ -8016,6 +8159,26 @@ namespace System.Runtime {
             return ReadUInt32BE(data, offset);
         }
 
+        public static long ReadUInt64LE(byte[] data, int offset) {
+            long low = ReadUInt32LE(data, offset);
+            long high = ReadUInt32LE(data, offset + 4);
+            return low + high * 4294967296;
+        }
+
+        public static long ReadUInt64BE(byte[] data, int offset) {
+            long high = ReadUInt32BE(data, offset);
+            long low = ReadUInt32BE(data, offset + 4);
+            return high * 4294967296 + low;
+        }
+
+        public static long ReadInt64LE(byte[] data, int offset) {
+            return ReadUInt64LE(data, offset);
+        }
+
+        public static long ReadInt64BE(byte[] data, int offset) {
+            return ReadUInt64BE(data, offset);
+        }
+
         public static void WriteUInt16LE(byte[] data, int offset, int value) {
             data[offset] = value % 256;
             data[offset + 1] = (value / 256) % 256;
@@ -8038,6 +8201,36 @@ namespace System.Runtime {
             data[offset + 1] = (value / 65536) % 256;
             data[offset + 2] = (value / 256) % 256;
             data[offset + 3] = value % 256;
+        }
+
+        public static void WriteUInt64LE(byte[] data, int offset, long value) {
+            data[offset] = value % 256;
+            data[offset + 1] = (value / 256) % 256;
+            data[offset + 2] = (value / 65536) % 256;
+            data[offset + 3] = (value / 16777216) % 256;
+            data[offset + 4] = (value / 4294967296) % 256;
+            data[offset + 5] = (value / 1099511627776) % 256;
+            data[offset + 6] = (value / 281474976710656) % 256;
+            data[offset + 7] = (value / 72057594037927936) % 256;
+        }
+
+        public static void WriteUInt64BE(byte[] data, int offset, long value) {
+            data[offset] = (value / 72057594037927936) % 256;
+            data[offset + 1] = (value / 281474976710656) % 256;
+            data[offset + 2] = (value / 1099511627776) % 256;
+            data[offset + 3] = (value / 4294967296) % 256;
+            data[offset + 4] = (value / 16777216) % 256;
+            data[offset + 5] = (value / 65536) % 256;
+            data[offset + 6] = (value / 256) % 256;
+            data[offset + 7] = value % 256;
+        }
+
+        public static void WriteInt64LE(byte[] data, int offset, long value) {
+            WriteUInt64LE(data, offset, value);
+        }
+
+        public static void WriteInt64BE(byte[] data, int offset, long value) {
+            WriteUInt64BE(data, offset, value);
         }
     }
 }
@@ -8226,11 +8419,496 @@ bool write_source_map_file(const fs::path& path,
     return write_text_file(path, out.str());
 }
 
+bool is_buffer_type(const TypeSymbol* type) {
+    return type != nullptr &&
+           type->kind == TypeKind::Class &&
+           type->class_symbol != nullptr &&
+           type->class_symbol->full_name == "System.Runtime.Buffer";
+}
+
+void collect_symbol_usage(const BoundExpression& expression,
+                          std::unordered_set<const VariableSymbol*>& used_locals,
+                          std::unordered_set<const ParameterSymbol*>& used_parameters) {
+    switch (expression.kind) {
+        case BoundExpressionKind::Literal:
+            return;
+        case BoundExpressionKind::Local: {
+            const auto& local = static_cast<const BoundLocalExpression&>(expression);
+            used_locals.insert(local.variable);
+            return;
+        }
+        case BoundExpressionKind::Parameter: {
+            const auto& parameter = static_cast<const BoundParameterExpression&>(expression);
+            used_parameters.insert(parameter.parameter);
+            return;
+        }
+        case BoundExpressionKind::ThisReference:
+            return;
+        case BoundExpressionKind::Field: {
+            const auto& field = static_cast<const BoundFieldExpression&>(expression);
+            if (field.receiver != nullptr) {
+                collect_symbol_usage(*field.receiver, used_locals, used_parameters);
+            }
+            return;
+        }
+        case BoundExpressionKind::ArrayLength: {
+            const auto& length = static_cast<const BoundArrayLengthExpression&>(expression);
+            collect_symbol_usage(*length.array_expression, used_locals, used_parameters);
+            return;
+        }
+        case BoundExpressionKind::ArrayIndex: {
+            const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
+            collect_symbol_usage(*access.array_expression, used_locals, used_parameters);
+            collect_symbol_usage(*access.index_expression, used_locals, used_parameters);
+            return;
+        }
+        case BoundExpressionKind::StringIndex: {
+            const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
+            collect_symbol_usage(*access.string_expression, used_locals, used_parameters);
+            collect_symbol_usage(*access.index_expression, used_locals, used_parameters);
+            return;
+        }
+        case BoundExpressionKind::StringLength: {
+            const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
+            collect_symbol_usage(*length.string_expression, used_locals, used_parameters);
+            return;
+        }
+        case BoundExpressionKind::Assignment: {
+            const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
+            collect_symbol_usage(*assignment.target, used_locals, used_parameters);
+            collect_symbol_usage(*assignment.expression, used_locals, used_parameters);
+            return;
+        }
+        case BoundExpressionKind::Conversion: {
+            const auto& conversion = static_cast<const BoundConversionExpression&>(expression);
+            if (conversion.expression != nullptr) {
+                collect_symbol_usage(*conversion.expression, used_locals, used_parameters);
+            }
+            return;
+        }
+        case BoundExpressionKind::Unary: {
+            const auto& unary = static_cast<const BoundUnaryExpression&>(expression);
+            collect_symbol_usage(*unary.operand, used_locals, used_parameters);
+            return;
+        }
+        case BoundExpressionKind::Binary: {
+            const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
+            collect_symbol_usage(*binary.left, used_locals, used_parameters);
+            collect_symbol_usage(*binary.right, used_locals, used_parameters);
+            return;
+        }
+        case BoundExpressionKind::Call: {
+            const auto& call = static_cast<const BoundCallExpression&>(expression);
+            if (call.receiver != nullptr) {
+                collect_symbol_usage(*call.receiver, used_locals, used_parameters);
+            }
+            for (const auto& argument : call.arguments) {
+                collect_symbol_usage(*argument, used_locals, used_parameters);
+            }
+            return;
+        }
+        case BoundExpressionKind::NewObject: {
+            const auto& creation = static_cast<const BoundNewExpression&>(expression);
+            for (const auto& argument : creation.arguments) {
+                collect_symbol_usage(*argument, used_locals, used_parameters);
+            }
+            return;
+        }
+        case BoundExpressionKind::NewArray: {
+            const auto& creation = static_cast<const BoundArrayCreationExpression&>(expression);
+            collect_symbol_usage(*creation.count, used_locals, used_parameters);
+            return;
+        }
+    }
+}
+
+void collect_symbol_usage(const BoundStatement& statement,
+                          std::unordered_set<const VariableSymbol*>& used_locals,
+                          std::unordered_set<const ParameterSymbol*>& used_parameters) {
+    switch (statement.kind) {
+        case BoundStatementKind::Block: {
+            const auto& block = static_cast<const BoundBlockStatement&>(statement);
+            for (const auto& child : block.statements) {
+                collect_symbol_usage(*child, used_locals, used_parameters);
+            }
+            return;
+        }
+        case BoundStatementKind::VariableDeclaration: {
+            const auto& declaration = static_cast<const BoundVariableDeclarationStatement&>(statement);
+            if (declaration.initializer != nullptr) {
+                collect_symbol_usage(*declaration.initializer, used_locals, used_parameters);
+            }
+            return;
+        }
+        case BoundStatementKind::Expression: {
+            const auto& expression = static_cast<const BoundExpressionStatement&>(statement);
+            collect_symbol_usage(*expression.expression, used_locals, used_parameters);
+            return;
+        }
+        case BoundStatementKind::If: {
+            const auto& if_statement = static_cast<const BoundIfStatement&>(statement);
+            collect_symbol_usage(*if_statement.condition, used_locals, used_parameters);
+            collect_symbol_usage(*if_statement.then_statement, used_locals, used_parameters);
+            if (if_statement.else_statement != nullptr) {
+                collect_symbol_usage(*if_statement.else_statement, used_locals, used_parameters);
+            }
+            return;
+        }
+        case BoundStatementKind::While: {
+            const auto& while_statement = static_cast<const BoundWhileStatement&>(statement);
+            collect_symbol_usage(*while_statement.condition, used_locals, used_parameters);
+            collect_symbol_usage(*while_statement.body, used_locals, used_parameters);
+            return;
+        }
+        case BoundStatementKind::For: {
+            const auto& for_statement = static_cast<const BoundForStatement&>(statement);
+            if (for_statement.initializer != nullptr) {
+                collect_symbol_usage(*for_statement.initializer, used_locals, used_parameters);
+            }
+            if (for_statement.condition != nullptr) {
+                collect_symbol_usage(*for_statement.condition, used_locals, used_parameters);
+            }
+            if (for_statement.update != nullptr) {
+                collect_symbol_usage(*for_statement.update, used_locals, used_parameters);
+            }
+            collect_symbol_usage(*for_statement.body, used_locals, used_parameters);
+            return;
+        }
+        case BoundStatementKind::Return: {
+            const auto& return_statement = static_cast<const BoundReturnStatement&>(statement);
+            if (return_statement.expression != nullptr) {
+                collect_symbol_usage(*return_statement.expression, used_locals, used_parameters);
+            }
+            return;
+        }
+        case BoundStatementKind::Break:
+        case BoundStatementKind::Continue:
+            return;
+    }
+}
+
+bool statement_terminates_flow(const BoundStatement& statement) {
+    switch (statement.kind) {
+        case BoundStatementKind::Return:
+        case BoundStatementKind::Break:
+        case BoundStatementKind::Continue:
+            return true;
+        case BoundStatementKind::Block: {
+            const auto& block = static_cast<const BoundBlockStatement&>(statement);
+            return !block.statements.empty() && statement_terminates_flow(*block.statements.back());
+        }
+        case BoundStatementKind::If: {
+            const auto& if_statement = static_cast<const BoundIfStatement&>(statement);
+            return if_statement.then_statement != nullptr &&
+                   if_statement.else_statement != nullptr &&
+                   statement_terminates_flow(*if_statement.then_statement) &&
+                   statement_terminates_flow(*if_statement.else_statement);
+        }
+        default:
+            return false;
+    }
+}
+
+void lint_statement(const BoundStatement& statement,
+                    std::unordered_map<const VariableSymbol*, bool>& freed_buffers,
+                    DiagnosticBag& diagnostics,
+                    const fs::path& file);
+
+void lint_expression(const BoundExpression& expression,
+                     const std::unordered_map<const VariableSymbol*, bool>& freed_buffers,
+                     DiagnosticBag& diagnostics,
+                     const fs::path& file) {
+    switch (expression.kind) {
+        case BoundExpressionKind::Field: {
+            const auto& field = static_cast<const BoundFieldExpression&>(expression);
+            if (field.receiver != nullptr) {
+                lint_expression(*field.receiver, freed_buffers, diagnostics, file);
+            }
+            return;
+        }
+        case BoundExpressionKind::ArrayLength: {
+            const auto& length = static_cast<const BoundArrayLengthExpression&>(expression);
+            lint_expression(*length.array_expression, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::ArrayIndex: {
+            const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
+            lint_expression(*access.array_expression, freed_buffers, diagnostics, file);
+            lint_expression(*access.index_expression, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::StringIndex: {
+            const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
+            lint_expression(*access.string_expression, freed_buffers, diagnostics, file);
+            lint_expression(*access.index_expression, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::StringLength: {
+            const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
+            lint_expression(*length.string_expression, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::Assignment: {
+            const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
+            lint_expression(*assignment.target, freed_buffers, diagnostics, file);
+            lint_expression(*assignment.expression, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::Conversion: {
+            const auto& conversion = static_cast<const BoundConversionExpression&>(expression);
+            if (conversion.expression != nullptr) {
+                lint_expression(*conversion.expression, freed_buffers, diagnostics, file);
+            }
+            return;
+        }
+        case BoundExpressionKind::Unary: {
+            const auto& unary = static_cast<const BoundUnaryExpression&>(expression);
+            lint_expression(*unary.operand, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::Binary: {
+            const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
+            lint_expression(*binary.left, freed_buffers, diagnostics, file);
+            lint_expression(*binary.right, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::Call: {
+            const auto& call = static_cast<const BoundCallExpression&>(expression);
+            if (call.receiver != nullptr &&
+                call.receiver->kind == BoundExpressionKind::Local &&
+                is_buffer_type(call.receiver->type)) {
+                const auto& local = static_cast<const BoundLocalExpression&>(*call.receiver);
+                const auto found = freed_buffers.find(local.variable);
+                if (found != freed_buffers.end() && found->second && call.method != nullptr && call.method->name != "Free") {
+                    diagnostics.warn(file,
+                                     expression.line,
+                                     expression.column,
+                                     "Potential use-after-free of Buffer local '" + local.variable->name + "'");
+                }
+            }
+            if (call.receiver != nullptr) {
+                lint_expression(*call.receiver, freed_buffers, diagnostics, file);
+            }
+            for (const auto& argument : call.arguments) {
+                lint_expression(*argument, freed_buffers, diagnostics, file);
+            }
+            return;
+        }
+        case BoundExpressionKind::NewObject: {
+            const auto& creation = static_cast<const BoundNewExpression&>(expression);
+            for (const auto& argument : creation.arguments) {
+                lint_expression(*argument, freed_buffers, diagnostics, file);
+            }
+            return;
+        }
+        case BoundExpressionKind::NewArray: {
+            const auto& creation = static_cast<const BoundArrayCreationExpression&>(expression);
+            lint_expression(*creation.count, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::Literal:
+        case BoundExpressionKind::Local:
+        case BoundExpressionKind::Parameter:
+        case BoundExpressionKind::ThisReference:
+            return;
+    }
+}
+
+void update_buffer_state_from_expression(const BoundExpression& expression,
+                                         std::unordered_map<const VariableSymbol*, bool>& freed_buffers) {
+    if (expression.kind == BoundExpressionKind::Assignment) {
+        const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
+        if (assignment.target != nullptr &&
+            assignment.target->kind == BoundExpressionKind::Local &&
+            is_buffer_type(assignment.target->type)) {
+            const auto& local = static_cast<const BoundLocalExpression&>(*assignment.target);
+            freed_buffers[local.variable] = false;
+        }
+        return;
+    }
+
+    if (expression.kind == BoundExpressionKind::Call) {
+        const auto& call = static_cast<const BoundCallExpression&>(expression);
+        if (call.receiver != nullptr &&
+            call.receiver->kind == BoundExpressionKind::Local &&
+            is_buffer_type(call.receiver->type) &&
+            call.method != nullptr &&
+            call.method->name == "Free") {
+            const auto& local = static_cast<const BoundLocalExpression&>(*call.receiver);
+            freed_buffers[local.variable] = true;
+        }
+    }
+}
+
+void lint_block(const BoundBlockStatement& block,
+                std::unordered_map<const VariableSymbol*, bool> freed_buffers,
+                DiagnosticBag& diagnostics,
+                const fs::path& file) {
+    bool unreachable = false;
+    for (const auto& statement : block.statements) {
+        if (unreachable) {
+            diagnostics.warn(file,
+                             statement->line,
+                             statement->column,
+                             "Statement is unreachable because previous control flow already terminates");
+        }
+        lint_statement(*statement, freed_buffers, diagnostics, file);
+        if (statement->kind == BoundStatementKind::VariableDeclaration) {
+            const auto& declaration = static_cast<const BoundVariableDeclarationStatement&>(*statement);
+            if (is_buffer_type(declaration.variable->type)) {
+                freed_buffers[declaration.variable] = false;
+            }
+        } else if (statement->kind == BoundStatementKind::Expression) {
+            update_buffer_state_from_expression(*static_cast<const BoundExpressionStatement&>(*statement).expression, freed_buffers);
+        }
+        if (statement_terminates_flow(*statement)) {
+            unreachable = true;
+        }
+    }
+}
+
+void lint_statement(const BoundStatement& statement,
+                    std::unordered_map<const VariableSymbol*, bool>& freed_buffers,
+                    DiagnosticBag& diagnostics,
+                    const fs::path& file) {
+    switch (statement.kind) {
+        case BoundStatementKind::Block:
+            lint_block(static_cast<const BoundBlockStatement&>(statement), freed_buffers, diagnostics, file);
+            return;
+        case BoundStatementKind::VariableDeclaration: {
+            const auto& declaration = static_cast<const BoundVariableDeclarationStatement&>(statement);
+            if (declaration.initializer != nullptr) {
+                lint_expression(*declaration.initializer, freed_buffers, diagnostics, file);
+            }
+            return;
+        }
+        case BoundStatementKind::Expression: {
+            const auto& expression = static_cast<const BoundExpressionStatement&>(statement);
+            lint_expression(*expression.expression, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundStatementKind::If: {
+            const auto& if_statement = static_cast<const BoundIfStatement&>(statement);
+            lint_expression(*if_statement.condition, freed_buffers, diagnostics, file);
+            lint_statement(*if_statement.then_statement, freed_buffers, diagnostics, file);
+            if (if_statement.else_statement != nullptr) {
+                lint_statement(*if_statement.else_statement, freed_buffers, diagnostics, file);
+            }
+            return;
+        }
+        case BoundStatementKind::While: {
+            const auto& while_statement = static_cast<const BoundWhileStatement&>(statement);
+            lint_expression(*while_statement.condition, freed_buffers, diagnostics, file);
+            lint_statement(*while_statement.body, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundStatementKind::For: {
+            const auto& for_statement = static_cast<const BoundForStatement&>(statement);
+            if (for_statement.initializer != nullptr) {
+                lint_statement(*for_statement.initializer, freed_buffers, diagnostics, file);
+            }
+            if (for_statement.condition != nullptr) {
+                lint_expression(*for_statement.condition, freed_buffers, diagnostics, file);
+            }
+            if (for_statement.update != nullptr) {
+                lint_expression(*for_statement.update, freed_buffers, diagnostics, file);
+            }
+            lint_statement(*for_statement.body, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundStatementKind::Return: {
+            const auto& return_statement = static_cast<const BoundReturnStatement&>(statement);
+            if (return_statement.expression != nullptr) {
+                lint_expression(*return_statement.expression, freed_buffers, diagnostics, file);
+            }
+            return;
+        }
+        case BoundStatementKind::Break:
+        case BoundStatementKind::Continue:
+            return;
+    }
+}
+
+void lint_program(const BoundProgram& program, DiagnosticBag& diagnostics) {
+    for (const auto& unit : program.units) {
+        if (unit.file == "<stdlib>") {
+            continue;
+        }
+        const auto used_namespaces_it = program.semantic_model.used_namespaces_by_file.find(unit.file.string());
+        const std::unordered_set<string> empty_set;
+        const auto& used_namespaces =
+            used_namespaces_it != program.semantic_model.used_namespaces_by_file.end() ? used_namespaces_it->second : empty_set;
+        for (const auto& using_directive : unit.using_directives) {
+            if (used_namespaces.count(using_directive.namespace_name) == 0) {
+                diagnostics.warn(unit.file,
+                                 using_directive.line,
+                                 using_directive.column,
+                                 "Using directive for namespace '" + using_directive.namespace_name + "' is unused");
+            }
+        }
+    }
+
+    for (const auto& [method, body] : program.methods) {
+        if (method == nullptr || method->owner == nullptr || method->owner->source_file == "<stdlib>") {
+            continue;
+        }
+        std::unordered_set<const VariableSymbol*> used_locals;
+        std::unordered_set<const ParameterSymbol*> used_parameters;
+        collect_symbol_usage(*body->body, used_locals, used_parameters);
+        for (const auto& local : body->locals) {
+            if (used_locals.count(local.get()) == 0) {
+                diagnostics.warn(method->owner->source_file,
+                                 body->body->line,
+                                 body->body->column,
+                                 "Local variable '" + local->name + "' is never used");
+            }
+        }
+        for (const auto& parameter : method->parameters) {
+            if (used_parameters.count(&parameter) == 0) {
+                diagnostics.warn(method->owner->source_file,
+                                 body->body->line,
+                                 body->body->column,
+                                 "Parameter '" + parameter.name + "' is never used");
+            }
+        }
+        std::unordered_map<const VariableSymbol*, bool> freed_buffers;
+        lint_block(*body->body, freed_buffers, diagnostics, method->owner->source_file);
+    }
+
+    for (const auto& [constructor, body] : program.constructors) {
+        if (constructor == nullptr || constructor->owner == nullptr || constructor->owner->source_file == "<stdlib>") {
+            continue;
+        }
+        std::unordered_set<const VariableSymbol*> used_locals;
+        std::unordered_set<const ParameterSymbol*> used_parameters;
+        collect_symbol_usage(*body->body, used_locals, used_parameters);
+        for (const auto& local : body->locals) {
+            if (used_locals.count(local.get()) == 0) {
+                diagnostics.warn(constructor->owner->source_file,
+                                 body->body->line,
+                                 body->body->column,
+                                 "Local variable '" + local->name + "' is never used");
+            }
+        }
+        for (const auto& parameter : constructor->parameters) {
+            if (used_parameters.count(&parameter) == 0) {
+                diagnostics.warn(constructor->owner->source_file,
+                                 body->body->line,
+                                 body->body->column,
+                                 "Parameter '" + parameter.name + "' is never used");
+            }
+        }
+        std::unordered_map<const VariableSymbol*, bool> freed_buffers;
+        lint_block(*body->body, freed_buffers, diagnostics, constructor->owner->source_file);
+    }
+}
+
 CheckResult check_single_target(const fs::path& input_path) {
     DiagnosticBag diagnostics;
     const auto program = load_program_from_target(input_path, diagnostics);
     if (program != nullptr && is_runnable_manifest(manifest_for_target(input_path, diagnostics).value_or(ProjectManifest{}))) {
         locate_entry_point(*program, diagnostics);
+        lint_program(*program, diagnostics);
     }
     return CheckResult{!diagnostics.has_errors(), std::move(diagnostics.items)};
 }

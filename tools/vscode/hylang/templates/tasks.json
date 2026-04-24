@@ -1,0 +1,54 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "hylang: check",
+      "type": "shell",
+      "command": "node",
+      "args": [
+        "${workspaceFolder}/tools/vscode/hylang/bin/hy-check-json.js",
+        "${input:hyTarget}"
+      ],
+      "group": "build",
+      "problemMatcher": {
+        "owner": "hylang",
+        "fileLocation": ["absolute"],
+        "pattern": {
+          "regexp": "^(.*)\\((\\d+),(\\d+)\\): (warning|error) HYLANG: (.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
+        }
+      }
+    },
+    {
+      "label": "hylang: format workspace",
+      "type": "shell",
+      "command": "hy",
+      "args": [
+        "fmt",
+        "${workspaceFolder}"
+      ]
+    },
+    {
+      "label": "hylang: test workspace",
+      "type": "shell",
+      "command": "hy",
+      "args": [
+        "test",
+        "${input:hyTarget}"
+      ],
+      "group": "test"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "hyTarget",
+      "type": "promptString",
+      "description": "Path to a .hy or .hyproj target",
+      "default": "${workspaceFolder}/App.hyproj"
+    }
+  ]
+}

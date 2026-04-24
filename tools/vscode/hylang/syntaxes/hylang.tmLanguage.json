@@ -1,0 +1,46 @@
+{
+  "scopeName": "source.hylang",
+  "name": "Hylang",
+  "patterns": [
+    {
+      "name": "comment.line.double-slash.hylang",
+      "match": "//.*$"
+    },
+    {
+      "name": "string.quoted.double.hylang",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.hylang",
+          "match": "\\\\."
+        }
+      ]
+    },
+    {
+      "name": "constant.numeric.hylang",
+      "match": "\\b(?:0x[0-9A-Fa-f]+|[0-9]+)\\b"
+    },
+    {
+      "name": "keyword.control.hylang",
+      "match": "\\b(?:if|else|while|for|break|continue|return|new|this|base)\\b"
+    },
+    {
+      "name": "keyword.modifier.hylang",
+      "match": "\\b(?:public|private|protected|internal|static|virtual|override)\\b"
+    },
+    {
+      "name": "storage.type.hylang",
+      "match": "\\b(?:class|struct|interface|enum|namespace|using|void|byte|sbyte|short|ushort|int|uint|long|ulong|nint|nuint|bool|string|var)\\b"
+    },
+    {
+      "name": "constant.language.hylang",
+      "match": "\\b(?:true|false|null)\\b"
+    },
+    {
+      "name": "entity.name.type.hylang",
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+    }
+  ],
+  "uuid": "ce949357-c3b2-4afd-a8cc-35d29a53d8f8"
+}

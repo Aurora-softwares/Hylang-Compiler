@@ -1,0 +1,40 @@
+{
+  "Program Skeleton": {
+    "prefix": "hyprog",
+    "body": [
+      "public class Program {",
+      "    public static void Main(string[] args) {",
+      "        ${1:System.Console.WriteLine(\"Hello, World!\");}",
+      "    }",
+      "}"
+    ],
+    "description": "Insert a basic Program.Main entry point"
+  },
+  "Namespace Skeleton": {
+    "prefix": "hyns",
+    "body": [
+      "namespace ${1:App} {",
+      "    $0",
+      "}"
+    ],
+    "description": "Insert a namespace block"
+  },
+  "Class Skeleton": {
+    "prefix": "hyclass",
+    "body": [
+      "public class ${1:Name} {",
+      "    $0",
+      "}"
+    ],
+    "description": "Insert a class declaration"
+  },
+  "For Loop": {
+    "prefix": "hyfor",
+    "body": [
+      "for (int ${1:index} = 0; ${1:index} < ${2:count}; ${1:index} = ${1:index} + 1) {",
+      "    $0",
+      "}"
+    ],
+    "description": "Insert a Hylang for loop"
+  }
+}

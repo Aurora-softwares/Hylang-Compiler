@@ -12,14 +12,14 @@ public class Program {
             int width = 16;
             int start = 0;
             int count = -1;
+            if (args.Length >= 3) {
+                width = System.Convert.ToInt32(args[2]);
+            }
             if (args.Length >= 4) {
-                width = System.Convert.ToInt32(args[3]);
+                start = System.Convert.ToInt32(args[3]);
             }
             if (args.Length >= 5) {
-                start = System.Convert.ToInt32(args[4]);
-            }
-            if (args.Length >= 6) {
-                count = System.Convert.ToInt32(args[5]);
+                count = System.Convert.ToInt32(args[4]);
             }
             System.Console.WriteLine(HexLab.DumpFile(args[1], width, start, count));
             return 0;

@@ -22,6 +22,7 @@ Useful demo commands:
 ./build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- inspect samples/hexlab/demo.bin
 ./build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- dump samples/hexlab/demo.bin 8
 ./build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- search samples/hexlab/demo.bin 89504E47
+./build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- diff samples/hexlab/demo.bin samples/hexlab/demo.bin
 ```
 
 Current expected outputs:
@@ -31,7 +32,14 @@ format=PNG width=1 height=1
 0: 89 50 4E 47 0D 0A 1A 0A 00 00 00 0D 49 48 44 52
 16: 00 00 00 01 00 00 00 01
 found offset=0
+equal
 ```
+
+Current implementation notes:
+
+- `HexLab.Core` now routes dump, diff, search, and slice hot paths through the bootstrap `System.Runtime.Buffer`
+- PNG inspection now exercises the 64-bit `BinaryPrimitives` path
+- the showcase is still safe-code-only today; executable `unsafe` showcase paths are waiting on the remaining systems-surface work
 
 Command surface:
 

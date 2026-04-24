@@ -8,6 +8,7 @@ public class Program {
         TestInspectPng();
         TestInspectZip();
         TestDiffAndSearch();
+        TestBufferViews();
         TestSlice();
         return 0;
     }
@@ -63,6 +64,18 @@ public class Program {
 
         Assert.Equal("diff offset=2 left=03 right=09", HexLab.Diff(left, right), "diff should report first mismatch");
         Assert.Equal("found offset=1", HexLab.Search(left, "0203"), "search should find the pattern");
+    }
+
+    public static void TestBufferViews() {
+        Buffer buffer = Buffer.Allocate(4);
+        buffer.Set(0, 16);
+        buffer.Set(1, 32);
+        Buffer slice = buffer.Slice(1, 2);
+        Assert.Equal(2, slice.Length(), "slice length should match");
+        Assert.Equal(32, slice.Get(0), "slice should read shared state");
+        slice.Set(1, 48);
+        Assert.Equal(48, buffer.Get(2), "slice writes should update the shared storage");
+        buffer.Free();
     }
 
     public static void TestSlice() {

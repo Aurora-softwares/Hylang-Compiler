@@ -49,8 +49,8 @@ Checked items reflect the current repo state as of now.
 - [x] Phase 0: Bootstrap Foundation is effectively complete enough to move beyond the bootstrap-only stage
 - [x] Phase 1: Language Hardening is complete
 - [x] Phase 2: Core Language Expansion is complete
-- [ ] Phase 3: Runtime and Memory Model is largely complete, with raw-memory systems work still open
-- [ ] Phase 4: Tooling and Developer Workflow is now in progress
+- [ ] Phase 3: Runtime and Memory Model is largely complete, with executable unsafe/manual-memory systems work still open
+- [ ] Phase 4: Tooling and Developer Workflow is well underway, with closeout work still open
 - [ ] Phase 5: Self-Hosting Preparation has not started in earnest
 - [ ] Phase 6: Self-Hosted Compiler has not started
 - [ ] Phase 7: Full Standard Library has not started in earnest
@@ -220,7 +220,8 @@ Delivered features:
 - `var` local inference for ergonomic compiler-style code
 - name resolution by current namespace, imported namespaces, then global namespace, with ambiguity diagnostics
 - arity-aware generic type lookup and specialization
-- `docs/spec/phase2.md` capturing the implemented rules and deliberate exclusions
+- the Hylang-Docs Phase 2 bootstrap spec capturing the implemented rules and deliberate exclusions:
+  <https://aurora-softwares.github.io/Hylang-Docs/implementation/phase2-bootstrap-spec.html>
 - `samples/mini_frontend_model` proving the language on a small compiler-flavored model
 
 Exit criteria:
@@ -231,7 +232,7 @@ Exit criteria:
 
 ## Phase 3: Runtime and Memory Model
 
-Status: runtime foundation complete, systems-memory follow-on still open
+Status: runtime foundation complete, with safe buffer primitives landed and executable unsafe/manual-memory work still open
 
 Goals:
 
@@ -247,7 +248,8 @@ Checklist:
 - [x] Design pointer support
 - [x] Design stack allocation support
 - [x] Design manual allocation/free APIs
-- [ ] Add raw memory and buffer primitives suitable for systems code
+- [x] Add a safe bootstrap buffer primitive for byte-oriented systems utilities
+- [ ] Add executable raw memory and unsafe primitives suitable for systems code
 - [x] Define the safe/unsafe boundary clearly in docs and compiler rules
 
 Main work:
@@ -273,8 +275,11 @@ Delivered foundation:
 - managed strings and general `T[]` arrays are part of the runtime surface
 - `new T[count]` works across interpreter and compiled modes
 - bootstrap `System.Collections.List<T>` exists and is proven via `samples/managed_collections`
+- bootstrap `System.Runtime.Buffer` now provides safe allocation, slicing, copying, and explicit free semantics
 - GC stress controls exist for compiled output via `HYLANG_GC_STRESS` and `HYLANG_GC_THRESHOLD`
-- `docs/spec/phase3-runtime.md` and `docs/spec/phase3-unsafe.md` capture the runtime contract and deferred unsafe design
+- the Hylang-Docs runtime pages capture the runtime contract and deferred unsafe design:
+  <https://aurora-softwares.github.io/Hylang-Docs/runtime/runtime-model.html>
+  <https://aurora-softwares.github.io/Hylang-Docs/runtime/unsafe-design.html>
 
 Current note:
 
@@ -300,8 +305,8 @@ Checklist:
 - [x] Add a first-class `hy` CLI workflow
 - [x] Add a formatter
 - [x] Add a test runner workflow
-- [ ] Add linting or static analysis
-- [ ] Add language-server/editor support
+- [x] Add bootstrap linting or static analysis
+- [x] Add light editor support
 - [x] Improve diagnostics and incremental build behavior
 - [x] Add debug metadata/source mapping support
 - [x] Make project creation and dependency management coherent for new users
@@ -327,9 +332,11 @@ Delivered slice:
 - `.hylang/cache/` build caching
 - simple `.hymap.json` files from `hy build --debug`
 - JSON diagnostics from `hy check --json`
+- bootstrap lint warnings for unused imports/locals/parameters, unreachable statements, local shadowing, manifest metadata, and obvious `Buffer` use-after-free
 - bootstrap `System.Testing.Assert`
-- byte-oriented file helpers and bootstrap `BinaryPrimitives`
+- byte-oriented file helpers, bootstrap `System.Runtime.Buffer`, and bootstrap `BinaryPrimitives` through 64-bit helpers
 - `samples/hexlab` as the current workflow showcase
+- in-repo VS Code assets for highlighting, snippets, tasks, launch templates, and format-on-save settings
 
 Desired tools:
 
@@ -342,8 +349,7 @@ Desired tools:
 
 Still open inside Phase 4:
 
-- real lint warnings and broader static analysis
-- editor assets / VS Code integration
+- deeper static analysis beyond the current bootstrap lint set
 - stronger runtime/source mapping for compiled failures
 - the raw-memory and executable unsafe systems surface originally planned alongside this phase
 

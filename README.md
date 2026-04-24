@@ -43,7 +43,8 @@ new  this  base  :  +  -  *  /  %  ==  !=  <  <=  >  >=  &&  ||  !
 - Minimal bootstrap `System.Collections.List<T>`
 - `System.Console.Write` / `WriteLine` and `System.IO.File` text read/write/exists
 - `System.IO.File.ReadAllBytes` / `WriteAllBytes`
-- Bootstrap `System.Runtime.BinaryPrimitives` for 16-bit and 32-bit little-endian/big-endian reads and writes
+- Bootstrap `System.Runtime.Buffer` for safe byte-buffer allocation, slicing, copying, and explicit free semantics
+- Bootstrap `System.Runtime.BinaryPrimitives` for 16-bit, 32-bit, and 64-bit little-endian/big-endian reads and writes
 - Bootstrap `System.Testing.Assert` and `System.Convert.ToInt32`
 
 ## Workflow
@@ -66,9 +67,11 @@ Current workflow support includes:
 - local path dependencies
 - build caching under `.hylang/cache/`
 - simple `.hymap.json` debug/source-map files from `hy build --debug`
+- warning-bearing `hy check --json` output with severity/file/line/column/message entries
+- light VS Code assets under `tools/vscode/hylang`
 - `samples/hexlab` as the current showcase workspace for the full build/test/package loop
 
-The remaining low-level Phase 4 systems surface is still in progress. Raw `Buffer`, executable `unsafe`, pointers, `stackalloc`, and manual memory APIs are not shipped yet.
+The remaining low-level Phase 4 systems surface is still in progress. Safe bootstrap `Buffer` support is shipped, but executable `unsafe`, pointers, `stackalloc`, `sizeof`, and manual memory APIs are not shipped yet.
 
 See the [full language reference](https://aurora-softwares.github.io/Hylang-Docs/) for details on every feature.
 
@@ -113,6 +116,8 @@ build/hy build tests/projects/app/App.hyproj -o build/demo_app
 build/hy build samples/hexlab/HexLab.hyproj
 build/hy test samples/hexlab/HexLab.hyproj
 build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- inspect samples/hexlab/demo.bin
+build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- dump samples/hexlab/demo.bin 8
+build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- search samples/hexlab/demo.bin 89504E47
 
 # Emit debug metadata alongside generated output
 build/hy build tests/hello_world.hy -o build/hello_world_debug --debug
@@ -122,7 +127,19 @@ build/hyrun samples/mini_frontend_model/MiniFrontendModel.hyproj
 build/hyc build tests/projects/mathlib/Math.hyproj --target lib -o build/libmathlib.a
 ```
 
-See [docs/spec/phase4-tooling.md](docs/spec/phase4-tooling.md) for the current Phase 4 workflow contract.
+See the Phase 4 tooling page in Hylang-Docs: <https://aurora-softwares.github.io/Hylang-Docs/implementation/phase4-tooling-slice.html>.
+
+## Editor Assets
+
+Light VS Code integration lives in [`tools/vscode/hylang`](tools/vscode/hylang). It currently includes:
+
+- syntax highlighting for `.hy` and `.hyproj`
+- snippets
+- task and launch templates
+- a JSON-diagnostic wrapper for `hy check --json`
+- format-on-save settings templates
+
+This is intentionally lighter than a full language server.
 
 ## Runtime model
 
@@ -132,6 +149,6 @@ See [docs/spec/phase4-tooling.md](docs/spec/phase4-tooling.md) for the current P
 
 ## Roadmap
 
-Hylang is developed in phases toward a self-hosted compiler and first-class support for Australis OS userland. Runtime foundation work from Phase 3 is landed, and the active zone is now **Phase 4 — Tooling and Developer Workflow**, with the raw-memory systems surface still pending.
+Hylang is developed in phases toward a self-hosted compiler and first-class support for Australis OS userland. Runtime foundation work from Phase 3 is landed, and the active zone is now **Phase 4 — Tooling and Developer Workflow**, with executable unsafe/manual-memory systems work still pending.
 
 See [ROADMAP.md](ROADMAP.md) for the full plan.

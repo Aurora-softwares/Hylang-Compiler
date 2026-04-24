@@ -96,15 +96,20 @@ namespace HexLab.Core {
             return File.ReadAllBytes(path);
         }
 
+        public static Buffer ReadBuffer(string path) {
+            return Buffer.FromArray(ReadAllBytes(path));
+        }
+
         public static string Dump(byte[] data, int width, int start, int count) {
+            Buffer buffer = Buffer.FromArray(data);
             if (width <= 0) {
                 width = 16;
             }
             if (start < 0) {
                 start = 0;
             }
-            if (count < 0 || start + count > data.Length) {
-                count = data.Length - start;
+            if (count < 0 || start + count > buffer.Length()) {
+                count = buffer.Length() - start;
             }
 
             string result = "";
@@ -118,7 +123,7 @@ namespace HexLab.Core {
                     if (inner > 0) {
                         result = result + " ";
                     }
-                    result = result + HexText.ByteHex(data[index + inner]);
+                    result = result + HexText.ByteHex(buffer.Get(index + inner));
                     inner = inner + 1;
                 }
                 index = index + lineCount;
@@ -135,14 +140,7 @@ namespace HexLab.Core {
 
         public static string Inspect(byte[] data) {
             if (data.Length >= 24 &&
-                data[0] == 137 &&
-                data[1] == 80 &&
-                data[2] == 78 &&
-                data[3] == 71 &&
-                data[4] == 13 &&
-                data[5] == 10 &&
-                data[6] == 26 &&
-                data[7] == 10) {
+                BinaryPrimitives.ReadInt64BE(data, 0) == -8552249625308161526) {
                 int width = BinaryPrimitives.ReadUInt32BE(data, 16);
                 int height = BinaryPrimitives.ReadUInt32BE(data, 20);
                 return "format=PNG width=" + width + " height=" + height;
@@ -189,16 +187,20 @@ namespace HexLab.Core {
         }
 
         public static string Diff(byte[] left, byte[] right) {
-            int limit = Min(left.Length, right.Length);
+            Buffer leftBuffer = Buffer.FromArray(left);
+            Buffer rightBuffer = Buffer.FromArray(right);
+            int limit = Min(leftBuffer.Length(), rightBuffer.Length());
             int index = 0;
             while (index < limit) {
-                if (left[index] != right[index]) {
-                    return "diff offset=" + index + " left=" + HexText.ByteHex(left[index]) + " right=" + HexText.ByteHex(right[index]);
+                int leftByte = leftBuffer.Get(index);
+                int rightByte = rightBuffer.Get(index);
+                if (leftByte != rightByte) {
+                    return "diff offset=" + index + " left=" + HexText.ByteHex(leftByte) + " right=" + HexText.ByteHex(rightByte);
                 }
                 index = index + 1;
             }
-            if (left.Length != right.Length) {
-                return "diff length left=" + left.Length + " right=" + right.Length;
+            if (leftBuffer.Length() != rightBuffer.Length()) {
+                return "diff length left=" + leftBuffer.Length() + " right=" + rightBuffer.Length();
             }
             return "equal";
         }
@@ -208,16 +210,17 @@ namespace HexLab.Core {
         }
 
         public static int FindPattern(byte[] data, byte[] pattern) {
-            if (pattern.Length == 0 || pattern.Length > data.Length) {
+            Buffer buffer = Buffer.FromArray(data);
+            if (pattern.Length == 0 || pattern.Length > buffer.Length()) {
                 return -1;
             }
 
             int index = 0;
-            while (index <= data.Length - pattern.Length) {
+            while (index <= buffer.Length() - pattern.Length) {
                 int matchIndex = 0;
                 bool matches = true;
                 while (matchIndex < pattern.Length) {
-                    if (data[index + matchIndex] != pattern[matchIndex]) {
+                    if (buffer.Get(index + matchIndex) != pattern[matchIndex]) {
                         matches = false;
                         break;
                     }
@@ -245,19 +248,14 @@ namespace HexLab.Core {
         }
 
         public static byte[] Slice(byte[] data, int start, int count) {
+            Buffer buffer = Buffer.FromArray(data);
             if (start < 0) {
                 start = 0;
             }
-            if (count < 0 || start + count > data.Length) {
-                count = data.Length - start;
+            if (count < 0 || start + count > buffer.Length()) {
+                count = buffer.Length() - start;
             }
-            byte[] result = new byte[count];
-            int index = 0;
-            while (index < count) {
-                result[index] = data[start + index];
-                index = index + 1;
-            }
-            return result;
+            return buffer.Slice(start, count).ToArray();
         }
 
         public static string SliceFile(string path, int start, int count, string outPath) {

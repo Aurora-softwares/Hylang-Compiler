@@ -1,0 +1,9 @@
+{
+  "[hylang]": {
+    "editor.defaultFormatter": "aurora-softwares.hylang-tools",
+    "editor.formatOnSave": true
+  },
+  "files.associations": {
+    "*.hyproj": "hylang-manifest"
+  }
+}
