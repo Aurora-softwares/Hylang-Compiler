@@ -1,0 +1,11 @@
+format = 2
+name = "SdkDemo"
+version = "0.1.0"
+type = "workspace"
+members = ["SdkDemo.Core/SdkDemo.Core.hyproj", "SdkDemo.Cli/SdkDemo.Cli.hyproj", "SdkDemo.Tests/SdkDemo.Tests.hyproj", "SdkDemo.Consumer/SdkDemo.Consumer.hyproj"]
+
+[package]
+id = "SdkDemo"
+description = "Phase 4 SDK workflow demo workspace"
+authors = ["Aurora Softwares"]
+license = "MIT"

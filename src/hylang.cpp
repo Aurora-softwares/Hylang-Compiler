@@ -4,11 +4,13 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -78,6 +80,27 @@ string join_qualified(const vector<string>& parts) {
     return builder.str();
 }
 
+bool try_parse_integer_text(const string& text, int64_t* value) {
+    if (value == nullptr) {
+        return false;
+    }
+    try {
+        std::size_t offset = 0;
+        int base = 10;
+        if (starts_with(text, "0x") || starts_with(text, "0X")) {
+            base = 16;
+        }
+        const long long parsed = std::stoll(text, &offset, base);
+        if (offset != text.size()) {
+            return false;
+        }
+        *value = static_cast<int64_t>(parsed);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 enum class TokenKind {
     EndOfFile,
     Identifier,
@@ -98,6 +121,7 @@ enum class TokenKind {
     Slash,
     Percent,
     Bang,
+    Ampersand,
     Equals,
     EqualsEquals,
     BangEquals,
@@ -147,6 +171,9 @@ enum class TokenKind {
     New,
     This,
     Base,
+    Unsafe,
+    SizeOf,
+    Stackalloc,
     Colon,
 };
 
@@ -268,7 +295,7 @@ public:
                     if (match('&')) {
                         tokens.push_back(Token{TokenKind::AmpAmp, "&&", line, column});
                     } else {
-                        diagnostics_.add(file_, line, column, "Unexpected '&'. Did you mean '&&'?");
+                        tokens.push_back(Token{TokenKind::Ampersand, "&", line, column});
                     }
                     break;
                 case '|':
@@ -397,6 +424,9 @@ private:
             {"new", TokenKind::New},
             {"this", TokenKind::This},
             {"base", TokenKind::Base},
+            {"unsafe", TokenKind::Unsafe},
+            {"sizeof", TokenKind::SizeOf},
+            {"stackalloc", TokenKind::Stackalloc},
         };
 
         const auto found = keywords.find(text);
@@ -410,6 +440,14 @@ private:
         const int line = line_;
         const int column = column_;
         string text;
+        if (peek() == '0' && (peek_next() == 'x' || peek_next() == 'X')) {
+            text.push_back(advance());
+            text.push_back(advance());
+            while (!is_at_end() && std::isxdigit(static_cast<unsigned char>(peek()))) {
+                text.push_back(advance());
+            }
+            return Token{TokenKind::Number, text, line, column};
+        }
         while (!is_at_end() && std::isdigit(static_cast<unsigned char>(peek()))) {
             text.push_back(advance());
         }
@@ -476,6 +514,7 @@ struct TypeSyntax {
     vector<string> name_parts;
     vector<TypeSyntax> type_arguments;
     int array_rank = 0;
+    int pointer_rank = 0;
     bool is_var = false;
     int line = 1;
     int column = 1;
@@ -526,6 +565,11 @@ struct UnaryExpressionSyntax final : ExpressionSyntax {
     unique_ptr<ExpressionSyntax> operand;
 };
 
+struct CastExpressionSyntax final : ExpressionSyntax {
+    TypeSyntax type;
+    unique_ptr<ExpressionSyntax> expression;
+};
+
 struct BinaryExpressionSyntax final : ExpressionSyntax {
     unique_ptr<ExpressionSyntax> left;
     TokenKind op = TokenKind::Plus;
@@ -553,6 +597,15 @@ struct ObjectCreationExpressionSyntax final : ExpressionSyntax {
 };
 
 struct ArrayCreationExpressionSyntax final : ExpressionSyntax {
+    TypeSyntax element_type;
+    unique_ptr<ExpressionSyntax> count;
+};
+
+struct SizeOfExpressionSyntax final : ExpressionSyntax {
+    TypeSyntax type;
+};
+
+struct StackAllocExpressionSyntax final : ExpressionSyntax {
     TypeSyntax element_type;
     unique_ptr<ExpressionSyntax> count;
 };
@@ -601,6 +654,10 @@ struct ContinueStatementSyntax final : StatementSyntax {};
 
 struct ReturnStatementSyntax final : StatementSyntax {
     unique_ptr<ExpressionSyntax> expression;
+};
+
+struct UnsafeStatementSyntax final : StatementSyntax {
+    unique_ptr<BlockStatementSyntax> body;
 };
 
 struct MemberSyntax {
@@ -1040,11 +1097,77 @@ private:
             type.name_parts.push_back("error");
         }
 
-        while (match(TokenKind::OpenBracket)) {
+        while (check(TokenKind::OpenBracket) && peek(1).kind == TokenKind::CloseBracket) {
+            advance();
             consume(TokenKind::CloseBracket, "Expected ']' after '[' in array type");
             ++type.array_rank;
         }
+        while (match(TokenKind::Star)) {
+            ++type.pointer_rank;
+        }
         return type;
+    }
+
+    bool looks_like_type_syntax(std::size_t cursor, std::size_t* end_cursor = nullptr) const {
+        if (cursor >= tokens_.size()) {
+            return false;
+        }
+        if (!(tokens_[cursor].kind == TokenKind::Identifier ||
+              is_builtin_type_token(tokens_[cursor].kind) ||
+              tokens_[cursor].kind == TokenKind::Void ||
+              tokens_[cursor].kind == TokenKind::Var)) {
+            return false;
+        }
+
+        ++cursor;
+        while (cursor < tokens_.size() &&
+               tokens_[cursor].kind == TokenKind::Dot &&
+               cursor + 1 < tokens_.size() &&
+               tokens_[cursor + 1].kind == TokenKind::Identifier) {
+            cursor += 2;
+        }
+
+        if (cursor < tokens_.size() && tokens_[cursor].kind == TokenKind::Less) {
+            int depth = 1;
+            ++cursor;
+            while (cursor < tokens_.size() && depth > 0) {
+                if (tokens_[cursor].kind == TokenKind::Less) {
+                    ++depth;
+                } else if (tokens_[cursor].kind == TokenKind::Greater) {
+                    --depth;
+                }
+                ++cursor;
+            }
+            if (depth != 0) {
+                return false;
+            }
+        }
+
+        while (cursor + 1 < tokens_.size() &&
+               tokens_[cursor].kind == TokenKind::OpenBracket &&
+               tokens_[cursor + 1].kind == TokenKind::CloseBracket) {
+            cursor += 2;
+        }
+
+        while (cursor < tokens_.size() && tokens_[cursor].kind == TokenKind::Star) {
+            ++cursor;
+        }
+
+        if (end_cursor != nullptr) {
+            *end_cursor = cursor;
+        }
+        return true;
+    }
+
+    bool looks_like_type_cast() const {
+        if (!check(TokenKind::OpenParen)) {
+            return false;
+        }
+        std::size_t cursor = index_ + 1;
+        if (!looks_like_type_syntax(cursor, &cursor)) {
+            return false;
+        }
+        return cursor < tokens_.size() && tokens_[cursor].kind == TokenKind::CloseParen;
     }
 
     vector<ParameterSyntax> parse_parameter_list() {
@@ -1115,6 +1238,10 @@ private:
             cursor += 2;
         }
 
+        while (tokens_[cursor].kind == TokenKind::Star) {
+            ++cursor;
+        }
+
         if (tokens_[cursor].kind != TokenKind::Identifier) {
             return false;
         }
@@ -1144,6 +1271,9 @@ private:
         }
         if (match(TokenKind::Return)) {
             return parse_return_statement(previous());
+        }
+        if (match(TokenKind::Unsafe)) {
+            return parse_unsafe_statement(previous());
         }
         if (looks_like_variable_declaration()) {
             return parse_variable_declaration();
@@ -1226,6 +1356,14 @@ private:
             statement->expression = parse_expression();
         }
         consume(TokenKind::Semicolon, "Expected ';' after return statement");
+        return statement;
+    }
+
+    unique_ptr<StatementSyntax> parse_unsafe_statement(const Token& token) {
+        auto statement = std::make_unique<UnsafeStatementSyntax>();
+        statement->line = token.line;
+        statement->column = token.column;
+        statement->body = parse_block_statement();
         return statement;
     }
 
@@ -1374,7 +1512,18 @@ private:
     }
 
     unique_ptr<ExpressionSyntax> parse_unary_expression() {
-        if (match(TokenKind::Bang) || match(TokenKind::Minus) || match(TokenKind::Plus)) {
+        if (looks_like_type_cast()) {
+            const Token open = consume(TokenKind::OpenParen, "Expected '(' to start cast");
+            auto cast = std::make_unique<CastExpressionSyntax>();
+            cast->line = open.line;
+            cast->column = open.column;
+            cast->type = parse_type_syntax();
+            consume(TokenKind::CloseParen, "Expected ')' after cast type");
+            cast->expression = parse_unary_expression();
+            return cast;
+        }
+        if (match(TokenKind::Bang) || match(TokenKind::Minus) || match(TokenKind::Plus) ||
+            match(TokenKind::Ampersand) || match(TokenKind::Star)) {
             const Token token = previous();
             auto unary = std::make_unique<UnaryExpressionSyntax>();
             unary->line = token.line;
@@ -1437,7 +1586,11 @@ private:
             auto literal = std::make_unique<LiteralExpressionSyntax>();
             literal->line = token.line;
             literal->column = token.column;
-            literal->value = static_cast<int64_t>(std::stoll(token.text));
+            int64_t value = 0;
+            if (!try_parse_integer_text(token.text, &value)) {
+                diagnostics_.add(file_, token.line, token.column, "Invalid integer literal '" + token.text + "'");
+            }
+            literal->value = value;
             return literal;
         }
         if (match(TokenKind::StringLiteral)) {
@@ -1545,6 +1698,25 @@ private:
             consume(TokenKind::CloseParen, "Expected ')' after constructor arguments");
             return expression;
         }
+        if (match(TokenKind::SizeOf)) {
+            auto expression = std::make_unique<SizeOfExpressionSyntax>();
+            expression->line = token.line;
+            expression->column = token.column;
+            consume(TokenKind::OpenParen, "Expected '(' after sizeof");
+            expression->type = parse_type_syntax();
+            consume(TokenKind::CloseParen, "Expected ')' after sizeof type");
+            return expression;
+        }
+        if (match(TokenKind::Stackalloc)) {
+            auto expression = std::make_unique<StackAllocExpressionSyntax>();
+            expression->line = token.line;
+            expression->column = token.column;
+            expression->element_type = parse_type_syntax();
+            consume(TokenKind::OpenBracket, "Expected '[' after stackalloc element type");
+            expression->count = parse_expression();
+            consume(TokenKind::CloseBracket, "Expected ']' after stackalloc count");
+            return expression;
+        }
         if (match(TokenKind::OpenParen)) {
             auto expression = parse_expression();
             consume(TokenKind::CloseParen, "Expected ')' after expression");
@@ -1611,10 +1783,14 @@ private:
                kind == TokenKind::This ||
                kind == TokenKind::Base ||
                kind == TokenKind::New ||
+               kind == TokenKind::SizeOf ||
+               kind == TokenKind::Stackalloc ||
                kind == TokenKind::OpenParen ||
                kind == TokenKind::Bang ||
+               kind == TokenKind::Ampersand ||
                kind == TokenKind::Minus ||
-               kind == TokenKind::Plus;
+               kind == TokenKind::Plus ||
+               kind == TokenKind::Star;
     }
 
     static bool is_statement_start_token(TokenKind kind) {
@@ -1625,6 +1801,7 @@ private:
                kind == TokenKind::Break ||
                kind == TokenKind::Continue ||
                kind == TokenKind::Return ||
+               kind == TokenKind::Unsafe ||
                kind == TokenKind::Var ||
                is_expression_start_token(kind) ||
                is_builtin_type_token(kind);
@@ -1643,12 +1820,27 @@ enum class TypeKind {
     String,
     Null,
     Array,
+    Pointer,
     Class,
     Struct,
     Interface,
     Enum,
     TypeParameter,
     Error,
+};
+
+enum class PrimitiveKind {
+    None,
+    Byte,
+    SByte,
+    Short,
+    UShort,
+    Int,
+    UInt,
+    Long,
+    ULong,
+    NInt,
+    NUInt,
 };
 
 enum class Accessibility {
@@ -1669,6 +1861,7 @@ struct TypeSymbol {
     const EnumSymbol* enum_symbol = nullptr;
     const TypeSymbol* type_parameter_symbol = nullptr;
     vector<const TypeSymbol*> type_arguments;
+    PrimitiveKind primitive_kind = PrimitiveKind::None;
 };
 
 struct VariableSymbol {
@@ -1768,6 +1961,7 @@ enum class BoundExpressionKind {
     Field,
     ArrayLength,
     ArrayIndex,
+    PointerIndex,
     StringIndex,
     StringLength,
     Assignment,
@@ -1777,6 +1971,7 @@ enum class BoundExpressionKind {
     Call,
     NewObject,
     NewArray,
+    StackAlloc,
 };
 
 enum class BoundStatementKind {
@@ -1827,6 +2022,11 @@ struct BoundArrayIndexExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> index_expression;
 };
 
+struct BoundPointerIndexExpression final : BoundExpression {
+    std::unique_ptr<BoundExpression> pointer_expression;
+    std::unique_ptr<BoundExpression> index_expression;
+};
+
 struct BoundStringIndexExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> string_expression;
     std::unique_ptr<BoundExpression> index_expression;
@@ -1873,6 +2073,11 @@ struct BoundNewExpression final : BoundExpression {
 };
 
 struct BoundArrayCreationExpression final : BoundExpression {
+    const TypeSymbol* element_type_symbol = nullptr;
+    std::unique_ptr<BoundExpression> count;
+};
+
+struct BoundStackAllocExpression final : BoundExpression {
     const TypeSymbol* element_type_symbol = nullptr;
     std::unique_ptr<BoundExpression> count;
 };
@@ -1940,22 +2145,23 @@ struct BoundConstructorBody {
 struct SemanticModel {
     std::vector<std::unique_ptr<TypeSymbol>> owned_types;
     std::unordered_map<string, TypeSymbol*> array_types;
+    std::unordered_map<string, TypeSymbol*> pointer_types;
     std::unordered_map<string, std::unordered_set<string>> used_namespaces_by_file;
-    TypeSymbol void_type{TypeKind::Void, "void", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol byte_type{TypeKind::Int, "byte", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol sbyte_type{TypeKind::Int, "sbyte", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol short_type{TypeKind::Int, "short", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol ushort_type{TypeKind::Int, "ushort", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol int_type{TypeKind::Int, "int", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol uint_type{TypeKind::Int, "uint", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol long_type{TypeKind::Int, "long", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol ulong_type{TypeKind::Int, "ulong", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol nint_type{TypeKind::Int, "nint", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol nuint_type{TypeKind::Int, "nuint", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol bool_type{TypeKind::Bool, "bool", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol string_type{TypeKind::String, "string", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol null_type{TypeKind::Null, "null", nullptr, nullptr, nullptr, nullptr, {}};
-    TypeSymbol error_type{TypeKind::Error, "error", nullptr, nullptr, nullptr, nullptr, {}};
+    TypeSymbol void_type{TypeKind::Void, "void", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::None};
+    TypeSymbol byte_type{TypeKind::Int, "byte", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::Byte};
+    TypeSymbol sbyte_type{TypeKind::Int, "sbyte", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::SByte};
+    TypeSymbol short_type{TypeKind::Int, "short", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::Short};
+    TypeSymbol ushort_type{TypeKind::Int, "ushort", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::UShort};
+    TypeSymbol int_type{TypeKind::Int, "int", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::Int};
+    TypeSymbol uint_type{TypeKind::Int, "uint", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::UInt};
+    TypeSymbol long_type{TypeKind::Int, "long", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::Long};
+    TypeSymbol ulong_type{TypeKind::Int, "ulong", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::ULong};
+    TypeSymbol nint_type{TypeKind::Int, "nint", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::NInt};
+    TypeSymbol nuint_type{TypeKind::Int, "nuint", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::NUInt};
+    TypeSymbol bool_type{TypeKind::Bool, "bool", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::None};
+    TypeSymbol string_type{TypeKind::String, "string", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::None};
+    TypeSymbol null_type{TypeKind::Null, "null", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::None};
+    TypeSymbol error_type{TypeKind::Error, "error", nullptr, nullptr, nullptr, nullptr, {}, PrimitiveKind::None};
     std::vector<std::unique_ptr<ClassSymbol>> classes;
     std::unordered_map<string, ClassSymbol*> classes_by_full_name;
     std::vector<std::unique_ptr<EnumSymbol>> enums;
@@ -1966,6 +2172,7 @@ struct SemanticModel {
     ClassSymbol* console_class = nullptr;
     ClassSymbol* file_class = nullptr;
     ClassSymbol* convert_class = nullptr;
+    ClassSymbol* memory_class = nullptr;
     ClassSymbol* assert_class = nullptr;
     ClassSymbol* intrinsics_class = nullptr;
     MethodSymbol* console_write_string = nullptr;
@@ -1980,12 +2187,18 @@ struct SemanticModel {
     MethodSymbol* file_read_all_bytes = nullptr;
     MethodSymbol* file_write_all_bytes = nullptr;
     MethodSymbol* convert_to_int32 = nullptr;
+    MethodSymbol* memory_alloc = nullptr;
+    MethodSymbol* memory_free = nullptr;
+    MethodSymbol* memory_copy = nullptr;
+    MethodSymbol* memory_set = nullptr;
+    MethodSymbol* memory_compare = nullptr;
     MethodSymbol* assert_true = nullptr;
     MethodSymbol* assert_false = nullptr;
     MethodSymbol* assert_equal = nullptr;
     MethodSymbol* assert_not_equal = nullptr;
     MethodSymbol* assert_fail = nullptr;
     MethodSymbol* intrinsics_fail = nullptr;
+    MethodSymbol* intrinsics_buffer_dangerous_data = nullptr;
     int next_variable_id = 1;
 
     const TypeSymbol* get_array_type(const TypeSymbol* element_type) {
@@ -2001,6 +2214,22 @@ struct SemanticModel {
         auto* raw = type.get();
         owned_types.push_back(std::move(type));
         array_types[key] = raw;
+        return raw;
+    }
+
+    const TypeSymbol* get_pointer_type(const TypeSymbol* element_type) {
+        const string key = element_type->display_name + "*";
+        const auto found = pointer_types.find(key);
+        if (found != pointer_types.end()) {
+            return found->second;
+        }
+        auto type = std::make_unique<TypeSymbol>();
+        type->kind = TypeKind::Pointer;
+        type->display_name = key;
+        type->element_type = element_type;
+        auto* raw = type.get();
+        owned_types.push_back(std::move(type));
+        pointer_types[key] = raw;
         return raw;
     }
 };
@@ -2087,6 +2316,145 @@ bool is_integral_type(const TypeSymbol* type) {
     return type != nullptr && type->kind == TypeKind::Int;
 }
 
+bool is_pointer_type(const TypeSymbol* type) {
+    return type != nullptr && type->kind == TypeKind::Pointer;
+}
+
+bool is_signed_integral_type(const TypeSymbol* type) {
+    if (!is_integral_type(type)) {
+        return false;
+    }
+    switch (type->primitive_kind) {
+        case PrimitiveKind::Byte:
+        case PrimitiveKind::UShort:
+        case PrimitiveKind::UInt:
+        case PrimitiveKind::ULong:
+        case PrimitiveKind::NUInt:
+            return false;
+        case PrimitiveKind::SByte:
+        case PrimitiveKind::Short:
+        case PrimitiveKind::Int:
+        case PrimitiveKind::Long:
+        case PrimitiveKind::NInt:
+        case PrimitiveKind::None:
+            return true;
+    }
+    return true;
+}
+
+int integral_type_size_bytes(const TypeSymbol* type) {
+    if (!is_integral_type(type)) {
+        return 0;
+    }
+    switch (type->primitive_kind) {
+        case PrimitiveKind::Byte:
+        case PrimitiveKind::SByte:
+            return 1;
+        case PrimitiveKind::Short:
+        case PrimitiveKind::UShort:
+            return 2;
+        case PrimitiveKind::Int:
+        case PrimitiveKind::UInt:
+            return 4;
+        case PrimitiveKind::Long:
+        case PrimitiveKind::ULong:
+        case PrimitiveKind::NInt:
+        case PrimitiveKind::NUInt:
+        case PrimitiveKind::None:
+            return 8;
+    }
+    return 8;
+}
+
+bool integral_literal_fits_type(int64_t value, const TypeSymbol* destination) {
+    if (!is_integral_type(destination)) {
+        return false;
+    }
+
+    switch (destination->primitive_kind) {
+        case PrimitiveKind::Byte:
+            return value >= 0 && value <= 0xFF;
+        case PrimitiveKind::SByte:
+            return value >= -128 && value <= 127;
+        case PrimitiveKind::Short:
+            return value >= std::numeric_limits<int16_t>::min() && value <= std::numeric_limits<int16_t>::max();
+        case PrimitiveKind::UShort:
+            return value >= 0 && value <= std::numeric_limits<uint16_t>::max();
+        case PrimitiveKind::Int:
+            return value >= std::numeric_limits<int32_t>::min() && value <= std::numeric_limits<int32_t>::max();
+        case PrimitiveKind::UInt:
+            return value >= 0 && value <= static_cast<int64_t>(std::numeric_limits<uint32_t>::max());
+        case PrimitiveKind::Long:
+        case PrimitiveKind::ULong:
+        case PrimitiveKind::NInt:
+        case PrimitiveKind::NUInt:
+        case PrimitiveKind::None:
+            return destination->primitive_kind == PrimitiveKind::ULong ||
+                   destination->primitive_kind == PrimitiveKind::NUInt
+                       ? value >= 0
+                       : true;
+    }
+    return false;
+}
+
+bool is_unmanaged_type(const TypeSymbol* type, std::unordered_set<const TypeSymbol*>* visited = nullptr) {
+    if (type == nullptr) {
+        return false;
+    }
+    if (is_integral_type(type) || type->kind == TypeKind::Bool || type->kind == TypeKind::Enum ||
+        type->kind == TypeKind::Pointer) {
+        return true;
+    }
+    if (type->kind != TypeKind::Struct || type->class_symbol == nullptr) {
+        return false;
+    }
+
+    std::unordered_set<const TypeSymbol*> local_visited;
+    if (visited == nullptr) {
+        visited = &local_visited;
+    }
+    if (!visited->insert(type).second) {
+        return true;
+    }
+    for (const auto& field : type->class_symbol->fields) {
+        if (field->is_static) {
+            continue;
+        }
+        if (!is_unmanaged_type(field->type, visited)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int64_t unmanaged_type_size(const TypeSymbol* type) {
+    if (type == nullptr) {
+        return 0;
+    }
+    if (is_integral_type(type)) {
+        return integral_type_size_bytes(type);
+    }
+    if (type->kind == TypeKind::Bool) {
+        return 1;
+    }
+    if (type->kind == TypeKind::Enum) {
+        return 8;
+    }
+    if (type->kind == TypeKind::Pointer) {
+        return 8;
+    }
+    if (type->kind == TypeKind::Struct && type->class_symbol != nullptr) {
+        int64_t total = 0;
+        for (const auto& field : type->class_symbol->fields) {
+            if (!field->is_static) {
+                total += unmanaged_type_size(field->type);
+            }
+        }
+        return total;
+    }
+    return 0;
+}
+
 bool does_type_implement_interface_symbol(const ClassSymbol* candidate, const ClassSymbol* interface_symbol) {
     if (candidate == nullptr || interface_symbol == nullptr || interface_symbol->kind != TypeKind::Interface) {
         return false;
@@ -2141,15 +2509,19 @@ bool are_types_equal(const TypeSymbol* left, const TypeSymbol* right) {
 
     switch (left->kind) {
         case TypeKind::Void:
-        case TypeKind::Int:
         case TypeKind::Bool:
         case TypeKind::String:
         case TypeKind::Null:
         case TypeKind::Error:
             return true;
+        case TypeKind::Int:
+            return left->primitive_kind == right->primitive_kind &&
+                   left->display_name == right->display_name;
         case TypeKind::TypeParameter:
             return left->type_parameter_symbol == right->type_parameter_symbol || left->display_name == right->display_name;
         case TypeKind::Array:
+            return are_types_equal(left->element_type, right->element_type);
+        case TypeKind::Pointer:
             return are_types_equal(left->element_type, right->element_type);
         case TypeKind::Class:
         case TypeKind::Struct:
@@ -2188,10 +2560,11 @@ bool is_type_assignable(const TypeSymbol* destination, const TypeSymbol* source)
     if (destination->kind == source->kind) {
         switch (destination->kind) {
             case TypeKind::Void:
-            case TypeKind::Int:
             case TypeKind::Bool:
             case TypeKind::String:
                 return false;
+            case TypeKind::Int:
+                return source->kind == TypeKind::Int || source->kind == TypeKind::Enum;
             case TypeKind::Class:
                 return source->kind == TypeKind::Class &&
                        is_same_or_derived_from(source->class_symbol, destination->class_symbol);
@@ -2211,6 +2584,9 @@ bool is_type_assignable(const TypeSymbol* destination, const TypeSymbol* source)
             case TypeKind::Array:
                 return destination->element_type != nullptr && source->element_type != nullptr &&
                        is_type_assignable(destination->element_type, source->element_type);
+            case TypeKind::Pointer:
+                return destination->element_type != nullptr && source->element_type != nullptr &&
+                       are_types_equal(destination->element_type, source->element_type);
             case TypeKind::Null:
                 return true;
             case TypeKind::TypeParameter:
@@ -2218,6 +2594,9 @@ bool is_type_assignable(const TypeSymbol* destination, const TypeSymbol* source)
             case TypeKind::Error:
                 return true;
         }
+    }
+    if (source->kind == TypeKind::Null && destination->kind == TypeKind::Pointer) {
+        return true;
     }
     if (source->kind == TypeKind::Null && is_reference_type(destination)) {
         return true;
@@ -2247,6 +2626,38 @@ bool is_string_concatenation(const SemanticModel& model, const TypeSymbol* left,
            is_string_concat_operand(model, right);
 }
 
+bool try_get_integral_literal_value(const BoundExpression* expression, int64_t* value) {
+    if (expression == nullptr || value == nullptr) {
+        return false;
+    }
+    if (expression->kind != BoundExpressionKind::Literal) {
+        return false;
+    }
+    const auto* literal = static_cast<const BoundLiteralExpression*>(expression);
+    if (!std::holds_alternative<int64_t>(literal->value)) {
+        return false;
+    }
+    *value = std::get<int64_t>(literal->value);
+    return true;
+}
+
+bool is_expression_assignable_to_type(const TypeSymbol* destination, const BoundExpression* expression) {
+    if (destination == nullptr || expression == nullptr || expression->type == nullptr) {
+        return false;
+    }
+    if (is_type_assignable(destination, expression->type)) {
+        return true;
+    }
+    int64_t literal_value = 0;
+    if (!is_integral_type(destination)) {
+        return false;
+    }
+    if (!try_get_integral_literal_value(expression, &literal_value)) {
+        return false;
+    }
+    return integral_literal_fits_type(literal_value, destination);
+}
+
 const TypeSymbol* resolve_type_in_context(SemanticModel& model,
                                           DiagnosticBag& diagnostics,
                                           const fs::path& file,
@@ -2261,8 +2672,12 @@ const TypeSymbol* resolve_type_in_context(SemanticModel& model,
         diagnostics.add(file, type.line, type.column, "'var' can only be used for local variables");
         return &model.error_type;
     }
-    if (type.array_rank > 0 && name == "void") {
-        diagnostics.add(file, type.line, type.column, "void cannot be used as an array element type");
+    if ((type.array_rank > 0 || type.pointer_rank > 0) && name == "void") {
+        diagnostics.add(file,
+                        type.line,
+                        type.column,
+                        type.pointer_rank > 0 ? "void cannot be used as a pointer element type"
+                                              : "void cannot be used as an array element type");
         return &model.error_type;
     }
 
@@ -2394,6 +2809,9 @@ const TypeSymbol* resolve_type_in_context(SemanticModel& model,
     for (int rank = 0; rank < type.array_rank; ++rank) {
         resolved = model.get_array_type(resolved);
     }
+    for (int rank = 0; rank < type.pointer_rank; ++rank) {
+        resolved = model.get_pointer_type(resolved);
+    }
     return resolved;
 }
 
@@ -2413,6 +2831,13 @@ const TypeSymbol* substitute_type(SemanticModel& model,
             return type;
         }
         return model.get_array_type(substituted_element);
+    }
+    if (type->kind == TypeKind::Pointer && type->element_type != nullptr) {
+        const TypeSymbol* substituted_element = substitute_type(model, type->element_type, substitutions);
+        if (substituted_element == type->element_type) {
+            return type;
+        }
+        return model.get_pointer_type(substituted_element);
     }
     if ((type->kind == TypeKind::Class || type->kind == TypeKind::Struct || type->kind == TypeKind::Interface) &&
         !type->type_arguments.empty()) {
@@ -2543,6 +2968,31 @@ private:
         model.convert_to_int32 =
             create_builtin(model.convert_class, "ToInt32", &model.int_type, {{"value", &model.string_type}});
 
+        model.memory_class = create_builtin_class("System.Runtime", "Memory");
+        const TypeSymbol* byte_pointer_type = model.get_pointer_type(&model.byte_type);
+        model.memory_alloc =
+            create_builtin(model.memory_class, "Alloc", byte_pointer_type, {{"bytes", &model.nuint_type}});
+        model.memory_free =
+            create_builtin(model.memory_class, "Free", &model.void_type, {{"ptr", byte_pointer_type}});
+        model.memory_copy = create_builtin(model.memory_class,
+                                           "Copy",
+                                           &model.void_type,
+                                           {{"destination", byte_pointer_type},
+                                            {"source", byte_pointer_type},
+                                            {"bytes", &model.nuint_type}});
+        model.memory_set = create_builtin(model.memory_class,
+                                          "Set",
+                                          &model.void_type,
+                                          {{"destination", byte_pointer_type},
+                                           {"value", &model.byte_type},
+                                           {"bytes", &model.nuint_type}});
+        model.memory_compare = create_builtin(model.memory_class,
+                                              "Compare",
+                                              &model.int_type,
+                                              {{"left", byte_pointer_type},
+                                               {"right", byte_pointer_type},
+                                               {"bytes", &model.nuint_type}});
+
         model.assert_class = create_builtin_class("System.Testing", "Assert");
         model.assert_true = create_builtin(model.assert_class,
                                            "True",
@@ -2594,6 +3044,11 @@ private:
         model.intrinsics_class = create_builtin_class("System.Runtime", "Intrinsics");
         model.intrinsics_fail =
             create_builtin(model.intrinsics_class, "Fail", &model.void_type, {{"message", &model.string_type}});
+        model.intrinsics_buffer_dangerous_data =
+            create_builtin(model.intrinsics_class,
+                           "BufferDangerousData",
+                           byte_pointer_type,
+                           {{"data", model.get_array_type(&model.byte_type)}, {"offset", &model.nuint_type}});
     }
 
     void declare_classes(SemanticModel& model, const vector<CompilationUnitSyntax>& units) {
@@ -3240,17 +3695,15 @@ private:
                 constructor.owner->base_class != nullptr &&
                 constructor.syntax != nullptr &&
                 constructor.syntax->has_base_initializer) {
-                vector<const TypeSymbol*> argument_types;
                 for (const auto& argument : constructor.syntax->base_arguments) {
                     auto bound_argument = bind_expression(*argument);
-                    argument_types.push_back(bound_argument->type);
                     body->base_arguments.push_back(std::move(bound_argument));
                 }
 
                 bool ambiguous = false;
                 const ConstructorSymbol* inaccessible_match = nullptr;
                 body->base_constructor = select_best_constructor_overload(*constructor.owner->base_class,
-                                                                         argument_types,
+                                                                         body->base_arguments,
                                                                          &ambiguous,
                                                                          &inaccessible_match);
                 if (ambiguous) {
@@ -3524,8 +3977,9 @@ private:
         }
 
         int parameter_match_score(const TypeSymbol* parameter_type,
-                                  const TypeSymbol* argument_type,
+                                  const BoundExpression* argument,
                                   bool allow_console_enum_print = false) const {
+            const TypeSymbol* argument_type = argument != nullptr ? argument->type : nullptr;
             if (are_types_equal(parameter_type, argument_type)) {
                 return 3;
             }
@@ -3535,6 +3989,17 @@ private:
                 argument_type->kind == TypeKind::Enum) {
                 return 2;
             }
+            if (allow_console_enum_print &&
+                parameter_type == &program_.semantic_model.int_type &&
+                is_integral_type(argument_type)) {
+                return 2;
+            }
+            int64_t literal_value = 0;
+            if (is_integral_type(parameter_type) &&
+                try_get_integral_literal_value(argument, &literal_value) &&
+                integral_literal_fits_type(literal_value, parameter_type)) {
+                return 2;
+            }
             if (is_type_assignable(parameter_type, argument_type)) {
                 return 1;
             }
@@ -3542,13 +4007,13 @@ private:
         }
 
         const MethodSymbol* select_best_method_overload(const vector<const MethodSymbol*>& candidates,
-                                                        const vector<const TypeSymbol*>& argument_types,
+                                                        const vector<std::unique_ptr<BoundExpression>>& arguments,
                                                         bool* ambiguous) const {
             const MethodSymbol* selected = nullptr;
             int best_score = -1;
             *ambiguous = false;
             for (const auto* candidate : candidates) {
-                if (candidate->parameters.size() != argument_types.size()) {
+                if (candidate->parameters.size() != arguments.size()) {
                     continue;
                 }
 
@@ -3557,9 +4022,9 @@ private:
                     (candidate->name == "Write" || candidate->name == "WriteLine");
                 int total_score = 0;
                 bool compatible = true;
-                for (std::size_t index = 0; index < argument_types.size(); ++index) {
+                for (std::size_t index = 0; index < arguments.size(); ++index) {
                     const int score =
-                        parameter_match_score(candidate->parameters[index].type, argument_types[index], allow_console_enum_print);
+                        parameter_match_score(candidate->parameters[index].type, arguments[index].get(), allow_console_enum_print);
                     if (score < 0) {
                         compatible = false;
                         break;
@@ -3584,7 +4049,7 @@ private:
         }
 
         const ConstructorSymbol* select_best_constructor_overload(const ClassSymbol& klass,
-                                                                  const vector<const TypeSymbol*>& argument_types,
+                                                                  const vector<std::unique_ptr<BoundExpression>>& arguments,
                                                                   bool* ambiguous,
                                                                   const ConstructorSymbol** inaccessible_match) const {
             const ConstructorSymbol* selected = nullptr;
@@ -3592,14 +4057,14 @@ private:
             *ambiguous = false;
             *inaccessible_match = nullptr;
             for (const auto& constructor : klass.constructors) {
-                if (constructor->parameters.size() != argument_types.size()) {
+                if (constructor->parameters.size() != arguments.size()) {
                     continue;
                 }
 
                 int total_score = 0;
                 bool compatible = true;
-                for (std::size_t index = 0; index < argument_types.size(); ++index) {
-                    const int score = parameter_match_score(constructor->parameters[index].type, argument_types[index]);
+                for (std::size_t index = 0; index < arguments.size(); ++index) {
+                    const int score = parameter_match_score(constructor->parameters[index].type, arguments[index].get());
                     if (score < 0) {
                         compatible = false;
                         break;
@@ -3646,6 +4111,29 @@ private:
             if (destination == nullptr || expression == nullptr || expression->type == nullptr ||
                 expression->type == &program_.semantic_model.error_type || are_types_equal(destination, expression->type)) {
                 return expression;
+            }
+            if (is_integral_type(destination) &&
+                expression->type != nullptr &&
+                (is_integral_type(expression->type) || expression->type->kind == TypeKind::Enum)) {
+                auto conversion = std::make_unique<BoundConversionExpression>();
+                conversion->kind = BoundExpressionKind::Conversion;
+                conversion->type = destination;
+                conversion->line = expression->line;
+                conversion->column = expression->column;
+                conversion->expression = std::move(expression);
+                return conversion;
+            }
+            int64_t literal_value = 0;
+            if (is_integral_type(destination) &&
+                try_get_integral_literal_value(expression.get(), &literal_value) &&
+                integral_literal_fits_type(literal_value, destination)) {
+                auto conversion = std::make_unique<BoundConversionExpression>();
+                conversion->kind = BoundExpressionKind::Conversion;
+                conversion->type = destination;
+                conversion->line = expression->line;
+                conversion->column = expression->column;
+                conversion->expression = std::move(expression);
+                return conversion;
             }
             if ((destination->kind == TypeKind::Class || destination->kind == TypeKind::Interface) &&
                 (expression->type->kind == TypeKind::Class ||
@@ -3729,6 +4217,12 @@ private:
             if (const auto* block = dynamic_cast<const BlockStatementSyntax*>(&statement)) {
                 return bind_block(*block);
             }
+            if (const auto* unsafe_block = dynamic_cast<const UnsafeStatementSyntax*>(&statement)) {
+                ++unsafe_depth_;
+                auto bound = bind_block(*unsafe_block->body);
+                --unsafe_depth_;
+                return bound;
+            }
             if (const auto* variable = dynamic_cast<const VariableDeclarationStatementSyntax*>(&statement)) {
                 auto bound = std::make_unique<BoundVariableDeclarationStatement>();
                 bound->kind = BoundStatementKind::VariableDeclaration;
@@ -3767,7 +4261,7 @@ private:
 
                 bound->variable = declare_local(variable->name, type);
                 if (bound->initializer != nullptr) {
-                    if (!is_type_assignable(type, bound->initializer->type)) {
+                    if (!is_expression_assignable_to_type(type, bound->initializer.get())) {
                         diagnostics_.add(find_file_for_class(&current_class_), variable->line, variable->column,
                                          "Cannot assign expression of type '" + bound->initializer->type->display_name +
                                              "' to variable of type '" + type->display_name + "'");
@@ -3880,7 +4374,7 @@ private:
                 } else if (bound->expression == nullptr) {
                     diagnostics_.add(find_file_for_class(&current_class_), return_statement->line, return_statement->column,
                                      "Non-void methods must return a value");
-                } else if (!is_type_assignable(expected, bound->expression->type)) {
+                } else if (!is_expression_assignable_to_type(expected, bound->expression.get())) {
                     diagnostics_.add(find_file_for_class(&current_class_), return_statement->line, return_statement->column,
                                      "Return expression type '" + bound->expression->type->display_name +
                                          "' is not assignable to '" + expected->display_name + "'");
@@ -3923,6 +4417,92 @@ private:
                 return bound;
             }
 
+            if (const auto* cast = dynamic_cast<const CastExpressionSyntax*>(&expression)) {
+                const TypeSymbol* destination = resolve_type(cast->type);
+                auto inner = bind_expression(*cast->expression);
+                const bool valid_cast =
+                    are_types_equal(destination, inner->type) ||
+                    (is_integral_type(destination) &&
+                     (is_integral_type(inner->type) || inner->type->kind == TypeKind::Enum)) ||
+                    (is_pointer_type(destination) &&
+                     (is_pointer_type(inner->type) || inner->type == &program_.semantic_model.null_type ||
+                      inner->type == &program_.semantic_model.nint_type ||
+                      inner->type == &program_.semantic_model.nuint_type)) ||
+                    ((destination == &program_.semantic_model.nint_type || destination == &program_.semantic_model.nuint_type) &&
+                     is_pointer_type(inner->type));
+                if (!valid_cast) {
+                    diagnostics_.add(find_file_for_class(&current_class_),
+                                     expression.line,
+                                     expression.column,
+                                     "Invalid explicit cast from '" + inner->type->display_name + "' to '" +
+                                         destination->display_name + "'");
+                    auto fallback = std::make_unique<BoundLiteralExpression>();
+                    fallback->kind = BoundExpressionKind::Literal;
+                    fallback->type = &program_.semantic_model.error_type;
+                    fallback->line = expression.line;
+                    fallback->column = expression.column;
+                    fallback->value = nullptr;
+                    return fallback;
+                }
+                auto conversion = std::make_unique<BoundConversionExpression>();
+                conversion->kind = BoundExpressionKind::Conversion;
+                conversion->type = destination;
+                conversion->line = expression.line;
+                conversion->column = expression.column;
+                conversion->expression = std::move(inner);
+                return conversion;
+            }
+
+            if (const auto* size_of = dynamic_cast<const SizeOfExpressionSyntax*>(&expression)) {
+                const TypeSymbol* target_type = resolve_type(size_of->type);
+                auto bound = std::make_unique<BoundLiteralExpression>();
+                bound->kind = BoundExpressionKind::Literal;
+                bound->type = &program_.semantic_model.nuint_type;
+                bound->line = expression.line;
+                bound->column = expression.column;
+                if (!is_unmanaged_type(target_type)) {
+                    diagnostics_.add(find_file_for_class(&current_class_),
+                                     expression.line,
+                                     expression.column,
+                                     "sizeof requires an unmanaged primitive, pointer, enum, or unmanaged struct type");
+                    bound->value = int64_t{0};
+                } else {
+                    bound->value = unmanaged_type_size(target_type);
+                }
+                return bound;
+            }
+
+            if (const auto* stack_alloc = dynamic_cast<const StackAllocExpressionSyntax*>(&expression)) {
+                if (unsafe_depth_ == 0) {
+                    diagnostics_.add(find_file_for_class(&current_class_),
+                                     expression.line,
+                                     expression.column,
+                                     "stackalloc requires an unsafe block");
+                }
+                const TypeSymbol* element_type = resolve_type(stack_alloc->element_type);
+                auto count = bind_expression(*stack_alloc->count);
+                if (!is_unmanaged_type(element_type)) {
+                    diagnostics_.add(find_file_for_class(&current_class_),
+                                     expression.line,
+                                     expression.column,
+                                     "stackalloc requires an unmanaged element type");
+                }
+                if (!is_integral_type(count->type)) {
+                    diagnostics_.add(find_file_for_class(&current_class_),
+                                     expression.line,
+                                     expression.column,
+                                     "stackalloc count must be integral");
+                }
+                auto bound = std::make_unique<BoundStackAllocExpression>();
+                bound->kind = BoundExpressionKind::StackAlloc;
+                bound->type = program_.semantic_model.get_pointer_type(element_type);
+                bound->line = expression.line;
+                bound->column = expression.column;
+                bound->element_type_symbol = element_type;
+                bound->count = std::move(count);
+                return bound;
+            }
+
             if (dynamic_cast<const ThisExpressionSyntax*>(&expression) != nullptr) {
                 return make_this_expression(expression.line, expression.column);
             }
@@ -3941,7 +4521,7 @@ private:
                 bound->kind = BoundExpressionKind::Assignment;
                 bound->line = expression.line;
                 bound->column = expression.column;
-                if (!is_type_assignable(target->type, value->type)) {
+                if (!is_expression_assignable_to_type(target->type, value.get())) {
                     diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                      "Cannot assign expression of type '" + value->type->display_name +
                                          "' to target of type '" + target->type->display_name + "'");
@@ -3959,20 +4539,73 @@ private:
             }
 
             if (const auto* unary = dynamic_cast<const UnaryExpressionSyntax*>(&expression)) {
-                auto operand = bind_expression(*unary->operand);
                 auto bound = std::make_unique<BoundUnaryExpression>();
                 bound->kind = BoundExpressionKind::Unary;
                 bound->line = expression.line;
                 bound->column = expression.column;
                 bound->op = unary->op;
-                bound->operand = std::move(operand);
+                if (unary->op == TokenKind::Ampersand) {
+                    if (unsafe_depth_ == 0) {
+                        diagnostics_.add(find_file_for_class(&current_class_),
+                                         expression.line,
+                                         expression.column,
+                                         "Address-of requires an unsafe block");
+                    }
+                    auto operand = bind_assignable_expression(*unary->operand);
+                    if (!(operand->kind == BoundExpressionKind::Local || operand->kind == BoundExpressionKind::Parameter)) {
+                        diagnostics_.add(find_file_for_class(&current_class_),
+                                         expression.line,
+                                         expression.column,
+                                         "Address-of currently requires a local or parameter");
+                    }
+                    if (!is_unmanaged_type(operand->type)) {
+                        diagnostics_.add(find_file_for_class(&current_class_),
+                                         expression.line,
+                                         expression.column,
+                                         "Address-of requires an unmanaged operand");
+                    }
+                    bound->operand = std::move(operand);
+                    bound->type = program_.semantic_model.get_pointer_type(bound->operand->type);
+                } else {
+                    auto operand = bind_expression(*unary->operand);
+                    bound->operand = std::move(operand);
+                    if (unary->op == TokenKind::Bang) {
+                        if (bound->operand->type != &program_.semantic_model.bool_type) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Operator '!' requires a bool operand");
+                        }
+                        bound->type = &program_.semantic_model.bool_type;
+                    } else if (unary->op == TokenKind::Star) {
+                        if (unsafe_depth_ == 0) {
+                            diagnostics_.add(find_file_for_class(&current_class_),
+                                             expression.line,
+                                             expression.column,
+                                             "Pointer dereference requires an unsafe block");
+                        }
+                        if (!is_pointer_type(bound->operand->type) || bound->operand->type->element_type == nullptr) {
+                            diagnostics_.add(find_file_for_class(&current_class_),
+                                             expression.line,
+                                             expression.column,
+                                             "Pointer dereference requires a pointer operand");
+                            bound->type = &program_.semantic_model.error_type;
+                        } else {
+                            bound->type = bound->operand->type->element_type;
+                        }
+                    } else {
+                        if (!is_integral_type(bound->operand->type)) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Unary '+' and '-' require int operands");
+                        }
+                        bound->type = bound->operand->type;
+                    }
+                }
                 if (unary->op == TokenKind::Bang) {
                     if (bound->operand->type != &program_.semantic_model.bool_type) {
                         diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                          "Operator '!' requires a bool operand");
                     }
                     bound->type = &program_.semantic_model.bool_type;
-                } else {
+                } else if (unary->op == TokenKind::Minus || unary->op == TokenKind::Plus) {
                     if (!is_integral_type(bound->operand->type)) {
                         diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                          "Unary '+' and '-' require int operands");
@@ -3997,6 +4630,14 @@ private:
                 bound->op = binary->op;
                 switch (binary->op) {
                     case TokenKind::Plus:
+                        if (is_pointer_type(bound->left->type) && is_integral_type(bound->right->type)) {
+                            bound->type = bound->left->type;
+                            break;
+                        }
+                        if (is_integral_type(bound->left->type) && is_pointer_type(bound->right->type)) {
+                            bound->type = bound->right->type;
+                            break;
+                        }
                         if (is_integral_type(bound->left->type) &&
                             is_integral_type(bound->right->type)) {
                             bound->type = bound->left->type;
@@ -4011,6 +4652,17 @@ private:
                         bound->type = &program_.semantic_model.error_type;
                         break;
                     case TokenKind::Minus:
+                        if (is_pointer_type(bound->left->type) && is_integral_type(bound->right->type)) {
+                            bound->type = bound->left->type;
+                            break;
+                        }
+                        if (is_pointer_type(bound->left->type) &&
+                            is_pointer_type(bound->right->type) &&
+                            are_types_equal(bound->left->type, bound->right->type)) {
+                            bound->type = &program_.semantic_model.nint_type;
+                            break;
+                        }
+                        [[fallthrough]];
                     case TokenKind::Star:
                     case TokenKind::Slash:
                     case TokenKind::Percent:
@@ -4034,7 +4686,21 @@ private:
                     case TokenKind::BangEquals:
                         if (bound->left->type != nullptr &&
                             bound->right->type != nullptr &&
-                            (bound->left->type->kind == TypeKind::Enum || bound->right->type->kind == TypeKind::Enum)) {
+                            (is_pointer_type(bound->left->type) || is_pointer_type(bound->right->type))) {
+                            if (!(is_pointer_type(bound->left->type) && is_pointer_type(bound->right->type) &&
+                                  are_types_equal(bound->left->type, bound->right->type)) &&
+                                !(is_pointer_type(bound->left->type) &&
+                                  bound->right->type == &program_.semantic_model.null_type) &&
+                                !(is_pointer_type(bound->right->type) &&
+                                  bound->left->type == &program_.semantic_model.null_type)) {
+                                diagnostics_.add(find_file_for_class(&current_class_),
+                                                 expression.line,
+                                                 expression.column,
+                                                 "Pointer equality requires matching pointer operands or pointer/null");
+                            }
+                        } else if (bound->left->type != nullptr &&
+                                   bound->right->type != nullptr &&
+                                   (bound->left->type->kind == TypeKind::Enum || bound->right->type->kind == TypeKind::Enum)) {
                             if (bound->left->type->kind != TypeKind::Enum ||
                                 bound->right->type->kind != TypeKind::Enum ||
                                 !are_types_equal(bound->left->type, bound->right->type)) {
@@ -4103,6 +4769,23 @@ private:
                 return bound;
             }
 
+            if (is_pointer_type(target_expression->type) && target_expression->type->element_type != nullptr) {
+                if (unsafe_depth_ == 0) {
+                    diagnostics_.add(find_file_for_class(&current_class_),
+                                     syntax.line,
+                                     syntax.column,
+                                     "Pointer indexing requires an unsafe block");
+                }
+                auto bound = std::make_unique<BoundPointerIndexExpression>();
+                bound->kind = BoundExpressionKind::PointerIndex;
+                bound->line = syntax.line;
+                bound->column = syntax.column;
+                bound->type = target_expression->type->element_type;
+                bound->pointer_expression = std::move(target_expression);
+                bound->index_expression = std::move(index_expression);
+                return bound;
+            }
+
             auto bound = std::make_unique<BoundArrayIndexExpression>();
             bound->kind = BoundExpressionKind::ArrayIndex;
             bound->line = syntax.line;
@@ -4152,7 +4835,24 @@ private:
             // Allow array index as an assignable target
             if (const auto* elem_access = dynamic_cast<const ElementAccessExpressionSyntax*>(&expression)) {
                 auto bound = bind_element_access(*elem_access);
-                if (bound->kind == BoundExpressionKind::ArrayIndex) {
+                if (bound->kind == BoundExpressionKind::ArrayIndex ||
+                    bound->kind == BoundExpressionKind::PointerIndex) {
+                    return bound;
+                }
+                diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                 "Expected an assignable value expression");
+                auto fallback = std::make_unique<BoundLiteralExpression>();
+                fallback->kind = BoundExpressionKind::Literal;
+                fallback->type = &program_.semantic_model.error_type;
+                fallback->line = expression.line;
+                fallback->column = expression.column;
+                fallback->value = nullptr;
+                return fallback;
+            }
+            if (const auto* unary = dynamic_cast<const UnaryExpressionSyntax*>(&expression)) {
+                auto bound = bind_expression(*unary);
+                if (bound->kind == BoundExpressionKind::Unary &&
+                    static_cast<const BoundUnaryExpression&>(*bound).op == TokenKind::Star) {
                     return bound;
                 }
                 diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
@@ -4253,7 +4953,7 @@ private:
                 specialized_candidates.push_back(specialize_method(*candidate, substitutions));
             }
 
-            const MethodSymbol* selected = select_best_method_overload(specialized_candidates, argument_types, &ambiguous);
+            const MethodSymbol* selected = select_best_method_overload(specialized_candidates, arguments, &ambiguous);
 
             if (ambiguous) {
                 diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
@@ -4288,10 +4988,20 @@ private:
             if (entity.receiver != nullptr && selected->owner != nullptr) {
                 call->receiver = convert_expression(make_named_type(*selected->owner), std::move(entity.receiver));
             } else {
-                call->receiver = std::move(entity.receiver);
+            call->receiver = std::move(entity.receiver);
             }
+            const bool preserve_console_enum_argument =
+                selected->owner == program_.semantic_model.console_class &&
+                (selected->name == "Write" || selected->name == "WriteLine");
             for (std::size_t index = 0; index < arguments.size(); ++index) {
-                call->arguments.push_back(convert_expression(selected->parameters[index].type, std::move(arguments[index])));
+                if (preserve_console_enum_argument &&
+                    arguments[index] != nullptr &&
+                    arguments[index]->type != nullptr &&
+                    arguments[index]->type->kind == TypeKind::Enum) {
+                    call->arguments.push_back(std::move(arguments[index]));
+                } else {
+                    call->arguments.push_back(convert_expression(selected->parameters[index].type, std::move(arguments[index])));
+                }
             }
             call->dispatch_interface =
                 call->receiver != nullptr &&
@@ -4354,7 +5064,7 @@ private:
                     int total_score = 0;
                     bool compatible = true;
                     for (std::size_t index = 0; index < argument_types.size(); ++index) {
-                        const int score = parameter_match_score(candidate->parameters[index].type, argument_types[index]);
+                    const int score = parameter_match_score(candidate->parameters[index].type, arguments[index].get());
                         if (score < 0) {
                             compatible = false;
                             break;
@@ -4879,6 +5589,7 @@ private:
         const MethodSymbol* current_method_ = nullptr;
         const ConstructorSymbol* current_constructor_ = nullptr;
         int loop_depth_ = 0;
+        int unsafe_depth_ = 0;
         std::unordered_map<string, const ParameterSymbol*> parameter_lookup_;
         vector<std::unique_ptr<VariableSymbol>> locals_;
         vector<std::unordered_map<string, const VariableSymbol*>> scopes_;
@@ -4978,8 +5689,27 @@ struct RuntimeArray;
 struct RuntimeObject;
 
 struct Value {
-    using Storage = std::variant<std::nullptr_t, int64_t, bool, string, std::shared_ptr<RuntimeArray>, std::shared_ptr<RuntimeObject>>;
+    using Storage = std::variant<std::nullptr_t,
+                                 int64_t,
+                                 bool,
+                                 string,
+                                 std::shared_ptr<RuntimeArray>,
+                                 std::shared_ptr<RuntimeObject>,
+                                 std::shared_ptr<struct RuntimePointer>>;
     Storage data = nullptr;
+};
+
+struct RuntimeMemoryBlock {
+    int id = 0;
+    std::vector<uint8_t> bytes;
+    bool freed = false;
+    bool stack = false;
+};
+
+struct RuntimePointer {
+    std::shared_ptr<RuntimeMemoryBlock> block;
+    int64_t offset = 0;
+    const TypeSymbol* element_type = nullptr;
 };
 
 struct RuntimeArray {
@@ -5004,6 +5734,7 @@ Value default_value_for_type(const TypeSymbol* type) {
         case TypeKind::Struct:
         case TypeKind::Interface:
         case TypeKind::Array:
+        case TypeKind::Pointer:
         case TypeKind::Null:
         case TypeKind::TypeParameter:
             return Value{nullptr};
@@ -5043,6 +5774,15 @@ bool values_equal(const Value& left, const Value& right) {
     }
     if (std::holds_alternative<std::shared_ptr<RuntimeArray>>(left.data)) {
         return std::get<std::shared_ptr<RuntimeArray>>(left.data) == std::get<std::shared_ptr<RuntimeArray>>(right.data);
+    }
+    if (std::holds_alternative<std::shared_ptr<RuntimePointer>>(left.data)) {
+        const auto& left_ptr = std::get<std::shared_ptr<RuntimePointer>>(left.data);
+        const auto& right_ptr = std::get<std::shared_ptr<RuntimePointer>>(right.data);
+        if (left_ptr == nullptr || right_ptr == nullptr) {
+            return left_ptr == right_ptr;
+        }
+        return left_ptr->block == right_ptr->block && left_ptr->offset == right_ptr->offset &&
+               are_types_equal(left_ptr->element_type, right_ptr->element_type);
     }
     return std::get<std::shared_ptr<RuntimeObject>>(left.data) == std::get<std::shared_ptr<RuntimeObject>>(right.data);
 }
@@ -5190,6 +5930,115 @@ private:
                                             *std::get<std::shared_ptr<RuntimeObject>>(value.data)->class_symbol)};
         }
         return value;
+    }
+
+    int64_t pointer_element_size(const TypeSymbol* type) const {
+        return unmanaged_type_size(type);
+    }
+
+    std::shared_ptr<RuntimeMemoryBlock> allocate_memory_block(int64_t bytes, bool stack = false) {
+        if (bytes < 0) {
+            throw std::runtime_error("Allocation size cannot be negative");
+        }
+        auto block = std::make_shared<RuntimeMemoryBlock>();
+        block->id = next_memory_block_id_++;
+        block->bytes.assign(static_cast<std::size_t>(bytes), 0);
+        block->stack = stack;
+        return block;
+    }
+
+    std::shared_ptr<RuntimePointer> make_pointer(const std::shared_ptr<RuntimeMemoryBlock>& block,
+                                                 int64_t offset,
+                                                 const TypeSymbol* element_type) const {
+        auto pointer = std::make_shared<RuntimePointer>();
+        pointer->block = block;
+        pointer->offset = offset;
+        pointer->element_type = element_type;
+        return pointer;
+    }
+
+    std::shared_ptr<RuntimePointer> get_pointer_value(const Value& value) const {
+        if (std::holds_alternative<std::shared_ptr<RuntimePointer>>(value.data)) {
+            return std::get<std::shared_ptr<RuntimePointer>>(value.data);
+        }
+        return nullptr;
+    }
+
+    void ensure_pointer_range(const std::shared_ptr<RuntimePointer>& pointer,
+                              int64_t element_index,
+                              int64_t access_size,
+                              const string& operation) const {
+        if (pointer == nullptr || pointer->block == nullptr) {
+            throw std::runtime_error(operation + " requires a non-null pointer");
+        }
+        if (pointer->block->freed) {
+            throw std::runtime_error("Pointer access after free");
+        }
+        const int64_t element_size = std::max<int64_t>(1, pointer_element_size(pointer->element_type));
+        const int64_t byte_offset = pointer->offset + element_index * element_size;
+        if (byte_offset < 0 || byte_offset + access_size > static_cast<int64_t>(pointer->block->bytes.size())) {
+            throw std::runtime_error("Pointer access out of range");
+        }
+    }
+
+    int64_t read_integral_bytes(const std::shared_ptr<RuntimePointer>& pointer, int64_t element_index) const {
+        const int64_t width = std::max<int64_t>(1, pointer_element_size(pointer->element_type));
+        ensure_pointer_range(pointer, element_index, width, "Pointer read");
+        const int64_t byte_offset = pointer->offset + element_index * width;
+        int64_t value = 0;
+        for (int64_t index = 0; index < width; ++index) {
+            value |= static_cast<int64_t>(pointer->block->bytes[static_cast<std::size_t>(byte_offset + index)]) << (index * 8);
+        }
+        if (is_integral_type(pointer->element_type) && is_signed_integral_type(pointer->element_type) && width < 8) {
+            const int shift = static_cast<int>((8 - width) * 8);
+            value = (value << shift) >> shift;
+        }
+        return value;
+    }
+
+    void write_integral_bytes(const std::shared_ptr<RuntimePointer>& pointer, int64_t element_index, int64_t value) {
+        const int64_t width = std::max<int64_t>(1, pointer_element_size(pointer->element_type));
+        ensure_pointer_range(pointer, element_index, width, "Pointer write");
+        const int64_t byte_offset = pointer->offset + element_index * width;
+        uint64_t raw = static_cast<uint64_t>(value);
+        for (int64_t index = 0; index < width; ++index) {
+            pointer->block->bytes[static_cast<std::size_t>(byte_offset + index)] =
+                static_cast<uint8_t>((raw >> (index * 8)) & 0xFF);
+        }
+    }
+
+    Value load_pointer_value(const std::shared_ptr<RuntimePointer>& pointer, int64_t element_index) const {
+        if (pointer == nullptr || pointer->element_type == nullptr) {
+            return Value{nullptr};
+        }
+        if (is_integral_type(pointer->element_type) || pointer->element_type->kind == TypeKind::Enum) {
+            return Value{read_integral_bytes(pointer, element_index)};
+        }
+        if (pointer->element_type == &program_.semantic_model.bool_type) {
+            return Value{read_integral_bytes(pointer, element_index) != 0};
+        }
+        throw std::runtime_error("Pointer loads currently support primitive, bool, and enum elements");
+    }
+
+    void store_pointer_value(const std::shared_ptr<RuntimePointer>& pointer, int64_t element_index, const Value& value) {
+        if (pointer == nullptr || pointer->element_type == nullptr) {
+            throw std::runtime_error("Pointer write requires a valid pointer");
+        }
+        if (is_integral_type(pointer->element_type) || pointer->element_type->kind == TypeKind::Enum) {
+            if (!std::holds_alternative<int64_t>(value.data)) {
+                throw std::runtime_error("Pointer write requires an integral value");
+            }
+            write_integral_bytes(pointer, element_index, std::get<int64_t>(value.data));
+            return;
+        }
+        if (pointer->element_type == &program_.semantic_model.bool_type) {
+            if (!std::holds_alternative<bool>(value.data)) {
+                throw std::runtime_error("Pointer write requires a bool value");
+            }
+            write_integral_bytes(pointer, element_index, std::get<bool>(value.data) ? 1 : 0);
+            return;
+        }
+        throw std::runtime_error("Pointer stores currently support primitive, bool, and enum elements");
     }
 
     const MethodSymbol* resolve_virtual_method_target(const MethodSymbol& root,
@@ -5365,6 +6214,74 @@ private:
                     throw std::runtime_error("Could not parse integer '" + raw + "'");
                 }
             }
+            if (method.owner == program_.semantic_model.memory_class) {
+                if (&method == program_.semantic_model.memory_alloc) {
+                    const int64_t bytes =
+                        arguments.empty() || !std::holds_alternative<int64_t>(arguments[0].data)
+                            ? int64_t{0}
+                            : std::get<int64_t>(arguments[0].data);
+                    auto block = allocate_memory_block(bytes);
+                    return Value{make_pointer(block, 0, &program_.semantic_model.byte_type)};
+                }
+                if (&method == program_.semantic_model.memory_free) {
+                    auto pointer = arguments.empty() ? std::shared_ptr<RuntimePointer>{} : get_pointer_value(arguments[0]);
+                    if (pointer == nullptr) {
+                        return Value{nullptr};
+                    }
+                    if (pointer->block == nullptr) {
+                        return Value{nullptr};
+                    }
+                    if (pointer->block->freed) {
+                        throw std::runtime_error("Double free detected");
+                    }
+                    pointer->block->freed = true;
+                    return Value{nullptr};
+                }
+                if (&method == program_.semantic_model.memory_copy) {
+                    auto destination = arguments.size() > 0 ? get_pointer_value(arguments[0]) : nullptr;
+                    auto source = arguments.size() > 1 ? get_pointer_value(arguments[1]) : nullptr;
+                    const int64_t bytes =
+                        arguments.size() > 2 && std::holds_alternative<int64_t>(arguments[2].data)
+                            ? std::get<int64_t>(arguments[2].data)
+                            : int64_t{0};
+                    ensure_pointer_range(destination, 0, bytes, "Memory.Copy destination");
+                    ensure_pointer_range(source, 0, bytes, "Memory.Copy source");
+                    std::memmove(destination->block->bytes.data() + destination->offset,
+                                 source->block->bytes.data() + source->offset,
+                                 static_cast<std::size_t>(bytes));
+                    return Value{nullptr};
+                }
+                if (&method == program_.semantic_model.memory_set) {
+                    auto destination = arguments.size() > 0 ? get_pointer_value(arguments[0]) : nullptr;
+                    const int64_t value =
+                        arguments.size() > 1 && std::holds_alternative<int64_t>(arguments[1].data)
+                            ? std::get<int64_t>(arguments[1].data)
+                            : int64_t{0};
+                    const int64_t bytes =
+                        arguments.size() > 2 && std::holds_alternative<int64_t>(arguments[2].data)
+                            ? std::get<int64_t>(arguments[2].data)
+                            : int64_t{0};
+                    ensure_pointer_range(destination, 0, bytes, "Memory.Set destination");
+                    std::memset(destination->block->bytes.data() + destination->offset,
+                                static_cast<int>(value & 0xFF),
+                                static_cast<std::size_t>(bytes));
+                    return Value{nullptr};
+                }
+                if (&method == program_.semantic_model.memory_compare) {
+                    auto left_pointer = arguments.size() > 0 ? get_pointer_value(arguments[0]) : nullptr;
+                    auto right_pointer = arguments.size() > 1 ? get_pointer_value(arguments[1]) : nullptr;
+                    const int64_t bytes =
+                        arguments.size() > 2 && std::holds_alternative<int64_t>(arguments[2].data)
+                            ? std::get<int64_t>(arguments[2].data)
+                            : int64_t{0};
+                    ensure_pointer_range(left_pointer, 0, bytes, "Memory.Compare left");
+                    ensure_pointer_range(right_pointer, 0, bytes, "Memory.Compare right");
+                    return Value{static_cast<int64_t>(
+                        std::memcmp(left_pointer->block->bytes.data() + left_pointer->offset,
+                                    right_pointer->block->bytes.data() + right_pointer->offset,
+                                    static_cast<std::size_t>(bytes)))};
+                }
+            }
             if ((method.owner == program_.semantic_model.assert_class && method.name == "Fail") ||
                 (method.owner == program_.semantic_model.intrinsics_class && method.name == "Fail")) {
                 const string message =
@@ -5372,6 +6289,23 @@ private:
                         ? std::get<string>(arguments[0].data)
                         : string("runtime failure");
                 throw std::runtime_error(message);
+            }
+            if (method.owner == program_.semantic_model.intrinsics_class &&
+                &method == program_.semantic_model.intrinsics_buffer_dangerous_data) {
+                if (arguments.size() < 2 || !std::holds_alternative<std::shared_ptr<RuntimeArray>>(arguments[0].data) ||
+                    !std::holds_alternative<int64_t>(arguments[1].data)) {
+                    return Value{nullptr};
+                }
+                const auto& array = std::get<std::shared_ptr<RuntimeArray>>(arguments[0].data);
+                const int64_t offset = std::get<int64_t>(arguments[1].data);
+                const int64_t length = array != nullptr ? static_cast<int64_t>(array->elements.size()) - offset : 0;
+                auto block = allocate_memory_block(std::max<int64_t>(0, length));
+                for (int64_t index = 0; index < length; ++index) {
+                    block->bytes[static_cast<std::size_t>(index)] =
+                        static_cast<uint8_t>(std::get<int64_t>(array->elements[static_cast<std::size_t>(offset + index)].data) &
+                                             0xFF);
+                }
+                return Value{make_pointer(block, 0, &program_.semantic_model.byte_type)};
             }
             if (method.owner == program_.semantic_model.assert_class) {
                 const string message =
@@ -5682,12 +6616,62 @@ private:
                 const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
                 Value value = evaluate_expression(*assignment.expression, frame);
                 Value stored = copy_value_for_type(value, assignment.target->type);
+                if (assignment.target->kind == BoundExpressionKind::Unary) {
+                    const auto& unary_target = static_cast<const BoundUnaryExpression&>(*assignment.target);
+                    if (unary_target.op == TokenKind::Star) {
+                        auto pointer = get_pointer_value(evaluate_expression(*unary_target.operand, frame));
+                        store_pointer_value(pointer, 0, stored);
+                        return stored;
+                    }
+                }
+                if (assignment.target->kind == BoundExpressionKind::PointerIndex) {
+                    const auto& access = static_cast<const BoundPointerIndexExpression&>(*assignment.target);
+                    auto pointer = get_pointer_value(evaluate_expression(*access.pointer_expression, frame));
+                    const int64_t index = std::get<int64_t>(evaluate_expression(*access.index_expression, frame).data);
+                    store_pointer_value(pointer, index, stored);
+                    return stored;
+                }
                 access_assignable(*assignment.target, frame) = stored;
                 return stored;
             }
             case BoundExpressionKind::Conversion: {
                 const auto& conversion = static_cast<const BoundConversionExpression&>(expression);
                 Value converted = evaluate_expression(*conversion.expression, frame);
+                if (conversion.type != nullptr && is_pointer_type(conversion.type)) {
+                    if (conversion.expression != nullptr &&
+                        conversion.expression->type == &program_.semantic_model.null_type) {
+                        return Value{std::shared_ptr<RuntimePointer>{}};
+                    }
+                    if (conversion.expression != nullptr &&
+                        (conversion.expression->type == &program_.semantic_model.nint_type ||
+                         conversion.expression->type == &program_.semantic_model.nuint_type)) {
+                        const int64_t raw = std::holds_alternative<int64_t>(converted.data) ? std::get<int64_t>(converted.data)
+                                                                                           : int64_t{0};
+                        if (raw == 0) {
+                            return Value{std::shared_ptr<RuntimePointer>{}};
+                        }
+                        throw std::runtime_error("Non-zero integer to pointer casts are not supported in the interpreter");
+                    }
+                    if (std::holds_alternative<std::shared_ptr<RuntimePointer>>(converted.data)) {
+                        return converted;
+                    }
+                }
+                if ((conversion.type == &program_.semantic_model.nint_type ||
+                     conversion.type == &program_.semantic_model.nuint_type) &&
+                    conversion.expression != nullptr &&
+                    is_pointer_type(conversion.expression->type)) {
+                    auto pointer = get_pointer_value(converted);
+                    if (pointer == nullptr || pointer->block == nullptr || pointer->block->bytes.empty()) {
+                        return Value{int64_t{0}};
+                    }
+                    return Value{static_cast<int64_t>(
+                        reinterpret_cast<intptr_t>(pointer->block->bytes.data() + pointer->offset))};
+                }
+                if (conversion.type != nullptr &&
+                    is_integral_type(conversion.type) &&
+                    std::holds_alternative<int64_t>(converted.data)) {
+                    return Value{std::get<int64_t>(converted.data)};
+                }
                 const bool box_struct_to_interface =
                     conversion.type != nullptr &&
                     conversion.type->kind == TypeKind::Interface &&
@@ -5702,6 +6686,19 @@ private:
                 switch (unary.op) {
                     case TokenKind::Bang:
                         return Value{!std::get<bool>(operand.data)};
+                    case TokenKind::Ampersand: {
+                        if (unary.operand->type == nullptr || !is_unmanaged_type(unary.operand->type)) {
+                            throw std::runtime_error("Address-of requires an unmanaged operand");
+                        }
+                        auto block = allocate_memory_block(std::max<int64_t>(1, unmanaged_type_size(unary.operand->type)), true);
+                        auto pointer = make_pointer(block, 0, unary.operand->type);
+                        store_pointer_value(pointer, 0, operand);
+                        return Value{pointer};
+                    }
+                    case TokenKind::Star: {
+                        auto pointer = get_pointer_value(operand);
+                        return load_pointer_value(pointer, 0);
+                    }
                     case TokenKind::Minus:
                         return Value{-std::get<int64_t>(operand.data)};
                     case TokenKind::Plus:
@@ -5719,8 +6716,39 @@ private:
                         if (binary.type == &program_.semantic_model.string_type) {
                             return Value{stringify_value(left, binary.left->type) + stringify_value(right, binary.right->type)};
                         }
+                        if (is_pointer_type(binary.type)) {
+                            auto pointer = get_pointer_value(is_pointer_type(binary.left->type) ? left : right);
+                            const int64_t amount =
+                                std::get<int64_t>(is_pointer_type(binary.left->type) ? right.data : left.data);
+                            if (pointer == nullptr) {
+                                return Value{std::shared_ptr<RuntimePointer>{}};
+                            }
+                            return Value{make_pointer(pointer->block,
+                                                     pointer->offset + amount * pointer_element_size(pointer->element_type),
+                                                     pointer->element_type)};
+                        }
                         return Value{std::get<int64_t>(left.data) + std::get<int64_t>(right.data)};
                     case TokenKind::Minus:
+                        if (is_pointer_type(binary.left->type) && is_pointer_type(binary.right->type)) {
+                            auto left_pointer = get_pointer_value(left);
+                            auto right_pointer = get_pointer_value(right);
+                            if (left_pointer == nullptr || right_pointer == nullptr ||
+                                left_pointer->block != right_pointer->block) {
+                                throw std::runtime_error("Pointer difference requires pointers into the same allocation");
+                            }
+                            return Value{(left_pointer->offset - right_pointer->offset) /
+                                         std::max<int64_t>(1, pointer_element_size(left_pointer->element_type))};
+                        }
+                        if (is_pointer_type(binary.left->type)) {
+                            auto pointer = get_pointer_value(left);
+                            const int64_t amount = std::get<int64_t>(right.data);
+                            if (pointer == nullptr) {
+                                return Value{std::shared_ptr<RuntimePointer>{}};
+                            }
+                            return Value{make_pointer(pointer->block,
+                                                     pointer->offset - amount * pointer_element_size(pointer->element_type),
+                                                     pointer->element_type)};
+                        }
                         return Value{std::get<int64_t>(left.data) - std::get<int64_t>(right.data)};
                     case TokenKind::Star:
                         return Value{std::get<int64_t>(left.data) * std::get<int64_t>(right.data)};
@@ -5733,8 +6761,28 @@ private:
                     case TokenKind::PipePipe:
                         return Value{std::get<bool>(left.data) || std::get<bool>(right.data)};
                     case TokenKind::EqualsEquals:
+                        if (is_pointer_type(binary.left->type) || is_pointer_type(binary.right->type)) {
+                            const bool left_null = std::holds_alternative<std::nullptr_t>(left.data) ||
+                                                   get_pointer_value(left) == nullptr;
+                            const bool right_null = std::holds_alternative<std::nullptr_t>(right.data) ||
+                                                    get_pointer_value(right) == nullptr;
+                            if (left_null || right_null) {
+                                return Value{left_null == right_null};
+                            }
+                            return Value{values_equal(left, right)};
+                        }
                         return Value{values_equal(left, right)};
                     case TokenKind::BangEquals:
+                        if (is_pointer_type(binary.left->type) || is_pointer_type(binary.right->type)) {
+                            const bool left_null = std::holds_alternative<std::nullptr_t>(left.data) ||
+                                                   get_pointer_value(left) == nullptr;
+                            const bool right_null = std::holds_alternative<std::nullptr_t>(right.data) ||
+                                                    get_pointer_value(right) == nullptr;
+                            if (left_null || right_null) {
+                                return Value{left_null != right_null};
+                            }
+                            return Value{!values_equal(left, right)};
+                        }
                         return Value{!values_equal(left, right)};
                     case TokenKind::Less:
                         return Value{std::get<int64_t>(left.data) < std::get<int64_t>(right.data)};
@@ -5801,12 +6849,32 @@ private:
                                        default_runtime_value(creation.element_type_symbol));
                 return Value{array};
             }
+            case BoundExpressionKind::PointerIndex: {
+                const auto& access = static_cast<const BoundPointerIndexExpression&>(expression);
+                auto pointer = get_pointer_value(evaluate_expression(*access.pointer_expression, frame));
+                const int64_t index = std::get<int64_t>(evaluate_expression(*access.index_expression, frame).data);
+                return load_pointer_value(pointer, index);
+            }
+            case BoundExpressionKind::StackAlloc: {
+                const auto& stack_alloc = static_cast<const BoundStackAllocExpression&>(expression);
+                Value count_value = evaluate_expression(*stack_alloc.count, frame);
+                const int64_t count =
+                    std::holds_alternative<int64_t>(count_value.data) ? std::get<int64_t>(count_value.data) : int64_t{0};
+                if (count < 0) {
+                    throw std::runtime_error("stackalloc count cannot be negative");
+                }
+                auto block =
+                    allocate_memory_block(count * std::max<int64_t>(1, unmanaged_type_size(stack_alloc.element_type_symbol)),
+                                          true);
+                return Value{make_pointer(block, 0, stack_alloc.element_type_symbol)};
+            }
         }
         return Value{nullptr};
     }
 
     const BoundProgram& program_;
     std::unordered_map<const FieldSymbol*, Value> static_fields_;
+    int next_memory_block_id_ = 1;
 };
 
 string c_type_name(const TypeSymbol* type) {
@@ -5814,6 +6882,30 @@ string c_type_name(const TypeSymbol* type) {
         case TypeKind::Void:
             return "void";
         case TypeKind::Int:
+            switch (type->primitive_kind) {
+                case PrimitiveKind::Byte:
+                    return "uint8_t";
+                case PrimitiveKind::SByte:
+                    return "int8_t";
+                case PrimitiveKind::Short:
+                    return "int16_t";
+                case PrimitiveKind::UShort:
+                    return "uint16_t";
+                case PrimitiveKind::Int:
+                    return "int32_t";
+                case PrimitiveKind::UInt:
+                    return "uint32_t";
+                case PrimitiveKind::Long:
+                    return "int64_t";
+                case PrimitiveKind::ULong:
+                    return "uint64_t";
+                case PrimitiveKind::NInt:
+                    return "intptr_t";
+                case PrimitiveKind::NUInt:
+                    return "uintptr_t";
+                case PrimitiveKind::None:
+                    return "int64_t";
+            }
             return "int64_t";
         case TypeKind::Enum:
             return "int64_t";
@@ -5823,6 +6915,8 @@ string c_type_name(const TypeSymbol* type) {
             return "HyString*";
         case TypeKind::Array:
             return "HyArray*";
+        case TypeKind::Pointer:
+            return "HyPointer";
         case TypeKind::Class:
         case TypeKind::Struct:
             return sanitize_c_name(type->class_symbol->full_name) + "*";
@@ -6008,6 +7102,171 @@ private:
         out << "    void* elements;\n";
         out << "} HyArray;\n\n";
 
+        out << "typedef struct {\n";
+        out << "    uint8_t* bytes;\n";
+        out << "    int64_t length;\n";
+        out << "    int32_t freed;\n";
+        out << "} HyManualBlock;\n\n";
+
+        out << "typedef struct {\n";
+        out << "    HyManualBlock* block;\n";
+        out << "    uint8_t* base;\n";
+        out << "    int64_t length;\n";
+        out << "    int64_t offset;\n";
+        out << "    int64_t element_size;\n";
+        out << "} HyPointer;\n\n";
+
+        out << "static const char* hy_runtime_file = NULL;\n";
+        out << "static int32_t hy_runtime_line = 0;\n";
+        out << "static int32_t hy_runtime_column = 0;\n\n";
+
+        out << "static void hy_runtime_set_location(const char* file, int32_t line, int32_t column);\n";
+        out << "static void hy_runtime_fail(const char* message);\n";
+        out << "static void* hy_array_ptr(HyArray* arr, int64_t index);\n\n";
+
+        out << "static HyPointer hy_ptr_null(void) {\n";
+        out << "    HyPointer ptr;\n";
+        out << "    ptr.block = NULL;\n";
+        out << "    ptr.base = NULL;\n";
+        out << "    ptr.length = 0;\n";
+        out << "    ptr.offset = 0;\n";
+        out << "    ptr.element_size = 1;\n";
+        out << "    return ptr;\n";
+        out << "}\n\n";
+
+        out << "static HyPointer hy_ptr_from_address(void* address, int64_t length, int64_t element_size) {\n";
+        out << "    HyPointer ptr = hy_ptr_null();\n";
+        out << "    ptr.base = (uint8_t*)address;\n";
+        out << "    ptr.length = length;\n";
+        out << "    ptr.element_size = element_size <= 0 ? 1 : element_size;\n";
+        out << "    return ptr;\n";
+        out << "}\n\n";
+
+        out << "static void hy_ptr_require(HyPointer ptr, int64_t index, int64_t access_size, const char* operation) {\n";
+        out << "    if (ptr.base == NULL) {\n";
+        out << "        hy_runtime_fail(\"Null pointer access\");\n";
+        out << "    }\n";
+        out << "    if (ptr.block != NULL && ptr.block->freed) {\n";
+        out << "        hy_runtime_fail(\"Pointer access after free\");\n";
+        out << "    }\n";
+        out << "    const int64_t width = ptr.element_size <= 0 ? 1 : ptr.element_size;\n";
+        out << "    const int64_t byte_offset = ptr.offset + index * width;\n";
+        out << "    if (byte_offset < 0 || byte_offset + access_size > ptr.length) {\n";
+        out << "        hy_runtime_fail(operation);\n";
+        out << "    }\n";
+        out << "}\n\n";
+
+        out << "static HyPointer hy_manual_alloc(int64_t bytes) {\n";
+        out << "    if (bytes < 0) {\n";
+        out << "        hy_runtime_fail(\"Allocation size cannot be negative\");\n";
+        out << "    }\n";
+        out << "    HyManualBlock* block = (HyManualBlock*)calloc(1, sizeof(HyManualBlock));\n";
+        out << "    if (block == NULL) {\n";
+        out << "        hy_runtime_fail(\"Manual allocation metadata allocation failed\");\n";
+        out << "    }\n";
+        out << "    block->length = bytes;\n";
+        out << "    block->bytes = (uint8_t*)calloc((size_t)(bytes == 0 ? 1 : bytes), 1);\n";
+        out << "    if (block->bytes == NULL) {\n";
+        out << "        free(block);\n";
+        out << "        hy_runtime_fail(\"Manual allocation failed\");\n";
+        out << "    }\n";
+        out << "    HyPointer ptr = hy_ptr_null();\n";
+        out << "    ptr.block = block;\n";
+        out << "    ptr.base = block->bytes;\n";
+        out << "    ptr.length = bytes;\n";
+        out << "    ptr.element_size = 1;\n";
+        out << "    return ptr;\n";
+        out << "}\n\n";
+
+        out << "static HyPointer hy_manual_alloc_typed(int64_t bytes, int64_t element_size) {\n";
+        out << "    HyPointer ptr = hy_manual_alloc(bytes);\n";
+        out << "    ptr.element_size = element_size <= 0 ? 1 : element_size;\n";
+        out << "    return ptr;\n";
+        out << "}\n\n";
+
+        out << "static void hy_manual_free(HyPointer ptr) {\n";
+        out << "    if (ptr.block == NULL) {\n";
+        out << "        if (ptr.base == NULL) {\n";
+        out << "            return;\n";
+        out << "        }\n";
+        out << "        hy_runtime_fail(\"Only manual pointers can be freed\");\n";
+        out << "    }\n";
+        out << "    if (ptr.block->freed) {\n";
+        out << "        hy_runtime_fail(\"Double free detected\");\n";
+        out << "    }\n";
+        out << "    ptr.block->freed = 1;\n";
+        out << "    free(ptr.block->bytes);\n";
+        out << "    ptr.block->bytes = NULL;\n";
+        out << "}\n\n";
+
+        out << "static HyPointer hy_ptr_add(HyPointer ptr, int64_t elements) {\n";
+        out << "    ptr.offset += elements * (ptr.element_size <= 0 ? 1 : ptr.element_size);\n";
+        out << "    return ptr;\n";
+        out << "}\n\n";
+
+        out << "static int64_t hy_ptr_diff(HyPointer left, HyPointer right) {\n";
+        out << "    if (left.base != right.base || left.block != right.block) {\n";
+        out << "        hy_runtime_fail(\"Pointer difference requires the same allocation\");\n";
+        out << "    }\n";
+        out << "    const int64_t width = left.element_size <= 0 ? 1 : left.element_size;\n";
+        out << "    return (left.offset - right.offset) / width;\n";
+        out << "}\n\n";
+
+        out << "static int64_t hy_ptr_load_i64(HyPointer ptr, int64_t index, int64_t width, int sign_extend) {\n";
+        out << "    hy_ptr_require(ptr, index, width, \"Pointer read out of range\");\n";
+        out << "    const int64_t byte_offset = ptr.offset + index * (ptr.element_size <= 0 ? 1 : ptr.element_size);\n";
+        out << "    int64_t value = 0;\n";
+        out << "    for (int64_t i = 0; i < width; ++i) {\n";
+        out << "        value |= (int64_t)(ptr.base[byte_offset + i]) << (i * 8);\n";
+        out << "    }\n";
+        out << "    if (sign_extend && width < 8) {\n";
+        out << "        int shift = (int)((8 - width) * 8);\n";
+        out << "        value = (value << shift) >> shift;\n";
+        out << "    }\n";
+        out << "    return value;\n";
+        out << "}\n\n";
+
+        out << "static void hy_ptr_store_i64(HyPointer ptr, int64_t index, int64_t value, int64_t width) {\n";
+        out << "    hy_ptr_require(ptr, index, width, \"Pointer write out of range\");\n";
+        out << "    const int64_t byte_offset = ptr.offset + index * (ptr.element_size <= 0 ? 1 : ptr.element_size);\n";
+        out << "    uint64_t raw = (uint64_t)value;\n";
+        out << "    for (int64_t i = 0; i < width; ++i) {\n";
+        out << "        ptr.base[byte_offset + i] = (uint8_t)((raw >> (i * 8)) & 0xFF);\n";
+        out << "    }\n";
+        out << "}\n\n";
+
+        out << "static HyPointer hy_buffer_dangerous_data(HyArray* data, int64_t offset) {\n";
+        out << "    if (data == NULL) {\n";
+        out << "        return hy_ptr_null();\n";
+        out << "    }\n";
+        out << "    if (offset < 0 || offset > data->length) {\n";
+        out << "        hy_runtime_fail(\"Buffer.DangerousData offset out of range\");\n";
+        out << "    }\n";
+        out << "    HyPointer ptr = hy_manual_alloc(data->length - offset);\n";
+        out << "    for (int64_t i = offset; i < data->length; ++i) {\n";
+        out << "        ptr.base[i - offset] = (uint8_t)(*(int64_t*)hy_array_ptr(data, i) & 0xFF);\n";
+        out << "    }\n";
+        out << "    ptr.element_size = 1;\n";
+        out << "    return ptr;\n";
+        out << "}\n\n";
+
+        out << "static void hy_memory_copy(HyPointer destination, HyPointer source, int64_t bytes) {\n";
+        out << "    hy_ptr_require(destination, 0, bytes, \"Memory.Copy destination out of range\");\n";
+        out << "    hy_ptr_require(source, 0, bytes, \"Memory.Copy source out of range\");\n";
+        out << "    memmove(destination.base + destination.offset, source.base + source.offset, (size_t)bytes);\n";
+        out << "}\n\n";
+
+        out << "static void hy_memory_set(HyPointer destination, uint8_t value, int64_t bytes) {\n";
+        out << "    hy_ptr_require(destination, 0, bytes, \"Memory.Set destination out of range\");\n";
+        out << "    memset(destination.base + destination.offset, value, (size_t)bytes);\n";
+        out << "}\n\n";
+
+        out << "static int64_t hy_memory_compare(HyPointer left, HyPointer right, int64_t bytes) {\n";
+        out << "    hy_ptr_require(left, 0, bytes, \"Memory.Compare left out of range\");\n";
+        out << "    hy_ptr_require(right, 0, bytes, \"Memory.Compare right out of range\");\n";
+        out << "    return (int64_t)memcmp(left.base + left.offset, right.base + right.offset, (size_t)bytes);\n";
+        out << "}\n\n";
+
         // --- type_id helper ---
         out << "static int32_t hy_object_type_id(const void* value) {\n";
         out << "    return value == NULL ? 0 : ((const HyObjectHeader*)value)->type_id;\n";
@@ -6034,21 +7293,20 @@ private:
         out << "static void hy_runtime_fail(const char* message);\n";
         out << "static void hy_gc_trace_class(void* obj, int32_t type_id);\n";
         out << "static void hy_gc_mark_statics(void);\n\n";
+        out << "static void* hy_array_ptr(HyArray* arr, int64_t index);\n\n";
 
         // --- GC allocator ---
         out << "static void* hy_gc_alloc(size_t size) {\n";
         out << "    void* memory = calloc(1, size);\n";
         out << "    if (memory == NULL) {\n";
-        out << "        fprintf(stderr, \"Hylang: allocation failed\\n\");\n";
-        out << "        exit(1);\n";
+        out << "        hy_runtime_fail(\"Managed allocation failed\");\n";
         out << "    }\n";
         out << "    if (hy_gc_heap_count == hy_gc_heap_capacity) {\n";
         out << "        size_t next_cap = hy_gc_heap_capacity == 0 ? 64 : hy_gc_heap_capacity * 2;\n";
         out << "        void** next = (void**)realloc(hy_gc_heap, next_cap * sizeof(void*));\n";
         out << "        if (next == NULL) {\n";
-        out << "            fprintf(stderr, \"Hylang: GC heap resize failed\\n\");\n";
         out << "            free(memory);\n";
-        out << "            exit(1);\n";
+        out << "            hy_runtime_fail(\"GC heap resize failed\");\n";
         out << "        }\n";
         out << "        hy_gc_heap = next;\n";
         out << "        hy_gc_heap_capacity = next_cap;\n";
@@ -6177,9 +7435,19 @@ private:
         out << "    hy_gc_heap_capacity = 0;\n";
         out << "}\n\n";
 
+        out << "static void hy_runtime_set_location(const char* file, int32_t line, int32_t column) {\n";
+        out << "    hy_runtime_file = file;\n";
+        out << "    hy_runtime_line = line;\n";
+        out << "    hy_runtime_column = column;\n";
+        out << "}\n\n";
+
         // --- Fail helper ---
         out << "static void hy_runtime_fail(const char* message) {\n";
-        out << "    fprintf(stderr, \"%s\\n\", message);\n";
+        out << "    if (hy_runtime_file != NULL && hy_runtime_file[0] != '\\0' && hy_runtime_line > 0 && hy_runtime_column > 0) {\n";
+        out << "        fprintf(stderr, \"%s:%d:%d: Runtime error: %s\\n\", hy_runtime_file, (int)hy_runtime_line, (int)hy_runtime_column, message);\n";
+        out << "    } else {\n";
+        out << "        fprintf(stderr, \"Runtime error: %s\\n\", message);\n";
+        out << "    }\n";
         out << "    exit(1);\n";
         out << "}\n\n";
 
@@ -6363,8 +7631,8 @@ private:
         out << "}\n";
         out << "static void hy_assert_fail(HyString* message) {\n";
         out << "    if (message != NULL && message->bytes != NULL) {\n";
-        out << "        fprintf(stderr, \"%s\\n\", message->bytes);\n";
-        out << "        exit(1);\n";
+        out << "        hy_runtime_fail(message->bytes);\n";
+        out << "        return;\n";
         out << "    }\n";
         out << "    hy_runtime_fail(\"assertion failed\");\n";
         out << "}\n\n";
@@ -6708,13 +7976,17 @@ private:
 
             for (const auto& ctor : klass->constructors) {
                 const auto& bound_body = *program_.constructors.at(ctor.get());
+                current_function_source_file_ = klass->source_file;
                 out << "void " << constructor_name(*ctor) << "(" << class_struct_name(*klass) << "* self";
                 for (const auto& parameter : ctor->parameters) {
                     out << ", " << c_type_name(parameter.type) << " " << sanitize_c_name(parameter.name);
                 }
                 out << ") {\n";
                 emit_function_preamble(out, klass, ctor->parameters, *bound_body.body, true, &program_.semantic_model.void_type, 1);
+                const int ctor_line = ctor->syntax != nullptr ? ctor->syntax->line : 1;
+                const int ctor_column = ctor->syntax != nullptr ? ctor->syntax->column : 1;
                 if (bound_body.base_constructor != nullptr) {
+                    emit_runtime_location(out, current_function_source_file_, ctor_line, ctor_column, 1);
                     out << "    " << constructor_name(*bound_body.base_constructor) << "("
                         << emit_class_upcast("self", *klass, *bound_body.base_constructor->owner);
                     for (const auto& argument : bound_body.base_arguments) {
@@ -6722,6 +7994,7 @@ private:
                     }
                     out << ");\n";
                 } else if (klass->kind == TypeKind::Class) {
+                    emit_runtime_location(out, current_function_source_file_, ctor_line, ctor_column, 1);
                     out << "    " << implicit_constructor_name(*klass) << "(self);\n";
                 }
                 emit_block(out, *bound_body.body, 1);
@@ -6729,6 +8002,7 @@ private:
                 out << "}\n\n";
                 current_function_has_roots_ = false;
                 current_function_return_type_ = nullptr;
+                current_function_source_file_.clear();
 
                 out << class_struct_name(*klass) << "* " << new_helper_name(*klass, ctor->slot)
                     << "(";
@@ -6759,6 +8033,7 @@ private:
     void emit_methods(std::ostringstream& out) {
         for (const auto* klass : class_emission_order()) {
             for (const auto& method : klass->methods) {
+                current_function_source_file_ = klass->source_file;
                 out << c_type_name(method->return_type) << " " << method_name(*method) << "(";
                 bool wrote = false;
                 if (!method->is_static) {
@@ -6792,6 +8067,7 @@ private:
                 out << "}\n\n";
                 current_function_has_roots_ = false;
                 current_function_return_type_ = nullptr;
+                current_function_source_file_.clear();
             }
         }
     }
@@ -6890,6 +8166,8 @@ private:
                 return "0";
             case TypeKind::Bool:
                 return "false";
+            case TypeKind::Pointer:
+                return "hy_ptr_null()";
             case TypeKind::Void:
                 return "";
             default:
@@ -6972,6 +8250,19 @@ private:
         }
     }
 
+    void emit_runtime_location(std::ostringstream& out, const fs::path& file, int line, int column, int level) {
+        if (file.empty() || file == "<stdlib>") {
+            return;
+        }
+        indent(out, level);
+        out << "hy_runtime_set_location(\"" << escape_c_string(file.string()) << "\", " << line << ", " << column
+            << ");\n";
+    }
+
+    void emit_statement_location(std::ostringstream& out, const BoundStatement& statement, int level) {
+        emit_runtime_location(out, current_function_source_file_, statement.line, statement.column, level);
+    }
+
     void emit_statement(std::ostringstream& out, const BoundStatement& statement, int level) {
         switch (statement.kind) {
             case BoundStatementKind::Block:
@@ -6980,6 +8271,7 @@ private:
             case BoundStatementKind::VariableDeclaration: {
                 const auto& declaration = static_cast<const BoundVariableDeclarationStatement&>(statement);
                 const string initializer = emit_variable_initialization(declaration);
+                emit_statement_location(out, statement, level);
                 indent(out, level);
                 out << initializer << ";\n";
                 indent(out, level);
@@ -6988,6 +8280,7 @@ private:
             }
             case BoundStatementKind::Expression: {
                 const auto& expression = static_cast<const BoundExpressionStatement&>(statement);
+                emit_statement_location(out, statement, level);
                 indent(out, level);
                 out << emit_expression(*expression.expression) << ";\n";
                 indent(out, level);
@@ -6996,6 +8289,7 @@ private:
             }
             case BoundStatementKind::If: {
                 const auto& if_statement = static_cast<const BoundIfStatement&>(statement);
+                emit_statement_location(out, statement, level);
                 indent(out, level);
                 out << "if (" << emit_expression(*if_statement.condition) << ") {\n";
                 emit_statement(out, *if_statement.then_statement, level + 1);
@@ -7014,6 +8308,7 @@ private:
             }
             case BoundStatementKind::While: {
                 const auto& while_statement = static_cast<const BoundWhileStatement&>(statement);
+                emit_statement_location(out, statement, level);
                 indent(out, level);
                 out << "while (" << emit_expression(*while_statement.condition) << ") {\n";
                 emit_statement(out, *while_statement.body, level + 1);
@@ -7027,6 +8322,7 @@ private:
             }
             case BoundStatementKind::For: {
                 const auto& for_statement = static_cast<const BoundForStatement&>(statement);
+                emit_statement_location(out, statement, level);
                 indent(out, level);
                 out << "for (";
                 if (for_statement.initializer != nullptr) {
@@ -7049,15 +8345,18 @@ private:
                 break;
             }
             case BoundStatementKind::Break:
+                emit_statement_location(out, statement, level);
                 indent(out, level);
                 out << "break;\n";
                 break;
             case BoundStatementKind::Continue:
+                emit_statement_location(out, statement, level);
                 indent(out, level);
                 out << "continue;\n";
                 break;
             case BoundStatementKind::Return: {
                 const auto& return_statement = static_cast<const BoundReturnStatement&>(statement);
+                emit_statement_location(out, statement, level);
                 indent(out, level);
                 if (return_statement.expression != nullptr) {
                     if (current_function_has_roots_) {
@@ -7093,6 +8392,8 @@ private:
                 return "0";
             case TypeKind::Bool:
                 return "false";
+            case TypeKind::Pointer:
+                return "hy_ptr_null()";
             case TypeKind::Array:
             case TypeKind::String:
             case TypeKind::Class:
@@ -7136,12 +8437,51 @@ private:
         }
     }
 
+    string emit_pointer_load(const string& pointer_expression, const TypeSymbol* element_type, const string& index_expression) {
+        if (element_type == nullptr) {
+            return "0";
+        }
+        if (element_type == &program_.semantic_model.bool_type) {
+            return "(hy_ptr_load_i64(" + pointer_expression + ", " + index_expression + ", 1, 0) != 0)";
+        }
+        if (is_integral_type(element_type)) {
+            return "((" + c_type_name(element_type) + ")hy_ptr_load_i64(" + pointer_expression + ", " + index_expression +
+                   ", " + std::to_string(integral_type_size_bytes(element_type)) + ", " +
+                   std::to_string(is_signed_integral_type(element_type) ? 1 : 0) + "))";
+        }
+        if (element_type->kind == TypeKind::Enum) {
+            return "(int64_t)hy_ptr_load_i64(" + pointer_expression + ", " + index_expression + ", 8, 1)";
+        }
+        return "(hy_runtime_fail(\"Unsupported pointer load type\"), 0)";
+    }
+
+    string emit_pointer_store(const string& pointer_expression,
+                              const string& index_expression,
+                              const string& value_expression,
+                              const TypeSymbol* element_type) {
+        if (element_type == nullptr) {
+            return "(hy_runtime_fail(\"Unsupported pointer store type\"), 0)";
+        }
+        int64_t width = 1;
+        if (is_integral_type(element_type)) {
+            width = integral_type_size_bytes(element_type);
+        } else if (element_type->kind == TypeKind::Enum) {
+            width = 8;
+        } else if (element_type == &program_.semantic_model.bool_type) {
+            width = 1;
+        } else {
+            return "(hy_runtime_fail(\"Unsupported pointer store type\"), 0)";
+        }
+        return "(hy_ptr_store_i64(" + pointer_expression + ", " + index_expression + ", (int64_t)(" + value_expression + "), " +
+               std::to_string(width) + "), (" + value_expression + "))";
+    }
+
     string emit_string_operand(const BoundExpression& expression) {
         if (expression.type == &program_.semantic_model.string_type) {
             return emit_expression(expression);
         }
         if (is_integral_type(expression.type)) {
-            return "hy_string_from_int(" + emit_expression(expression) + ")";
+            return "hy_string_from_int((int64_t)(" + emit_expression(expression) + "))";
         }
         if (expression.type == &program_.semantic_model.bool_type) {
             return "hy_string_from_bool(" + emit_expression(expression) + ")";
@@ -7226,6 +8566,12 @@ private:
                 }
                 return "*(int64_t*)hy_array_ptr(" + arr + ", " + idx + ")";
             }
+            case BoundExpressionKind::PointerIndex: {
+                const auto& access = static_cast<const BoundPointerIndexExpression&>(expression);
+                return emit_pointer_load(emit_expression(*access.pointer_expression),
+                                         access.type,
+                                         emit_expression(*access.index_expression));
+            }
             case BoundExpressionKind::StringIndex: {
                 const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
                 return "hy_string_index(" + emit_expression(*access.string_expression) + ", " +
@@ -7251,10 +8597,51 @@ private:
                     }
                     return "(*(int64_t*)hy_array_ptr(" + arr + ", " + idx + ") = (" + val + "))";
                 }
+                if (assignment.target->kind == BoundExpressionKind::PointerIndex) {
+                    const auto& access = static_cast<const BoundPointerIndexExpression&>(*assignment.target);
+                    return emit_pointer_store(emit_expression(*access.pointer_expression),
+                                              emit_expression(*access.index_expression),
+                                              emit_expression(*assignment.expression),
+                                              access.type);
+                }
+                if (assignment.target->kind == BoundExpressionKind::Unary) {
+                    const auto& unary_target = static_cast<const BoundUnaryExpression&>(*assignment.target);
+                    if (unary_target.op == TokenKind::Star) {
+                        return emit_pointer_store(emit_expression(*unary_target.operand),
+                                                  "0",
+                                                  emit_expression(*assignment.expression),
+                                                  assignment.target->type);
+                    }
+                }
                 return "(" + emit_expression(*assignment.target) + " = " + emit_expression(*assignment.expression) + ")";
             }
             case BoundExpressionKind::Conversion: {
                 const auto& conversion = static_cast<const BoundConversionExpression&>(expression);
+                if (expression.type != nullptr &&
+                    is_pointer_type(expression.type) &&
+                    conversion.expression != nullptr &&
+                    conversion.expression->type != nullptr &&
+                    (conversion.expression->type == &program_.semantic_model.nint_type ||
+                     conversion.expression->type == &program_.semantic_model.nuint_type)) {
+                    return "((" + emit_expression(*conversion.expression) +
+                           ") == 0 ? hy_ptr_null() : (hy_runtime_fail(\"Non-zero integer to pointer casts are not supported in compiled mode\"), hy_ptr_null()))";
+                }
+                if ((expression.type == &program_.semantic_model.nint_type ||
+                     expression.type == &program_.semantic_model.nuint_type) &&
+                    conversion.expression != nullptr &&
+                    conversion.expression->type != nullptr &&
+                    is_pointer_type(conversion.expression->type)) {
+                    return "((" + c_type_name(expression.type) + ")(intptr_t)((" + emit_expression(*conversion.expression) +
+                           ").base == NULL ? 0 : ((" + emit_expression(*conversion.expression) + ").base + (" +
+                           emit_expression(*conversion.expression) + ").offset)))";
+                }
+                if (conversion.expression != nullptr &&
+                    expression.type != nullptr &&
+                    is_integral_type(expression.type) &&
+                    conversion.expression->type != nullptr &&
+                    is_integral_type(conversion.expression->type)) {
+                    return "((" + c_type_name(expression.type) + ")(" + emit_expression(*conversion.expression) + "))";
+                }
                 if (conversion.expression != nullptr &&
                     conversion.expression->type != nullptr &&
                     conversion.expression->type->kind == TypeKind::Class &&
@@ -7275,6 +8662,24 @@ private:
             }
             case BoundExpressionKind::Unary: {
                 const auto& unary = static_cast<const BoundUnaryExpression&>(expression);
+                if (unary.op == TokenKind::Ampersand) {
+                    if (unary.operand->kind == BoundExpressionKind::Local) {
+                        const auto& local = static_cast<const BoundLocalExpression&>(*unary.operand);
+                        return "hy_ptr_from_address(&" + local_name(*local.variable) + ", " +
+                               std::to_string(unmanaged_type_size(unary.operand->type)) + ", " +
+                               std::to_string(std::max<int64_t>(1, unmanaged_type_size(unary.operand->type))) + ")";
+                    }
+                    if (unary.operand->kind == BoundExpressionKind::Parameter) {
+                        const auto& parameter = static_cast<const BoundParameterExpression&>(*unary.operand);
+                        return "hy_ptr_from_address(&" + sanitize_c_name(parameter.parameter->name) + ", " +
+                               std::to_string(unmanaged_type_size(unary.operand->type)) + ", " +
+                               std::to_string(std::max<int64_t>(1, unmanaged_type_size(unary.operand->type))) + ")";
+                    }
+                    return "(hy_runtime_fail(\"Address-of is only supported on locals and parameters in compiled mode\"), hy_ptr_null())";
+                }
+                if (unary.op == TokenKind::Star) {
+                    return emit_pointer_load(emit_expression(*unary.operand), expression.type, "0");
+                }
                 return "(" + token_text(unary.op) + emit_expression(*unary.operand) + ")";
             }
             case BoundExpressionKind::Binary: {
@@ -7287,6 +8692,36 @@ private:
                      binary.right->type == &program_.semantic_model.string_type)) {
                     const string comparison =
                         "hy_string_equals(" + emit_expression(*binary.left) + ", " + emit_expression(*binary.right) + ")";
+                    return binary.op == TokenKind::EqualsEquals ? comparison : "(!" + comparison + ")";
+                }
+                if (is_pointer_type(binary.type) && (binary.op == TokenKind::Plus || binary.op == TokenKind::Minus)) {
+                    if (is_pointer_type(binary.left->type)) {
+                        const string amount = binary.op == TokenKind::Minus ? "(-(" + emit_expression(*binary.right) + "))"
+                                                                            : emit_expression(*binary.right);
+                        return "hy_ptr_add(" + emit_expression(*binary.left) + ", " + amount + ")";
+                    }
+                    return "hy_ptr_add(" + emit_expression(*binary.right) + ", " + emit_expression(*binary.left) + ")";
+                }
+                if (binary.type == &program_.semantic_model.nint_type &&
+                    binary.op == TokenKind::Minus &&
+                    is_pointer_type(binary.left->type) &&
+                    is_pointer_type(binary.right->type)) {
+                    return "hy_ptr_diff(" + emit_expression(*binary.left) + ", " + emit_expression(*binary.right) + ")";
+                }
+                if ((binary.op == TokenKind::EqualsEquals || binary.op == TokenKind::BangEquals) &&
+                    (is_pointer_type(binary.left->type) || is_pointer_type(binary.right->type))) {
+                    const string left_expr = emit_expression(*binary.left);
+                    const string right_expr = emit_expression(*binary.right);
+                    string comparison;
+                    if (binary.left->type == &program_.semantic_model.null_type) {
+                        comparison = "((" + right_expr + ").base == NULL)";
+                    } else if (binary.right->type == &program_.semantic_model.null_type) {
+                        comparison = "((" + left_expr + ").base == NULL)";
+                    } else {
+                        comparison = "((" + left_expr + ").base == (" + right_expr + ").base && (" + left_expr +
+                                     ").block == (" + right_expr + ").block && (" + left_expr + ").offset == (" +
+                                     right_expr + ").offset)";
+                    }
                     return binary.op == TokenKind::EqualsEquals ? comparison : "(!" + comparison + ")";
                 }
                 return "(" + emit_expression(*binary.left) + " " + token_text(binary.op) + " " + emit_expression(*binary.right) + ")";
@@ -7340,8 +8775,35 @@ private:
                         return "hy_string_to_int(" + emit_expression(*call.arguments[0]) + ")";
                     }
                 }
+                if (call.method->is_builtin && call.method->owner == program_.semantic_model.memory_class) {
+                    if (call.method == program_.semantic_model.memory_alloc) {
+                        return "hy_manual_alloc((int64_t)(" + emit_expression(*call.arguments[0]) + "))";
+                    }
+                    if (call.method == program_.semantic_model.memory_free) {
+                        return "hy_manual_free(" + emit_expression(*call.arguments[0]) + ")";
+                    }
+                    if (call.method == program_.semantic_model.memory_copy) {
+                        return "hy_memory_copy(" + emit_expression(*call.arguments[0]) + ", " +
+                               emit_expression(*call.arguments[1]) + ", (int64_t)(" + emit_expression(*call.arguments[2]) +
+                               "))";
+                    }
+                    if (call.method == program_.semantic_model.memory_set) {
+                        return "hy_memory_set(" + emit_expression(*call.arguments[0]) + ", (uint8_t)(" +
+                               emit_expression(*call.arguments[1]) + "), (int64_t)(" + emit_expression(*call.arguments[2]) +
+                               "))";
+                    }
+                    if (call.method == program_.semantic_model.memory_compare) {
+                        return "hy_memory_compare(" + emit_expression(*call.arguments[0]) + ", " +
+                               emit_expression(*call.arguments[1]) + ", (int64_t)(" + emit_expression(*call.arguments[2]) +
+                               "))";
+                    }
+                }
                 if ((call.method->is_builtin && call.method->owner == program_.semantic_model.assert_class) ||
                     (call.method->is_builtin && call.method->owner == program_.semantic_model.intrinsics_class)) {
+                    if (call.method == program_.semantic_model.intrinsics_buffer_dangerous_data) {
+                        return "hy_buffer_dangerous_data(" + emit_expression(*call.arguments[0]) + ", (int64_t)(" +
+                               emit_expression(*call.arguments[1]) + "))";
+                    }
                     if (call.method->name == "Fail") {
                         return "hy_assert_fail(" + emit_expression(*call.arguments[0]) + ")";
                     }
@@ -7497,6 +8959,13 @@ private:
                 const int32_t element_is_ref = is_gc_ref_type(creation.element_type_symbol) ? 1 : 0;
                 return "hy_array_new(" + emit_expression(*creation.count) + ", " + std::to_string(element_is_ref) + ")";
             }
+            case BoundExpressionKind::StackAlloc: {
+                const auto& stack_alloc = static_cast<const BoundStackAllocExpression&>(expression);
+                const string element_size =
+                    std::to_string(std::max<int64_t>(1, unmanaged_type_size(stack_alloc.element_type_symbol)));
+                return "hy_manual_alloc_typed((int64_t)(" + emit_expression(*stack_alloc.count) + ") * " + element_size +
+                       ", " + element_size + ")";
+            }
         }
         return "NULL";
     }
@@ -7539,6 +9008,7 @@ private:
     const BoundProgram& program_;
     bool current_function_has_roots_ = false;
     const TypeSymbol* current_function_return_type_ = nullptr;
+    fs::path current_function_source_file_;
 };
 
 struct ProjectManifest {
@@ -7763,8 +9233,23 @@ void validate_manifest_metadata(const fs::path& path, ProjectManifest& manifest,
         if (manifest.package.id.empty()) {
             diagnostics.warn(path, 1, 1, "Package metadata is missing 'id'");
         }
-        if (!manifest.package.id.empty() && manifest.package.id.find(' ') != string::npos) {
-            diagnostics.warn(path, 1, 1, "Package id should not contain spaces");
+        if (!manifest.package.id.empty()) {
+            bool valid_id = true;
+            for (const unsigned char ch : manifest.package.id) {
+                if (!(std::isalnum(ch) || ch == '.' || ch == '_' || ch == '-')) {
+                    valid_id = false;
+                    break;
+                }
+            }
+            if (!valid_id) {
+                diagnostics.warn(path, 1, 1, "Package id contains unsupported characters");
+            }
+        }
+        if (manifest.package.description.empty()) {
+            diagnostics.warn(path, 1, 1, "Package metadata is missing 'description'");
+        }
+        if (manifest.package.authors.empty()) {
+            diagnostics.warn(path, 1, 1, "Package metadata is missing 'authors'");
         }
         if (manifest.package.license.empty()) {
             diagnostics.warn(path, 1, 1, "Package metadata is missing 'license'");
@@ -7853,6 +9338,9 @@ std::optional<ProjectManifest> load_project_manifest(const fs::path& path, Diagn
         }
 
         if (current_section == "dependencies") {
+            if (manifest.dependencies.find(key) != manifest.dependencies.end()) {
+                diagnostics.warn(path, line_number, 1, "Duplicate dependency entry '" + key + "'");
+            }
             ProjectManifest::DependencySpec dependency;
             const auto entries = parse_manifest_inline_table(path, diagnostics, line_number, value_column, value);
             for (const auto& [entry_key, entry_value] : entries) {
@@ -8107,10 +9595,9 @@ namespace System.Runtime {
             return copy;
         }
 
-        public nint DangerousData() {
+        public byte* DangerousData() {
             EnsureAlive();
-            Fail("Buffer.DangerousData requires executable unsafe support");
-            return 0;
+            return Intrinsics.BufferDangerousData(_state.Data, _offset);
         }
 
         public void Free() {
@@ -8462,6 +9949,12 @@ void collect_symbol_usage(const BoundExpression& expression,
             collect_symbol_usage(*access.index_expression, used_locals, used_parameters);
             return;
         }
+        case BoundExpressionKind::PointerIndex: {
+            const auto& access = static_cast<const BoundPointerIndexExpression&>(expression);
+            collect_symbol_usage(*access.pointer_expression, used_locals, used_parameters);
+            collect_symbol_usage(*access.index_expression, used_locals, used_parameters);
+            return;
+        }
         case BoundExpressionKind::StringIndex: {
             const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
             collect_symbol_usage(*access.string_expression, used_locals, used_parameters);
@@ -8516,6 +10009,11 @@ void collect_symbol_usage(const BoundExpression& expression,
         }
         case BoundExpressionKind::NewArray: {
             const auto& creation = static_cast<const BoundArrayCreationExpression&>(expression);
+            collect_symbol_usage(*creation.count, used_locals, used_parameters);
+            return;
+        }
+        case BoundExpressionKind::StackAlloc: {
+            const auto& creation = static_cast<const BoundStackAllocExpression&>(expression);
             collect_symbol_usage(*creation.count, used_locals, used_parameters);
             return;
         }
@@ -8587,6 +10085,165 @@ void collect_symbol_usage(const BoundStatement& statement,
     }
 }
 
+void collect_member_usage(const BoundExpression& expression,
+                          std::unordered_set<const FieldSymbol*>& used_fields,
+                          std::unordered_set<const MethodSymbol*>& used_methods);
+
+void collect_member_usage(const BoundStatement& statement,
+                          std::unordered_set<const FieldSymbol*>& used_fields,
+                          std::unordered_set<const MethodSymbol*>& used_methods) {
+    switch (statement.kind) {
+        case BoundStatementKind::Block: {
+            const auto& block = static_cast<const BoundBlockStatement&>(statement);
+            for (const auto& child : block.statements) {
+                collect_member_usage(*child, used_fields, used_methods);
+            }
+            return;
+        }
+        case BoundStatementKind::VariableDeclaration: {
+            const auto& declaration = static_cast<const BoundVariableDeclarationStatement&>(statement);
+            if (declaration.initializer != nullptr) {
+                collect_member_usage(*declaration.initializer, used_fields, used_methods);
+            }
+            return;
+        }
+        case BoundStatementKind::Expression: {
+            const auto& expression = static_cast<const BoundExpressionStatement&>(statement);
+            collect_member_usage(*expression.expression, used_fields, used_methods);
+            return;
+        }
+        case BoundStatementKind::If: {
+            const auto& if_statement = static_cast<const BoundIfStatement&>(statement);
+            collect_member_usage(*if_statement.condition, used_fields, used_methods);
+            collect_member_usage(*if_statement.then_statement, used_fields, used_methods);
+            if (if_statement.else_statement != nullptr) {
+                collect_member_usage(*if_statement.else_statement, used_fields, used_methods);
+            }
+            return;
+        }
+        case BoundStatementKind::While: {
+            const auto& while_statement = static_cast<const BoundWhileStatement&>(statement);
+            collect_member_usage(*while_statement.condition, used_fields, used_methods);
+            collect_member_usage(*while_statement.body, used_fields, used_methods);
+            return;
+        }
+        case BoundStatementKind::For: {
+            const auto& for_statement = static_cast<const BoundForStatement&>(statement);
+            if (for_statement.initializer != nullptr) {
+                collect_member_usage(*for_statement.initializer, used_fields, used_methods);
+            }
+            if (for_statement.condition != nullptr) {
+                collect_member_usage(*for_statement.condition, used_fields, used_methods);
+            }
+            if (for_statement.update != nullptr) {
+                collect_member_usage(*for_statement.update, used_fields, used_methods);
+            }
+            collect_member_usage(*for_statement.body, used_fields, used_methods);
+            return;
+        }
+        case BoundStatementKind::Return: {
+            const auto& return_statement = static_cast<const BoundReturnStatement&>(statement);
+            if (return_statement.expression != nullptr) {
+                collect_member_usage(*return_statement.expression, used_fields, used_methods);
+            }
+            return;
+        }
+        case BoundStatementKind::Break:
+        case BoundStatementKind::Continue:
+            return;
+    }
+}
+
+void collect_member_usage(const BoundExpression& expression,
+                          std::unordered_set<const FieldSymbol*>& used_fields,
+                          std::unordered_set<const MethodSymbol*>& used_methods) {
+    switch (expression.kind) {
+        case BoundExpressionKind::Field: {
+            const auto& field = static_cast<const BoundFieldExpression&>(expression);
+            used_fields.insert(field.field);
+            if (field.receiver != nullptr) {
+                collect_member_usage(*field.receiver, used_fields, used_methods);
+            }
+            return;
+        }
+        case BoundExpressionKind::Call: {
+            const auto& call = static_cast<const BoundCallExpression&>(expression);
+            used_methods.insert(call.method);
+            if (call.receiver != nullptr) {
+                collect_member_usage(*call.receiver, used_fields, used_methods);
+            }
+            for (const auto& argument : call.arguments) {
+                collect_member_usage(*argument, used_fields, used_methods);
+            }
+            return;
+        }
+        case BoundExpressionKind::ArrayLength:
+            collect_member_usage(*static_cast<const BoundArrayLengthExpression&>(expression).array_expression, used_fields, used_methods);
+            return;
+        case BoundExpressionKind::ArrayIndex: {
+            const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
+            collect_member_usage(*access.array_expression, used_fields, used_methods);
+            collect_member_usage(*access.index_expression, used_fields, used_methods);
+            return;
+        }
+        case BoundExpressionKind::PointerIndex: {
+            const auto& access = static_cast<const BoundPointerIndexExpression&>(expression);
+            collect_member_usage(*access.pointer_expression, used_fields, used_methods);
+            collect_member_usage(*access.index_expression, used_fields, used_methods);
+            return;
+        }
+        case BoundExpressionKind::StringIndex: {
+            const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
+            collect_member_usage(*access.string_expression, used_fields, used_methods);
+            collect_member_usage(*access.index_expression, used_fields, used_methods);
+            return;
+        }
+        case BoundExpressionKind::StringLength:
+            collect_member_usage(*static_cast<const BoundStringLengthExpression&>(expression).string_expression, used_fields, used_methods);
+            return;
+        case BoundExpressionKind::Assignment: {
+            const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
+            collect_member_usage(*assignment.target, used_fields, used_methods);
+            collect_member_usage(*assignment.expression, used_fields, used_methods);
+            return;
+        }
+        case BoundExpressionKind::Conversion: {
+            const auto& conversion = static_cast<const BoundConversionExpression&>(expression);
+            if (conversion.expression != nullptr) {
+                collect_member_usage(*conversion.expression, used_fields, used_methods);
+            }
+            return;
+        }
+        case BoundExpressionKind::Unary:
+            collect_member_usage(*static_cast<const BoundUnaryExpression&>(expression).operand, used_fields, used_methods);
+            return;
+        case BoundExpressionKind::Binary: {
+            const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
+            collect_member_usage(*binary.left, used_fields, used_methods);
+            collect_member_usage(*binary.right, used_fields, used_methods);
+            return;
+        }
+        case BoundExpressionKind::NewObject: {
+            const auto& creation = static_cast<const BoundNewExpression&>(expression);
+            for (const auto& argument : creation.arguments) {
+                collect_member_usage(*argument, used_fields, used_methods);
+            }
+            return;
+        }
+        case BoundExpressionKind::NewArray:
+            collect_member_usage(*static_cast<const BoundArrayCreationExpression&>(expression).count, used_fields, used_methods);
+            return;
+        case BoundExpressionKind::StackAlloc:
+            collect_member_usage(*static_cast<const BoundStackAllocExpression&>(expression).count, used_fields, used_methods);
+            return;
+        case BoundExpressionKind::Literal:
+        case BoundExpressionKind::Local:
+        case BoundExpressionKind::Parameter:
+        case BoundExpressionKind::ThisReference:
+            return;
+    }
+}
+
 bool statement_terminates_flow(const BoundStatement& statement) {
     switch (statement.kind) {
         case BoundStatementKind::Return:
@@ -8634,6 +10291,12 @@ void lint_expression(const BoundExpression& expression,
         case BoundExpressionKind::ArrayIndex: {
             const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
             lint_expression(*access.array_expression, freed_buffers, diagnostics, file);
+            lint_expression(*access.index_expression, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::PointerIndex: {
+            const auto& access = static_cast<const BoundPointerIndexExpression&>(expression);
+            lint_expression(*access.pointer_expression, freed_buffers, diagnostics, file);
             lint_expression(*access.index_expression, freed_buffers, diagnostics, file);
             return;
         }
@@ -8703,6 +10366,11 @@ void lint_expression(const BoundExpression& expression,
         }
         case BoundExpressionKind::NewArray: {
             const auto& creation = static_cast<const BoundArrayCreationExpression&>(expression);
+            lint_expression(*creation.count, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::StackAlloc: {
+            const auto& creation = static_cast<const BoundStackAllocExpression&>(expression);
             lint_expression(*creation.count, freed_buffers, diagnostics, file);
             return;
         }
@@ -8830,6 +10498,41 @@ void lint_statement(const BoundStatement& statement,
 }
 
 void lint_program(const BoundProgram& program, DiagnosticBag& diagnostics) {
+    std::unordered_set<const FieldSymbol*> used_fields;
+    std::unordered_set<const MethodSymbol*> used_methods;
+    for (const auto& [method, body] : program.methods) {
+        (void)method;
+        collect_member_usage(*body->body, used_fields, used_methods);
+    }
+    for (const auto& [constructor, body] : program.constructors) {
+        (void)constructor;
+        collect_member_usage(*body->body, used_fields, used_methods);
+    }
+
+    for (const auto& klass : program.semantic_model.classes) {
+        if (klass->is_builtin || klass->source_file == "<stdlib>") {
+            continue;
+        }
+        for (const auto& field : klass->fields) {
+            if (field->accessibility == Accessibility::Private && used_fields.count(field.get()) == 0) {
+                diagnostics.warn(klass->source_file,
+                                 field->syntax != nullptr ? field->syntax->line : 1,
+                                 field->syntax != nullptr ? field->syntax->column : 1,
+                                 "Private field '" + field->name + "' is never used");
+            }
+        }
+        for (const auto& method : klass->methods) {
+            if (method->accessibility == Accessibility::Private &&
+                method.get() != program.entry_point &&
+                used_methods.count(method.get()) == 0) {
+                diagnostics.warn(klass->source_file,
+                                 method->syntax != nullptr ? method->syntax->line : 1,
+                                 method->syntax != nullptr ? method->syntax->column : 1,
+                                 "Private method '" + method->name + "' is never used");
+            }
+        }
+    }
+
     for (const auto& unit : program.units) {
         if (unit.file == "<stdlib>") {
             continue;
@@ -8903,12 +10606,70 @@ void lint_program(const BoundProgram& program, DiagnosticBag& diagnostics) {
     }
 }
 
+void lint_unsafe_blocks_in_source(const fs::path& file, DiagnosticBag& diagnostics) {
+    string text;
+    if (!read_text_file(file, text)) {
+        return;
+    }
+    std::size_t cursor = 0;
+    while ((cursor = text.find("unsafe", cursor)) != string::npos) {
+        const std::size_t unsafe_pos = cursor;
+        cursor += 6;
+        const std::size_t open = text.find('{', cursor);
+        if (open == string::npos) {
+            continue;
+        }
+        int depth = 1;
+        std::size_t end = open + 1;
+        while (end < text.size() && depth > 0) {
+            if (text[end] == '{') {
+                ++depth;
+            } else if (text[end] == '}') {
+                --depth;
+            }
+            ++end;
+        }
+        if (depth != 0) {
+            continue;
+        }
+        const string body = trim(text.substr(open + 1, end - open - 2));
+        int line = 1;
+        int column = 1;
+        for (std::size_t index = 0; index < unsafe_pos; ++index) {
+            if (text[index] == '\n') {
+                ++line;
+                column = 1;
+            } else {
+                ++column;
+            }
+        }
+        if (body.empty()) {
+            diagnostics.warn(file, line, column, "Unsafe block is empty");
+        } else if (body.find("stackalloc") == string::npos &&
+                   body.find("sizeof") == string::npos &&
+                   body.find("DangerousData") == string::npos &&
+                   body.find("System.Runtime.Memory") == string::npos &&
+                   body.find("Memory.") == string::npos &&
+                   body.find('*') == string::npos &&
+                   body.find('&') == string::npos) {
+            diagnostics.warn(file, line, column, "Unsafe block does not contain unsafe operations");
+        }
+    }
+}
+
 CheckResult check_single_target(const fs::path& input_path) {
     DiagnosticBag diagnostics;
     const auto program = load_program_from_target(input_path, diagnostics);
     if (program != nullptr && is_runnable_manifest(manifest_for_target(input_path, diagnostics).value_or(ProjectManifest{}))) {
         locate_entry_point(*program, diagnostics);
         lint_program(*program, diagnostics);
+    }
+    if (program != nullptr) {
+        for (const auto& unit : program->units) {
+            if (unit.file != "<stdlib>") {
+                lint_unsafe_blocks_in_source(unit.file, diagnostics);
+            }
+        }
     }
     return CheckResult{!diagnostics.has_errors(), std::move(diagnostics.items)};
 }

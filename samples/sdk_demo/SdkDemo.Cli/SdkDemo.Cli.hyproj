@@ -1,0 +1,12 @@
+format = 2
+name = "SdkDemo.Cli"
+version = "0.1.0"
+type = "exe"
+sources = ["Program.hy"]
+project_references = ["../SdkDemo.Core/SdkDemo.Core.hyproj"]
+
+[package]
+id = "SdkDemo.Cli"
+description = "Command line report tool for the Phase 4 SDK demo"
+authors = ["Aurora Softwares"]
+license = "MIT"

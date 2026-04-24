@@ -234,9 +234,45 @@ namespace HexLab.Core {
             return -1;
         }
 
+        public static int FindPatternUnsafe(byte[] data, byte[] pattern) {
+            Buffer dataBuffer = Buffer.FromArray(data);
+            Buffer patternBuffer = Buffer.FromArray(pattern);
+            if (patternBuffer.Length() == 0 || patternBuffer.Length() > dataBuffer.Length()) {
+                return -1;
+            }
+
+            int found = -1;
+            unsafe {
+                byte* dataStart = dataBuffer.DangerousData();
+                byte* patternStart = patternBuffer.DangerousData();
+                int index = 0;
+                int limit = dataBuffer.Length() - patternBuffer.Length();
+                while (index <= limit) {
+                    byte* cursor = dataStart + index;
+                    int matchIndex = 0;
+                    bool matches = true;
+                    while (matchIndex < patternBuffer.Length()) {
+                        if (cursor[matchIndex] != patternStart[matchIndex]) {
+                            matches = false;
+                            break;
+                        }
+                        matchIndex = matchIndex + 1;
+                    }
+                    if (matches) {
+                        found = cursor - dataStart;
+                        break;
+                    }
+                    index = index + 1;
+                }
+                Memory.Free(dataStart);
+                Memory.Free(patternStart);
+            }
+            return found;
+        }
+
         public static string Search(byte[] data, string hexPattern) {
             byte[] pattern = HexText.ParseHexPattern(hexPattern);
-            int found = FindPattern(data, pattern);
+            int found = FindPatternUnsafe(data, pattern);
             if (found < 0) {
                 return "not found";
             }

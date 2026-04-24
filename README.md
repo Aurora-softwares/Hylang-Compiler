@@ -44,12 +44,14 @@ new  this  base  :  +  -  *  /  %  ==  !=  <  <=  >  >=  &&  ||  !
 - `System.Console.Write` / `WriteLine` and `System.IO.File` text read/write/exists
 - `System.IO.File.ReadAllBytes` / `WriteAllBytes`
 - Bootstrap `System.Runtime.Buffer` for safe byte-buffer allocation, slicing, copying, and explicit free semantics
+- Executable `unsafe { ... }`, pointer types, address-of, dereference, pointer indexing/arithmetic, `stackalloc`, and `sizeof`
+- Bootstrap `System.Runtime.Memory` for explicit allocation, free, copy, set, and compare
 - Bootstrap `System.Runtime.BinaryPrimitives` for 16-bit, 32-bit, and 64-bit little-endian/big-endian reads and writes
 - Bootstrap `System.Testing.Assert` and `System.Convert.ToInt32`
 
 ## Workflow
 
-Phase 4 is now underway with a real SDK-style workflow:
+Phase 4 now has a local-first SDK-style workflow:
 
 - `hy new app|lib|tool|test|workspace <name>`
 - `hy build <target> [--target exe|lib] [-o output] [--debug]`
@@ -59,19 +61,28 @@ Phase 4 is now underway with a real SDK-style workflow:
 - `hy check <target> [--json]`
 - `hy package pack <target> [-o output]`
 - `hy package add <target> <path>`
+- `hy package init-registry <path>`
+- `hy package publish <project.hyproj> --registry <path>`
+- `hy package search <query> --registry <path>`
+- `hy package install <target.hyproj> <package-id> [--version <version>] --registry <path>`
+- `hy lsp`
 
 Current workflow support includes:
 
 - v2 `.hyproj` manifests with workspace support
 - backward-compatible loading of older v1 manifests
 - local path dependencies
+- filesystem-backed local package registries
 - build caching under `.hylang/cache/`
 - simple `.hymap.json` debug/source-map files from `hy build --debug`
 - warning-bearing `hy check --json` output with severity/file/line/column/message entries
-- light VS Code assets under `tools/vscode/hylang`
-- `samples/hexlab` as the current showcase workspace for the full build/test/package loop
+- compiled runtime failures that report Hylang file/line/column context for the executing statement
+- lightweight JSON-RPC language-server support through `hy lsp`
+- VS Code assets under `tools/vscode/hylang`
+- `samples/hexlab` as the systems showcase workspace
+- `samples/sdk_demo` as the Phase 4 tooling/package/LSP proof workspace
 
-The remaining low-level Phase 4 systems surface is still in progress. Safe bootstrap `Buffer` support is shipped, but executable `unsafe`, pointers, `stackalloc`, `sizeof`, and manual memory APIs are not shipped yet.
+The low-level Phase 3 closeout slice is executable in both `hyrun` and compiled output: raw `System.Runtime.Memory`, `unsafe` blocks, checked pointer indexing/arithmetic, `stackalloc`, `sizeof`, and `Buffer.DangerousData()` all run today. Phase 4 is complete at bootstrap scope with a local package registry, lightweight language server, expanded diagnostics, and a dedicated SDK demo workspace.
 
 See the [full language reference](https://aurora-softwares.github.io/Hylang-Docs/) for details on every feature.
 
@@ -119,8 +130,19 @@ build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- inspect samples/hexl
 build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- dump samples/hexlab/demo.bin 8
 build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- search samples/hexlab/demo.bin 89504E47
 
+# Exercise the SDK/package workflow proof
+build/hy build samples/sdk_demo/SdkDemo.hyproj
+build/hy test samples/sdk_demo/SdkDemo.hyproj
+build/hy package init-registry build/local-registry
+build/hy package publish samples/sdk_demo/SdkDemo.Core/SdkDemo.Core.hyproj --registry build/local-registry
+build/hy package search SdkDemo --registry build/local-registry
+
 # Emit debug metadata alongside generated output
 build/hy build tests/hello_world.hy -o build/hello_world_debug --debug
+
+# Debug builds keep .hymap metadata, and runtime failures point back to .hy locations
+build/hy build tests/runtime_fail_location.hy -o build/runtime_fail_location --debug
+./build/runtime_fail_location
 
 # Compatibility shims still work
 build/hyrun samples/mini_frontend_model/MiniFrontendModel.hyproj
@@ -137,18 +159,27 @@ Light VS Code integration lives in [`tools/vscode/hylang`](tools/vscode/hylang).
 - snippets
 - task and launch templates
 - a JSON-diagnostic wrapper for `hy check --json`
+- lightweight `hy lsp` integration for diagnostics, symbols, hover, and formatting
 - format-on-save settings templates
 
-This is intentionally lighter than a full language server.
+This is intentionally lighter than a full semantic IDE experience: completion, go-to-definition, references, rename, semantic tokens, and workspace indexing are still later work.
 
 ## Runtime model
 
 - The interpreter keeps bootstrap reference-managed runtime objects while matching the same visible string/array semantics as compiled mode.
 - The C backend now emits an in-tree non-moving mark-sweep GC with precise emitted root frames and managed string/array objects.
+- Raw manual memory and pointer operations now execute in both modes through checked runtime helpers.
+- Compiled runtime failures now carry Hylang file/line/column context instead of only raw generated-runtime messages.
 - `HYLANG_GC_STRESS=1` forces collection at runtime safe points, and `HYLANG_GC_THRESHOLD=<bytes>` lowers the compiled-runtime collection threshold for stress/debugging.
+
+Current bootstrap boundaries:
+
+- `Buffer.DangerousData()` currently bridges into raw memory through a checked bootstrap path rather than a fully native unmanaged backing store.
+- Non-zero integer-to-pointer casts are intentionally rejected in the bootstrap runtime.
+- Pointer loads/stores are implemented for primitive, enum, and `bool` element types; broader unmanaged-struct pointer materialization is still a follow-on cleanup item.
 
 ## Roadmap
 
-Hylang is developed in phases toward a self-hosted compiler and first-class support for Australis OS userland. Runtime foundation work from Phase 3 is landed, and the active zone is now **Phase 4 — Tooling and Developer Workflow**, with executable unsafe/manual-memory systems work still pending.
+Hylang is developed in phases toward a self-hosted compiler and first-class support for Australis OS userland. Phase 3 includes an executable bootstrap unsafe/manual-memory slice, and **Phase 4 — Tooling and Developer Workflow** is complete at local-first bootstrap scope.
 
 See [ROADMAP.md](ROADMAP.md) for the full plan.

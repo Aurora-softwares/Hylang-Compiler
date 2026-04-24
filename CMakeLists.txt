@@ -115,6 +115,18 @@ add_test(
 set_tests_properties(hyrun_buffer_features PROPERTIES PASS_REGULAR_EXPRESSION "Shared=77.*Copy=77.*Len=2.*Fill=9")
 
 add_test(
+    NAME hyrun_unsafe_memory
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/unsafe_memory.hy
+)
+set_tests_properties(hyrun_unsafe_memory PROPERTIES PASS_REGULAR_EXPRESSION "71.*8.*4")
+
+add_test(
+    NAME hyrun_unsafe_address_of
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/unsafe_address_of.hy
+)
+set_tests_properties(hyrun_unsafe_address_of PROPERTIES PASS_REGULAR_EXPRESSION "9.*1")
+
+add_test(
     NAME hyrun_binary_primitives_64
     COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/binary_primitives_64.hy
 )
@@ -244,6 +256,26 @@ add_test(
         -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/buffer_features.hy
         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/buffer_features
         "-DEXPECTED_TEXT=Shared=77.*Copy=77.*Len=2.*Fill=9"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_unsafe_memory
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/unsafe_memory.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/unsafe_memory
+        "-DEXPECTED_TEXT=71.*8.*4"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_unsafe_address_of
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/unsafe_address_of.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/unsafe_address_of
+        "-DEXPECTED_TEXT=9.*1"
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
 )
 
@@ -979,6 +1011,15 @@ add_test(
 )
 
 add_test(
+    NAME hy_check_json_phase4_warnings
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/check/phase4_warnings.hy
+        "-DEXPECTED_MESSAGE_REGEXES=Private field 'unusedField' is never used;Private method 'UnusedPrivate' is never used;Unsafe block is empty;Unsafe block does not contain unsafe operations;Statement is unreachable because previous control flow already terminates"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCheckJson.cmake
+)
+
+add_test(
     NAME hy_build_debug_emits_hymap
     COMMAND ${CMAKE_COMMAND}
         -DHY_BINARY=$<TARGET_FILE:hy>
@@ -988,10 +1029,78 @@ add_test(
 )
 
 add_test(
+    NAME hy_build_debug_runtime_failure_maps_to_hylang
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_fail_location.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/runtime_fail_location_debug
+        "-DEXPECTED_OUTPUT_REGEX=runtime_fail_location\\.hy:6:[0-9]+: Runtime error: Pointer access after free"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBuildDebugAndExpectRunFailure.cmake
+)
+
+add_test(
+    NAME hy_build_debug_array_failure_maps_to_hylang
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_fail_array.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/runtime_fail_array_debug
+        "-DEXPECTED_OUTPUT_REGEX=runtime_fail_array\\.hy:4:[0-9]+: Runtime error: Array index out of range"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBuildDebugAndExpectRunFailure.cmake
+)
+
+add_test(
+    NAME hy_build_debug_string_failure_maps_to_hylang
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_fail_string.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/runtime_fail_string_debug
+        "-DEXPECTED_OUTPUT_REGEX=runtime_fail_string\\.hy:4:[0-9]+: Runtime error: String index out of range"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBuildDebugAndExpectRunFailure.cmake
+)
+
+add_test(
+    NAME hy_build_debug_buffer_failure_maps_to_hylang
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_fail_buffer.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/runtime_fail_buffer_debug
+        "-DEXPECTED_OUTPUT_REGEX=runtime_fail_buffer\\.hy:7:[0-9]+: Runtime error: Buffer has been freed"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBuildDebugAndExpectRunFailure.cmake
+)
+
+add_test(
+    NAME hy_build_debug_assert_failure_maps_to_hylang
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime_fail_assert.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/runtime_fail_assert_debug
+        "-DEXPECTED_OUTPUT_REGEX=runtime_fail_assert\\.hy:5:[0-9]+: Runtime error: mapped assert"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBuildDebugAndExpectRunFailure.cmake
+)
+
+add_test(
     NAME hy_package_add_local_dependency
     COMMAND ${CMAKE_COMMAND}
         -DHY_BINARY=$<TARGET_FILE:hy>
         -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_package_add_local_dependency
         -DDEPENDENCY_PROJECT=${CMAKE_CURRENT_SOURCE_DIR}/samples/hexlab/HexLab.Core/HexLab.Core.hyproj
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyPackageAdd.cmake
+)
+
+add_test(
+    NAME hy_package_registry_sdk_demo
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DSOURCE_WORKSPACE=${CMAKE_CURRENT_SOURCE_DIR}/samples/sdk_demo
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_package_registry_sdk_demo
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyPackageRegistry.cmake
+)
+
+add_test(
+    NAME hy_lsp_smoke
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/sdk_demo/SdkDemo.Core/Report.hy
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_lsp_smoke
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyLspSmoke.cmake
 )

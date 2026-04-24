@@ -49,8 +49,8 @@ Checked items reflect the current repo state as of now.
 - [x] Phase 0: Bootstrap Foundation is effectively complete enough to move beyond the bootstrap-only stage
 - [x] Phase 1: Language Hardening is complete
 - [x] Phase 2: Core Language Expansion is complete
-- [ ] Phase 3: Runtime and Memory Model is largely complete, with executable unsafe/manual-memory systems work still open
-- [ ] Phase 4: Tooling and Developer Workflow is well underway, with closeout work still open
+- [x] Phase 3: Runtime and Memory Model is complete at bootstrap scope
+- [x] Phase 4: Tooling and Developer Workflow is complete at local-first bootstrap scope
 - [ ] Phase 5: Self-Hosting Preparation has not started in earnest
 - [ ] Phase 6: Self-Hosted Compiler has not started
 - [ ] Phase 7: Full Standard Library has not started in earnest
@@ -232,7 +232,7 @@ Exit criteria:
 
 ## Phase 3: Runtime and Memory Model
 
-Status: runtime foundation complete, with safe buffer primitives landed and executable unsafe/manual-memory work still open
+Status: complete at bootstrap scope
 
 Goals:
 
@@ -249,7 +249,7 @@ Checklist:
 - [x] Design stack allocation support
 - [x] Design manual allocation/free APIs
 - [x] Add a safe bootstrap buffer primitive for byte-oriented systems utilities
-- [ ] Add executable raw memory and unsafe primitives suitable for systems code
+- [x] Add executable raw memory and unsafe primitives suitable for systems code
 - [x] Define the safe/unsafe boundary clearly in docs and compiler rules
 
 Main work:
@@ -276,15 +276,19 @@ Delivered foundation:
 - `new T[count]` works across interpreter and compiled modes
 - bootstrap `System.Collections.List<T>` exists and is proven via `samples/managed_collections`
 - bootstrap `System.Runtime.Buffer` now provides safe allocation, slicing, copying, and explicit free semantics
+- executable bootstrap `unsafe { ... }`, `T*`, address-of, dereference, pointer indexing/arithmetic, `stackalloc`, `sizeof`, and explicit manual allocation APIs now run in both `hyrun` and compiled mode
+- compiled runtime failures for the low-level/runtime surface now report Hylang file/line/column context
 - GC stress controls exist for compiled output via `HYLANG_GC_STRESS` and `HYLANG_GC_THRESHOLD`
-- the Hylang-Docs runtime pages capture the runtime contract and deferred unsafe design:
+- the Hylang-Docs runtime pages capture the runtime and unsafe contracts:
   <https://aurora-softwares.github.io/Hylang-Docs/runtime/runtime-model.html>
   <https://aurora-softwares.github.io/Hylang-Docs/runtime/unsafe-design.html>
 
-Current note:
+Bootstrap caveats:
 
 - the language/runtime behavior is aligned across both execution modes, while the interpreter still keeps a bootstrap reference-managed implementation internally
-- the remaining raw-memory and buffer work now overlaps with the active Phase 4 systems/tooling track
+- `Buffer.DangerousData()` still bridges through a checked bootstrap path rather than a fully native unmanaged backing store
+- non-zero integer-to-pointer casts remain intentionally rejected in the bootstrap runtime
+- unmanaged-struct pointer loads/stores still need broader cleanup beyond primitive, enum, and `bool` element types
 
 Exit criteria:
 
@@ -293,7 +297,7 @@ Exit criteria:
 
 ## Phase 4: Tooling and Developer Workflow
 
-Status: in progress
+Status: complete at local-first bootstrap scope
 
 Goals:
 
@@ -311,6 +315,11 @@ Checklist:
 - [x] Add debug metadata/source mapping support
 - [x] Make project creation and dependency management coherent for new users
 - [x] Add a showcase workspace that proves the end-to-end workflow
+- [x] Expand static analysis beyond the first bootstrap lint set
+- [x] Add local package registry publish/search/install workflow
+- [x] Add lightweight semantic language-server support
+- [x] Add SDK demo workspace proving package and tooling flow
+- [x] Keep interpreter and compiled low-level runtime behavior aligned at the visible language/runtime level
 
 Main work:
 
@@ -325,18 +334,21 @@ Main work:
 
 Delivered slice:
 
-- `hy new`, `hy build`, `hy run`, `hy test`, `hy fmt`, `hy check`, `hy package pack`, and `hy package add`
+- `hy new`, `hy build`, `hy run`, `hy test`, `hy fmt`, `hy check`, and `hy package`
 - v2 `.hyproj` manifests with workspaces, package metadata, and local path dependencies
 - backward-compatible loading of older v1 manifests
 - explicit `type = "test"` projects and workspace test discovery
 - `.hylang/cache/` build caching
 - simple `.hymap.json` files from `hy build --debug`
 - JSON diagnostics from `hy check --json`
-- bootstrap lint warnings for unused imports/locals/parameters, unreachable statements, local shadowing, manifest metadata, and obvious `Buffer` use-after-free
+- bootstrap lint warnings for unused imports/locals/parameters/private members, unreachable statements, local shadowing, unsafe-block issues, dependency/package metadata, and obvious `Buffer` use-after-free
 - bootstrap `System.Testing.Assert`
 - byte-oriented file helpers, bootstrap `System.Runtime.Buffer`, and bootstrap `BinaryPrimitives` through 64-bit helpers
 - `samples/hexlab` as the current workflow showcase
-- in-repo VS Code assets for highlighting, snippets, tasks, launch templates, and format-on-save settings
+- filesystem-backed local registry commands for init, publish, search, and install
+- `hy lsp` with diagnostics, document symbols, basic hover, and formatting over stdio
+- `samples/sdk_demo` as the Phase 4 tooling/package proof workspace
+- in-repo VS Code assets for highlighting, snippets, tasks, launch templates, language-server integration, and format-on-save settings
 
 Desired tools:
 
@@ -347,15 +359,15 @@ Desired tools:
 - [x] `hy fmt`
 - [x] `hy package`
 
-Still open inside Phase 4:
-
-- deeper static analysis beyond the current bootstrap lint set
-- stronger runtime/source mapping for compiled failures
-- the raw-memory and executable unsafe systems surface originally planned alongside this phase
-
 Exit criteria:
 
 - a new developer can create, build, test, and publish a Hylang project with a coherent workflow
+
+Deferred beyond Phase 4:
+
+- hosted registry service, authentication, signing, and semver range solving
+- full semantic LSP features such as completion, go-to-definition, references, rename, semantic tokens, and workspace indexing
+- debugger integration beyond source-mapped runtime failures
 
 ## Phase 5: Self-Hosting Preparation
 

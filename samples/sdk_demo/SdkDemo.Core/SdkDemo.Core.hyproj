@@ -1,0 +1,12 @@
+format = 2
+name = "SdkDemo.Core"
+version = "0.1.0"
+type = "lib"
+sources = ["Report.hy"]
+project_references = []
+
+[package]
+id = "SdkDemo.Core"
+description = "Small report generation API for the Phase 4 SDK demo"
+authors = ["Aurora Softwares"]
+license = "MIT"

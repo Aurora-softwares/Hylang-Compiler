@@ -4,9 +4,14 @@
   "description": "Lightweight VS Code support for the Hylang bootstrap compiler.",
   "version": "0.1.0",
   "publisher": "aurora-softwares",
+  "main": "./extension.js",
   "engines": {
     "vscode": "^1.85.0"
   },
+  "activationEvents": [
+    "onLanguage:hylang",
+    "onLanguage:hylang-manifest"
+  ],
   "categories": [
     "Programming Languages",
     "Formatters",
@@ -52,6 +57,16 @@
         "language": "hylang",
         "path": "./snippets/hylang.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Hylang",
+      "properties": {
+        "hylang.hyPath": {
+          "type": "string",
+          "default": "hy",
+          "description": "Path to the hy executable used for the language server and tasks."
+        }
+      }
+    }
   }
 }

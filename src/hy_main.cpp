@@ -1,6 +1,8 @@
 #include "hylang/hylang.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -9,6 +11,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -19,12 +22,24 @@ using std::string;
 using std::vector;
 
 struct CliManifest {
+    struct Dependency {
+        string path;
+        string id;
+        string version;
+    };
+
     int format = 1;
     string name;
     string version = "0.1.0";
     string type = "exe";
+    string package_id;
+    string description;
+    string authors = "[]";
+    string license;
     vector<fs::path> sources;
+    vector<fs::path> project_references;
     vector<fs::path> members;
+    std::map<string, Dependency> dependencies;
 };
 
 string trim(string value) {
@@ -74,6 +89,10 @@ std::optional<string> parse_quoted_string(const string& raw) {
     return std::nullopt;
 }
 
+string quote_string(const string& value) {
+    return "\"" + value + "\"";
+}
+
 vector<fs::path> parse_path_array(const string& raw) {
     vector<fs::path> result;
     if (raw.size() < 2 || raw.front() != '[' || raw.back() != ']') {
@@ -111,6 +130,57 @@ vector<fs::path> parse_path_array(const string& raw) {
     return result;
 }
 
+std::map<string, string> parse_inline_table(const string& raw) {
+    std::map<string, string> result;
+    if (raw.size() < 2 || raw.front() != '{' || raw.back() != '}') {
+        return result;
+    }
+    string inner = trim(raw.substr(1, raw.size() - 2));
+    std::size_t cursor = 0;
+    while (cursor < inner.size()) {
+        while (cursor < inner.size() && std::isspace(static_cast<unsigned char>(inner[cursor]))) {
+            ++cursor;
+        }
+        const std::size_t key_start = cursor;
+        while (cursor < inner.size() && inner[cursor] != '=' && inner[cursor] != ',') {
+            ++cursor;
+        }
+        if (cursor >= inner.size() || inner[cursor] != '=') {
+            break;
+        }
+        const string key = trim(inner.substr(key_start, cursor - key_start));
+        ++cursor;
+        while (cursor < inner.size() && std::isspace(static_cast<unsigned char>(inner[cursor]))) {
+            ++cursor;
+        }
+        string value;
+        if (cursor < inner.size() && inner[cursor] == '"') {
+            const std::size_t value_start = cursor++;
+            while (cursor < inner.size() && inner[cursor] != '"') {
+                ++cursor;
+            }
+            if (cursor < inner.size()) {
+                ++cursor;
+            }
+            value = inner.substr(value_start, cursor - value_start);
+        } else {
+            const std::size_t value_start = cursor;
+            while (cursor < inner.size() && inner[cursor] != ',') {
+                ++cursor;
+            }
+            value = trim(inner.substr(value_start, cursor - value_start));
+        }
+        result[key] = value;
+        while (cursor < inner.size() && inner[cursor] != ',') {
+            ++cursor;
+        }
+        if (cursor < inner.size() && inner[cursor] == ',') {
+            ++cursor;
+        }
+    }
+    return result;
+}
+
 std::optional<CliManifest> load_cli_manifest(const fs::path& path) {
     string text;
     if (!read_text_file(path, text)) {
@@ -136,32 +206,69 @@ std::optional<CliManifest> load_cli_manifest(const fs::path& path) {
         }
         const string key = trim(line.substr(0, equals));
         const string value = trim(line.substr(equals + 1));
-        if (!current_section.empty()) {
-            continue;
-        }
-        if (key == "format") {
+        if (current_section.empty() && key == "format") {
             manifest.format = value == "2" ? 2 : 1;
-        } else if (key == "name") {
+        } else if (current_section.empty() && key == "name") {
             if (auto parsed = parse_quoted_string(value)) {
                 manifest.name = *parsed;
             }
-        } else if (key == "version") {
+        } else if (current_section.empty() && key == "version") {
             if (auto parsed = parse_quoted_string(value)) {
                 manifest.version = *parsed;
             }
-        } else if (key == "type") {
+        } else if (current_section.empty() && key == "type") {
             if (auto parsed = parse_quoted_string(value)) {
                 manifest.type = *parsed;
             }
-        } else if (key == "sources") {
+        } else if (current_section.empty() && key == "sources") {
             manifest.sources = parse_path_array(value);
-        } else if (key == "members") {
+        } else if (current_section.empty() && (key == "project_references" || key == "references")) {
+            manifest.project_references = parse_path_array(value);
+        } else if (current_section.empty() && key == "members") {
             manifest.members = parse_path_array(value);
+        } else if (current_section == "package") {
+            if (key == "id") {
+                if (auto parsed = parse_quoted_string(value)) {
+                    manifest.package_id = *parsed;
+                }
+            } else if (key == "description") {
+                if (auto parsed = parse_quoted_string(value)) {
+                    manifest.description = *parsed;
+                }
+            } else if (key == "authors") {
+                manifest.authors = value;
+            } else if (key == "license") {
+                if (auto parsed = parse_quoted_string(value)) {
+                    manifest.license = *parsed;
+                }
+            }
+        } else if (current_section == "dependencies") {
+            CliManifest::Dependency dependency;
+            const auto entries = parse_inline_table(value);
+            if (const auto found = entries.find("path"); found != entries.end()) {
+                if (auto parsed = parse_quoted_string(found->second)) {
+                    dependency.path = *parsed;
+                }
+            }
+            if (const auto found = entries.find("id"); found != entries.end()) {
+                if (auto parsed = parse_quoted_string(found->second)) {
+                    dependency.id = *parsed;
+                }
+            }
+            if (const auto found = entries.find("version"); found != entries.end()) {
+                if (auto parsed = parse_quoted_string(found->second)) {
+                    dependency.version = *parsed;
+                }
+            }
+            manifest.dependencies[key] = dependency;
         }
     }
 
     if (manifest.name.empty()) {
         manifest.name = path.stem().string();
+    }
+    if (manifest.package_id.empty()) {
+        manifest.package_id = manifest.name;
     }
     return manifest;
 }
@@ -216,6 +323,153 @@ string escape_json(const string& value) {
         }
     }
     return out.str();
+}
+
+std::optional<string> json_string_field(const string& object, const string& key) {
+    const string needle = "\"" + key + "\"";
+    const auto key_pos = object.find(needle);
+    if (key_pos == string::npos) {
+        return std::nullopt;
+    }
+    const auto colon = object.find(':', key_pos + needle.size());
+    if (colon == string::npos) {
+        return std::nullopt;
+    }
+    auto quote = object.find('"', colon + 1);
+    if (quote == string::npos) {
+        return std::nullopt;
+    }
+    ++quote;
+    string value;
+    while (quote < object.size()) {
+        const char ch = object[quote++];
+        if (ch == '"') {
+            return value;
+        }
+        if (ch == '\\' && quote < object.size()) {
+            value.push_back(object[quote++]);
+        } else {
+            value.push_back(ch);
+        }
+    }
+    return std::nullopt;
+}
+
+struct RegistryPackage {
+    string id;
+    string version;
+    string name;
+    string description;
+    string authors;
+    string license;
+    string package_path;
+    string project_path;
+};
+
+vector<RegistryPackage> read_registry_index(const fs::path& registry, string* error = nullptr) {
+    vector<RegistryPackage> packages;
+    string text;
+    const fs::path index_path = registry / "index.json";
+    if (!read_text_file(index_path, text)) {
+        if (error != nullptr) {
+            *error = "could not read registry index " + index_path.string();
+        }
+        return packages;
+    }
+    std::size_t cursor = 0;
+    while ((cursor = text.find('{', cursor)) != string::npos) {
+        const auto end = text.find('}', cursor);
+        if (end == string::npos) {
+            if (error != nullptr) {
+                *error = "corrupt registry index";
+            }
+            return {};
+        }
+        const string object = text.substr(cursor, end - cursor + 1);
+        RegistryPackage package;
+        package.id = json_string_field(object, "id").value_or("");
+        package.version = json_string_field(object, "version").value_or("");
+        package.name = json_string_field(object, "name").value_or("");
+        package.description = json_string_field(object, "description").value_or("");
+        package.authors = json_string_field(object, "authors").value_or("[]");
+        package.license = json_string_field(object, "license").value_or("");
+        package.package_path = json_string_field(object, "package_path").value_or("");
+        package.project_path = json_string_field(object, "project_path").value_or("");
+        if (!package.id.empty()) {
+            packages.push_back(package);
+        }
+        cursor = end + 1;
+    }
+    return packages;
+}
+
+bool write_registry_index(const fs::path& registry, const vector<RegistryPackage>& packages) {
+    std::ostringstream out;
+    out << "{\n  \"packages\": [\n";
+    for (std::size_t index = 0; index < packages.size(); ++index) {
+        const auto& package = packages[index];
+        out << "    {"
+            << "\"id\":\"" << escape_json(package.id) << "\","
+            << "\"version\":\"" << escape_json(package.version) << "\","
+            << "\"name\":\"" << escape_json(package.name) << "\","
+            << "\"description\":\"" << escape_json(package.description) << "\","
+            << "\"authors\":\"" << escape_json(package.authors) << "\","
+            << "\"license\":\"" << escape_json(package.license) << "\","
+            << "\"package_path\":\"" << escape_json(package.package_path) << "\","
+            << "\"project_path\":\"" << escape_json(package.project_path) << "\""
+            << "}";
+        if (index + 1 < packages.size()) {
+            out << ",";
+        }
+        out << "\n";
+    }
+    out << "  ]\n}\n";
+    return write_text_file(registry / "index.json", out.str());
+}
+
+bool valid_package_id(const string& id) {
+    if (id.empty()) {
+        return false;
+    }
+    for (const unsigned char ch : id) {
+        if (!(std::isalnum(ch) || ch == '.' || ch == '_' || ch == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int compare_versions(const string& left, const string& right) {
+    std::istringstream left_stream(left);
+    std::istringstream right_stream(right);
+    string left_part;
+    string right_part;
+    while (true) {
+        const bool has_left = static_cast<bool>(std::getline(left_stream, left_part, '.'));
+        const bool has_right = static_cast<bool>(std::getline(right_stream, right_part, '.'));
+        if (!has_left && !has_right) {
+            return 0;
+        }
+        const int left_value = has_left ? std::atoi(left_part.c_str()) : 0;
+        const int right_value = has_right ? std::atoi(right_part.c_str()) : 0;
+        if (left_value != right_value) {
+            return left_value < right_value ? -1 : 1;
+        }
+    }
+}
+
+vector<fs::path> package_files_for_project(const fs::path& project) {
+    vector<fs::path> files;
+    files.push_back(project);
+    for (const auto& entry : fs::directory_iterator(project.parent_path())) {
+        if (entry.is_regular_file() &&
+            (entry.path().extension() == ".hy" || entry.path().extension() == ".hyproj")) {
+            files.push_back(entry.path());
+        }
+    }
+    std::sort(files.begin(), files.end());
+    files.erase(std::unique(files.begin(), files.end()), files.end());
+    return files;
 }
 
 void print_json_diagnostics(const vector<hylang::Diagnostic>& diagnostics) {
@@ -673,13 +927,21 @@ int handle_fmt(int argc, char** argv) {
 }
 
 int handle_package(int argc, char** argv) {
-    if (argc < 4) {
+    if (argc < 3) {
         std::cerr << "usage: hy package pack <target> [-o output]\n";
         std::cerr << "   or: hy package add <target.hyproj> <path>\n";
+        std::cerr << "   or: hy package init-registry <path>\n";
+        std::cerr << "   or: hy package publish <project.hyproj> --registry <path>\n";
+        std::cerr << "   or: hy package search <query> --registry <path>\n";
+        std::cerr << "   or: hy package install <target.hyproj> <package-id> [--version <version>] --registry <path>\n";
         return 1;
     }
     const string command = argv[2];
     if (command == "pack") {
+        if (argc < 4) {
+            std::cerr << "usage: hy package pack <target> [-o output]\n";
+            return 1;
+        }
         fs::path target = argv[3];
         fs::path output;
         for (int index = 4; index < argc; ++index) {
@@ -701,20 +963,7 @@ int handle_package(int argc, char** argv) {
             }
         }
 
-        vector<fs::path> files;
-        if (target.extension() == ".hyproj") {
-            files.push_back(target);
-            for (const auto& entry : fs::directory_iterator(target.parent_path())) {
-                if (entry.is_regular_file() &&
-                    (entry.path().extension() == ".hy" || entry.path().extension() == ".hyproj")) {
-                    files.push_back(entry.path());
-                }
-            }
-        } else {
-            files.push_back(target);
-        }
-        std::sort(files.begin(), files.end());
-        files.erase(std::unique(files.begin(), files.end()), files.end());
+        vector<fs::path> files = target.extension() == ".hyproj" ? package_files_for_project(target) : vector<fs::path>{target};
 
         std::ostringstream archive;
         archive << "HYLANG_PACKAGE_V1\n";
@@ -732,6 +981,215 @@ int handle_package(int argc, char** argv) {
             return 1;
         }
         std::cout << output.string() << "\n";
+        return 0;
+    }
+
+    if (command == "init-registry") {
+        if (argc < 4) {
+            std::cerr << "usage: hy package init-registry <path>\n";
+            return 1;
+        }
+        const fs::path registry = argv[3];
+        fs::create_directories(registry / "packages");
+        if (!fs::exists(registry / "index.json") && !write_registry_index(registry, {})) {
+            std::cerr << "could not write registry index\n";
+            return 1;
+        }
+        std::cout << (registry / "index.json").string() << "\n";
+        return 0;
+    }
+
+    if (command == "publish") {
+        if (argc < 6) {
+            std::cerr << "usage: hy package publish <project.hyproj> --registry <path>\n";
+            return 1;
+        }
+        const fs::path project = argv[3];
+        fs::path registry;
+        for (int index = 4; index < argc; ++index) {
+            const string argument = argv[index];
+            if (argument == "--registry" && index + 1 < argc) {
+                registry = argv[++index];
+            } else {
+                std::cerr << "unknown argument: " << argument << "\n";
+                return 1;
+            }
+        }
+        if (registry.empty() || !fs::exists(registry / "index.json")) {
+            std::cerr << "missing registry index; run hy package init-registry first\n";
+            return 1;
+        }
+        const auto manifest = load_cli_manifest(project);
+        if (!manifest.has_value()) {
+            std::cerr << "could not read " << project << "\n";
+            return 1;
+        }
+        if (!valid_package_id(manifest->package_id)) {
+            std::cerr << "invalid package id: " << manifest->package_id << "\n";
+            return 1;
+        }
+        if (manifest->description.empty() || manifest->license.empty() || manifest->authors == "[]") {
+            std::cerr << "package metadata is incomplete\n";
+            return 1;
+        }
+        string index_error;
+        auto packages = read_registry_index(registry, &index_error);
+        if (!index_error.empty()) {
+            std::cerr << index_error << "\n";
+            return 1;
+        }
+        for (const auto& package : packages) {
+            if (package.id == manifest->package_id && package.version == manifest->version) {
+                std::cerr << "package already exists: " << package.id << " " << package.version << "\n";
+                return 1;
+            }
+        }
+        const fs::path package_dir = registry / "packages" / manifest->package_id / manifest->version;
+        const fs::path source_dir = package_dir / "src";
+        fs::create_directories(source_dir);
+        for (const auto& file : package_files_for_project(project)) {
+            fs::copy_file(file, source_dir / file.filename(), fs::copy_options::overwrite_existing);
+        }
+        const fs::path package_path = package_dir / (manifest->package_id + "-" + manifest->version + ".hypkg");
+        vector<fs::path> files = package_files_for_project(project);
+        std::ostringstream archive;
+        archive << "HYLANG_PACKAGE_V1\n";
+        for (const auto& file : files) {
+            string contents;
+            if (!read_text_file(file, contents)) {
+                std::cerr << "could not read " << file << "\n";
+                return 1;
+            }
+            archive << "FILE " << file.filename().string() << " " << contents.size() << "\n";
+            archive << contents << "\n";
+        }
+        if (!write_text_file(package_path, archive.str())) {
+            std::cerr << "could not write package\n";
+            return 1;
+        }
+        RegistryPackage package;
+        package.id = manifest->package_id;
+        package.version = manifest->version;
+        package.name = manifest->name;
+        package.description = manifest->description;
+        package.authors = manifest->authors;
+        package.license = manifest->license;
+        package.package_path = fs::relative(package_path, registry).string();
+        package.project_path = fs::relative(source_dir / project.filename(), registry).string();
+        packages.push_back(package);
+        std::sort(packages.begin(), packages.end(), [](const auto& left, const auto& right) {
+            if (left.id != right.id) {
+                return left.id < right.id;
+            }
+            return compare_versions(left.version, right.version) < 0;
+        });
+        if (!write_registry_index(registry, packages)) {
+            std::cerr << "could not update registry index\n";
+            return 1;
+        }
+        std::cout << package_path.string() << "\n";
+        return 0;
+    }
+
+    if (command == "search") {
+        if (argc < 6) {
+            std::cerr << "usage: hy package search <query> --registry <path>\n";
+            return 1;
+        }
+        const string query = argv[3];
+        fs::path registry;
+        for (int index = 4; index < argc; ++index) {
+            const string argument = argv[index];
+            if (argument == "--registry" && index + 1 < argc) {
+                registry = argv[++index];
+            } else {
+                std::cerr << "unknown argument: " << argument << "\n";
+                return 1;
+            }
+        }
+        string index_error;
+        const auto packages = read_registry_index(registry, &index_error);
+        if (!index_error.empty()) {
+            std::cerr << index_error << "\n";
+            return 1;
+        }
+        for (const auto& package : packages) {
+            if (package.id.find(query) != string::npos ||
+                package.name.find(query) != string::npos ||
+                package.description.find(query) != string::npos) {
+                std::cout << package.id << " " << package.version << " " << package.description << "\n";
+            }
+        }
+        return 0;
+    }
+
+    if (command == "install") {
+        if (argc < 7) {
+            std::cerr << "usage: hy package install <target.hyproj> <package-id> [--version <version>] --registry <path>\n";
+            return 1;
+        }
+        const fs::path target = argv[3];
+        const string package_id = argv[4];
+        string requested_version;
+        fs::path registry;
+        for (int index = 5; index < argc; ++index) {
+            const string argument = argv[index];
+            if (argument == "--version" && index + 1 < argc) {
+                requested_version = argv[++index];
+            } else if (argument == "--registry" && index + 1 < argc) {
+                registry = argv[++index];
+            } else {
+                std::cerr << "unknown argument: " << argument << "\n";
+                return 1;
+            }
+        }
+        string index_error;
+        const auto packages = read_registry_index(registry, &index_error);
+        if (!index_error.empty()) {
+            std::cerr << index_error << "\n";
+            return 1;
+        }
+        std::optional<RegistryPackage> selected;
+        for (const auto& package : packages) {
+            if (package.id != package_id) {
+                continue;
+            }
+            if (!requested_version.empty() && package.version != requested_version) {
+                continue;
+            }
+            if (!selected.has_value() || compare_versions(selected->version, package.version) < 0) {
+                selected = package;
+            }
+        }
+        if (!selected.has_value()) {
+            std::cerr << "package not found: " << package_id << "\n";
+            return 1;
+        }
+        if (!fs::exists(registry / selected->project_path)) {
+            std::cerr << "package project missing from registry: " << selected->project_path << "\n";
+            return 1;
+        }
+        string contents;
+        if (!read_text_file(target, contents)) {
+            std::cerr << "could not read " << target << "\n";
+            return 1;
+        }
+        if (contents.find("format = 2") == string::npos) {
+            std::cerr << "hy package install only supports v2 manifests\n";
+            return 1;
+        }
+        if (contents.find("[dependencies]") == string::npos) {
+            contents += "\n[dependencies]\n";
+        }
+        const string relative_project = fs::relative(registry / selected->project_path, target.parent_path()).string();
+        contents += selected->id + " = { id = \"" + selected->id + "\", version = \"" + selected->version +
+                    "\", path = \"" + relative_project + "\" }\n";
+        contents = format_hyproj_v2(contents);
+        if (!write_text_file(target, contents)) {
+            std::cerr << "could not write " << target << "\n";
+            return 1;
+        }
+        std::cout << selected->id << " " << selected->version << "\n";
         return 0;
     }
 
@@ -770,6 +1228,271 @@ int handle_package(int argc, char** argv) {
     return 1;
 }
 
+std::optional<int> json_int_field(const string& object, const string& key) {
+    const string needle = "\"" + key + "\"";
+    const auto key_pos = object.find(needle);
+    if (key_pos == string::npos) {
+        return std::nullopt;
+    }
+    const auto colon = object.find(':', key_pos + needle.size());
+    if (colon == string::npos) {
+        return std::nullopt;
+    }
+    std::size_t cursor = colon + 1;
+    while (cursor < object.size() && std::isspace(static_cast<unsigned char>(object[cursor]))) {
+        ++cursor;
+    }
+    const std::size_t start = cursor;
+    while (cursor < object.size() && std::isdigit(static_cast<unsigned char>(object[cursor]))) {
+        ++cursor;
+    }
+    if (start == cursor) {
+        return std::nullopt;
+    }
+    return std::atoi(object.substr(start, cursor - start).c_str());
+}
+
+string uri_to_path(string uri) {
+    const string prefix = "file://";
+    if (starts_with(uri, prefix)) {
+        uri = uri.substr(prefix.size());
+    }
+    return uri;
+}
+
+void write_lsp_message(const string& payload) {
+    std::cout << "Content-Length: " << payload.size() << "\r\n\r\n" << payload;
+    std::cout.flush();
+}
+
+string lsp_response(int id, const string& result) {
+    std::ostringstream out;
+    out << "{\"jsonrpc\":\"2.0\",\"id\":" << id << ",\"result\":" << result << "}";
+    return out.str();
+}
+
+string diagnostics_json_for_path(const fs::path& path) {
+    hylang::CheckOptions options;
+    options.input_path = path;
+    const auto result = hylang::check_target(options);
+    std::ostringstream out;
+    out << "[";
+    bool wrote = false;
+    for (const auto& diagnostic : result.diagnostics) {
+        if (diagnostic.file != path && !diagnostic.file.empty()) {
+            continue;
+        }
+        if (wrote) {
+            out << ",";
+        }
+        wrote = true;
+        const int line = std::max(0, diagnostic.line - 1);
+        const int column = std::max(0, diagnostic.column - 1);
+        out << "{\"range\":{\"start\":{\"line\":" << line << ",\"character\":" << column
+            << "},\"end\":{\"line\":" << line << ",\"character\":" << (column + 1)
+            << "}},\"severity\":" << (diagnostic.is_warning ? 2 : 1)
+            << ",\"source\":\"hylang\",\"message\":\"" << escape_json(diagnostic.message) << "\"}";
+    }
+    out << "]";
+    return out.str();
+}
+
+string symbol_kind_for_line(const string& trimmed) {
+    if (trimmed.find(" class ") != string::npos || starts_with(trimmed, "class ") || starts_with(trimmed, "public class ")) {
+        return "5";
+    }
+    if (trimmed.find(" struct ") != string::npos || starts_with(trimmed, "struct ") || starts_with(trimmed, "public struct ")) {
+        return "23";
+    }
+    if (trimmed.find(" interface ") != string::npos || starts_with(trimmed, "interface ") || starts_with(trimmed, "public interface ")) {
+        return "11";
+    }
+    if (trimmed.find(" enum ") != string::npos || starts_with(trimmed, "enum ") || starts_with(trimmed, "public enum ")) {
+        return "10";
+    }
+    if (trimmed.find('(') != string::npos && trimmed.find(')') != string::npos) {
+        return "6";
+    }
+    return "8";
+}
+
+string declaration_name_from_line(string trimmed) {
+    const auto paren = trimmed.find('(');
+    if (paren != string::npos) {
+        trimmed = trim(trimmed.substr(0, paren));
+    }
+    const auto brace = trimmed.find('{');
+    if (brace != string::npos) {
+        trimmed = trim(trimmed.substr(0, brace));
+    }
+    std::istringstream input(trimmed);
+    vector<string> parts;
+    string part;
+    while (input >> part) {
+        if (part == "public" || part == "private" || part == "internal" || part == "protected" ||
+            part == "static" || part == "virtual" || part == "override") {
+            continue;
+        }
+        parts.push_back(part);
+    }
+    if (parts.empty()) {
+        return "";
+    }
+    if ((parts[0] == "class" || parts[0] == "struct" || parts[0] == "interface" || parts[0] == "enum") && parts.size() > 1) {
+        return parts[1];
+    }
+    return parts.back();
+}
+
+string document_symbols_json(const string& text) {
+    std::ostringstream out;
+    out << "[";
+    std::istringstream input(text);
+    string line;
+    int line_number = 0;
+    bool wrote = false;
+    while (std::getline(input, line)) {
+        const string trimmed = trim(line);
+        const bool declaration =
+            trimmed.find("class ") != string::npos ||
+            trimmed.find("struct ") != string::npos ||
+            trimmed.find("interface ") != string::npos ||
+            trimmed.find("enum ") != string::npos ||
+            (trimmed.find('(') != string::npos && trimmed.find(')') != string::npos && trimmed.find("if ") == string::npos &&
+             trimmed.find("while ") == string::npos && trimmed.find("for ") == string::npos);
+        if (declaration) {
+            const string name = declaration_name_from_line(trimmed);
+            if (!name.empty()) {
+                if (wrote) {
+                    out << ",";
+                }
+                wrote = true;
+                out << "{\"name\":\"" << escape_json(name) << "\",\"kind\":" << symbol_kind_for_line(trimmed)
+                    << ",\"range\":{\"start\":{\"line\":" << line_number << ",\"character\":0},\"end\":{\"line\":"
+                    << line_number << ",\"character\":" << line.size()
+                    << "}},\"selectionRange\":{\"start\":{\"line\":" << line_number
+                    << ",\"character\":0},\"end\":{\"line\":" << line_number << ",\"character\":" << line.size()
+                    << "}}}";
+            }
+        }
+        ++line_number;
+    }
+    out << "]";
+    return out.str();
+}
+
+string hover_json(const string& text, int target_line) {
+    std::istringstream input(text);
+    string line;
+    int line_number = 0;
+    while (std::getline(input, line)) {
+        if (line_number == target_line) {
+            const string trimmed = trim(line);
+            const string name = declaration_name_from_line(trimmed);
+            const string value = name.empty() ? trimmed : name + ": " + trimmed;
+            return "{\"contents\":{\"kind\":\"markdown\",\"value\":\"`" + escape_json(value) + "`\"}}";
+        }
+        ++line_number;
+    }
+    return "null";
+}
+
+int handle_lsp() {
+    std::unordered_map<string, string> documents;
+    string header;
+    while (std::getline(std::cin, header)) {
+        if (!header.empty() && header.back() == '\r') {
+            header.pop_back();
+        }
+        if (!starts_with(header, "Content-Length:")) {
+            continue;
+        }
+        const int length = std::atoi(trim(header.substr(string("Content-Length:").size())).c_str());
+        std::getline(std::cin, header);
+        string payload(static_cast<std::size_t>(length), '\0');
+        std::cin.read(payload.data(), length);
+        const auto id = json_int_field(payload, "id");
+        const auto method = json_string_field(payload, "method").value_or("");
+        if (method == "initialize") {
+            if (id.has_value()) {
+                write_lsp_message(lsp_response(*id,
+                    "{\"capabilities\":{\"textDocumentSync\":1,\"documentSymbolProvider\":true,\"hoverProvider\":true,\"documentFormattingProvider\":true}}"));
+            }
+        } else if (method == "shutdown") {
+            if (id.has_value()) {
+                write_lsp_message(lsp_response(*id, "null"));
+            }
+        } else if (method == "textDocument/didOpen" || method == "textDocument/didChange") {
+            const auto uri = json_string_field(payload, "uri");
+            const auto text = json_string_field(payload, "text");
+            if (uri.has_value() && text.has_value()) {
+                documents[*uri] = *text;
+                const fs::path path = uri_to_path(*uri);
+                write_lsp_message("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"" +
+                                  escape_json(*uri) + "\",\"diagnostics\":" + diagnostics_json_for_path(path) + "}}");
+            }
+        } else if (method == "textDocument/didClose") {
+            if (const auto uri = json_string_field(payload, "uri")) {
+                documents.erase(*uri);
+                write_lsp_message("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"" +
+                                  escape_json(*uri) + "\",\"diagnostics\":[]}}");
+            }
+        } else if (method == "textDocument/documentSymbol") {
+            const auto uri = json_string_field(payload, "uri");
+            string text;
+            if (uri.has_value()) {
+                const auto found = documents.find(*uri);
+                if (found != documents.end()) {
+                    text = found->second;
+                } else {
+                    read_text_file(uri_to_path(*uri), text);
+                }
+            }
+            if (id.has_value()) {
+                write_lsp_message(lsp_response(*id, document_symbols_json(text)));
+            }
+        } else if (method == "textDocument/hover") {
+            const auto uri = json_string_field(payload, "uri");
+            const int line = json_int_field(payload, "line").value_or(0);
+            string text;
+            if (uri.has_value()) {
+                const auto found = documents.find(*uri);
+                if (found != documents.end()) {
+                    text = found->second;
+                } else {
+                    read_text_file(uri_to_path(*uri), text);
+                }
+            }
+            if (id.has_value()) {
+                write_lsp_message(lsp_response(*id, hover_json(text, line)));
+            }
+        } else if (method == "textDocument/formatting") {
+            const auto uri = json_string_field(payload, "uri");
+            string text;
+            if (uri.has_value()) {
+                const auto found = documents.find(*uri);
+                if (found != documents.end()) {
+                    text = found->second;
+                } else {
+                    read_text_file(uri_to_path(*uri), text);
+                }
+            }
+            const string formatted = format_hy_source(text);
+            const string escaped = escape_json(formatted);
+            if (id.has_value()) {
+                write_lsp_message(lsp_response(*id,
+                    "[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":999999,\"character\":0}},\"newText\":\"" +
+                        escaped + "\"}]"));
+            }
+        } else if (method == "exit") {
+            return 0;
+        } else if (id.has_value()) {
+            write_lsp_message(lsp_response(*id, "null"));
+        }
+    }
+    return 0;
+}
+
 void print_usage() {
     std::cerr << "usage:\n";
     std::cerr << "  hy new app|lib|tool|test|workspace <name>\n";
@@ -778,8 +1501,10 @@ void print_usage() {
     std::cerr << "  hy test [project.hyproj]\n";
     std::cerr << "  hy fmt <path...> [--check]\n";
     std::cerr << "  hy check <file.hy|project.hyproj> [--json]\n";
+    std::cerr << "  hy lsp\n";
     std::cerr << "  hy package pack <target> [-o output]\n";
     std::cerr << "  hy package add <target.hyproj> <path>\n";
+    std::cerr << "  hy package init-registry|publish|search|install ...\n";
 }
 
 }  // namespace
@@ -815,6 +1540,9 @@ int main(int argc, char** argv) {
     }
     if (command == "package") {
         return handle_package(argc, argv);
+    }
+    if (command == "lsp") {
+        return handle_lsp();
     }
 
     print_usage();

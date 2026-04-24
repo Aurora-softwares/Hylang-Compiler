@@ -1,0 +1,12 @@
+format = 2
+name = "SdkDemo.Tests"
+version = "0.1.0"
+type = "test"
+sources = ["Program.hy"]
+project_references = ["../SdkDemo.Core/SdkDemo.Core.hyproj"]
+
+[package]
+id = "SdkDemo.Tests"
+description = "Tests for the Phase 4 SDK demo"
+authors = ["Aurora Softwares"]
+license = "MIT"

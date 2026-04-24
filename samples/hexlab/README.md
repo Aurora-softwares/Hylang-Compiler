@@ -39,7 +39,7 @@ Current implementation notes:
 
 - `HexLab.Core` now routes dump, diff, search, and slice hot paths through the bootstrap `System.Runtime.Buffer`
 - PNG inspection now exercises the 64-bit `BinaryPrimitives` path
-- the showcase is still safe-code-only today; executable `unsafe` showcase paths are waiting on the remaining systems-surface work
+- search includes an explicit `unsafe` fast path through `Buffer.DangerousData()` to demonstrate the systems surface
 
 Command surface:
 
