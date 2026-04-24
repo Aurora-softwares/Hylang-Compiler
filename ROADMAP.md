@@ -21,10 +21,11 @@ Today the project already has:
 - `hyrun` for direct `.hy` and `.hyproj` execution
 - `hyc build` for host-native executables and static libraries through a C backend
 - a real pipeline: lexer, parser, AST, binder, type checker, and shared bound IR
-- classes, namespaces, fields, constructors, methods, access modifiers, and static members
+- classes, structs, interfaces, enums, namespaces, fields, constructors, methods, access modifiers, and static members
 - control flow including `if`, `while`, `for`, `break`, `continue`, and `return`
-- strings, arrays, `.Length`, array indexing, basic string concatenation, and console/file builtins
-- enough language surface to build small multi-file console tools
+- inheritance, `base(...)`, `base.Member`, `virtual`, `override`, generics, and `var`
+- strings, arrays, `.Length`, indexing, basic string concatenation, and console/file builtins
+- enough language surface to build compiler-flavored multi-file console tools
 
 That means Hylang is past the “toy parser” stage and is now in the bootstrap language phase.
 
@@ -42,8 +43,8 @@ Checked items reflect the current repo state as of now.
 
 - [x] Phase 0: Bootstrap Foundation is effectively complete enough to move beyond the bootstrap-only stage
 - [x] Phase 1: Language Hardening is complete
-- [ ] Phase 2: Core Language Expansion is the current active zone (Milestone 1 complete)
-- [ ] Phase 3: Runtime and Memory Model has not started in earnest
+- [x] Phase 2: Core Language Expansion is complete
+- [ ] Phase 3: Runtime and Memory Model is the current active zone
 - [ ] Phase 4: Tooling and Developer Workflow has not started in earnest
 - [ ] Phase 5: Self-Hosting Preparation has not started in earnest
 - [ ] Phase 6: Self-Hosted Compiler has not started
@@ -149,15 +150,22 @@ Exit criteria:
 
 ## Phase 2: Core Language Expansion
 
-Status: in progress, with Milestone 1 complete
+Status: complete
 
-Milestone 1 delivered:
+Milestones delivered:
 
 - basic single inheritance with `class Derived : Base`
 - inherited member lookup for fields and methods
 - subclass `protected` access
 - derived-to-base assignability across locals, fields, parameters, returns, equality, and overload resolution
-- implicit parameterless base-constructor chaining across interpreter and compiled output
+- implicit and explicit base-constructor chaining across interpreter and compiled output
+- `base.Member`, `virtual`, and `override`
+- interfaces and interface inheritance
+- namespace-scope structs with bootstrap by-value semantics
+- generic classes, interfaces, and methods
+- `var` local inference
+- language-spec notes for the implemented Phase 2 rules
+- `mini_frontend_model` as the compiler-flavored proof project
 
 Goals:
 
@@ -171,15 +179,15 @@ Checklist:
 - [x] Add derived-to-base assignability
 - [x] Make `protected` work across subclasses
 - [x] Add implicit parameterless base-constructor chaining
-- [ ] Add `base(...)` constructor chaining and `base.Member`
-- [ ] Add virtual/override behavior
-- [ ] Add interfaces
-- [ ] Decide and implement value-type or struct design
-- [ ] Add generics
-- [ ] Improve overload resolution further
-- [ ] Improve namespace and import resolution behavior
-- [ ] Add any minimal type inference needed for ergonomic compiler/library code
-- [ ] Capture the implemented rules in language-spec notes
+- [x] Add `base(...)` constructor chaining and `base.Member`
+- [x] Add virtual/override behavior
+- [x] Add interfaces
+- [x] Decide and implement value-type or struct design
+- [x] Add generics
+- [x] Improve overload resolution further
+- [x] Improve namespace and import resolution behavior
+- [x] Add any minimal type inference needed for ergonomic compiler/library code
+- [x] Capture the implemented rules in language-spec notes
 
 Main work:
 
@@ -197,10 +205,24 @@ Supporting work:
 - improve symbol tables and type representation
 - formalize language spec notes for each feature as it lands
 
+Delivered features:
+
+- `base(...)` constructor initializers and `base.Member` binding
+- non-static virtual dispatch with required `override`
+- namespace-scope interfaces with interface inheritance and interface dispatch
+- namespace-scope structs with zero-initialization, copy semantics, and boxing to interfaces
+- invariant generic classes, interfaces, and methods
+- `var` local inference for ergonomic compiler-style code
+- name resolution by current namespace, imported namespaces, then global namespace, with ambiguity diagnostics
+- arity-aware generic type lookup and specialization
+- `docs/spec/phase2.md` capturing the implemented rules and deliberate exclusions
+- `samples/mini_frontend_model` proving the language on a small compiler-flavored model
+
 Exit criteria:
 
 - the language can model compiler data structures cleanly
 - reusable library code no longer feels awkward or artificially limited
+- the proof project runs identically in interpreter and compiled modes
 
 ## Phase 3: Runtime and Memory Model
 

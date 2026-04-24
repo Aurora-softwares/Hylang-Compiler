@@ -362,6 +362,39 @@ add_test(
 set_tests_properties(hyrun_inheritance_ctor_order PROPERTIES PASS_REGULAR_EXPRESSION "123")
 
 add_test(
+    NAME hyrun_base_override
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/base_override.hy
+)
+set_tests_properties(hyrun_base_override PROPERTIES PASS_REGULAR_EXPRESSION "6:5")
+
+add_test(
+    NAME hyrun_interface_struct
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/interface_struct.hy
+)
+set_tests_properties(hyrun_interface_struct PROPERTIES PASS_REGULAR_EXPRESSION "7")
+
+add_test(
+    NAME hyrun_interface_inheritance
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/interface_inheritance.hy
+)
+set_tests_properties(hyrun_interface_inheritance PROPERTIES PASS_REGULAR_EXPRESSION "4")
+
+add_test(
+    NAME hyrun_generic_features
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/generic_features.hy
+)
+set_tests_properties(hyrun_generic_features PROPERTIES PASS_REGULAR_EXPRESSION "ok")
+
+add_test(
+    NAME hyrun_mini_frontend_model
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/samples/mini_frontend_model/MiniFrontendModel.hyproj
+)
+set_tests_properties(
+    hyrun_mini_frontend_model
+    PROPERTIES PASS_REGULAR_EXPRESSION "Root=BinaryExpression[\r\n]+Span=0:5[\r\n]+Visit=1\\+2[\r\n]+Box=BinaryExpression[\r\n]+SpanView=0:5"
+)
+
+add_test(
     NAME hyrun_token_dump_sample
     COMMAND hyrun
         ${CMAKE_CURRENT_SOURCE_DIR}/samples/token_dump/TokenDump.hyproj
@@ -442,6 +475,56 @@ add_test(
 )
 
 add_test(
+    NAME hyc_build_and_run_base_override
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/base_override.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/base_override
+        -DEXPECTED_TEXT=6:5
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_interface_struct
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/interface_struct.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/interface_struct
+        -DEXPECTED_TEXT=7
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_interface_inheritance
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/interface_inheritance.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/interface_inheritance
+        -DEXPECTED_TEXT=4
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_generic_features
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/generic_features.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/generic_features
+        -DEXPECTED_TEXT=ok
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_mini_frontend_model
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DPROJECT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/mini_frontend_model/MiniFrontendModel.hyproj
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/mini_frontend_model
+        -DEXPECTED_TEXT=SpanView=0:5
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildProjectAndRunWithArgs.cmake
+)
+
+add_test(
     NAME hyrun_symbol_model_project
     COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/projects/symbol_model/SymbolModel.hyproj
 )
@@ -516,6 +599,42 @@ add_hyrun_negative_test(
     hyrun_string_index_runtime_fails
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/string_index_runtime.hy
     "String index out of range"
+)
+
+add_hyrun_negative_test(
+    hyrun_override_non_virtual_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/override_non_virtual.hy
+    "cannot override non-virtual"
+)
+
+add_hyrun_negative_test(
+    hyrun_base_in_static_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/base_in_static.hy
+    "'base' cannot be used in a static context"
+)
+
+add_hyrun_negative_test(
+    hyrun_interface_missing_impl_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/interface_missing_impl.hy
+    "does not implement interface member"
+)
+
+add_hyrun_negative_test(
+    hyrun_var_without_initializer_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/var_without_initializer.hy
+    "require an initializer"
+)
+
+add_hyrun_negative_test(
+    hyrun_generic_arity_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/generic_arity.hy
+    "expects 1 type argument"
+)
+
+add_hyrun_negative_test(
+    hyrun_ambiguous_type_resolution_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/ambiguous_type_resolution.hy
+    "Ambiguous type reference"
 )
 
 add_hyrun_negative_test(

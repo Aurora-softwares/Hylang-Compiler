@@ -3,7 +3,7 @@
 [![Language](https://img.shields.io/badge/language-C%2B%2B20-blue?style=flat-square)](https://en.cppreference.com/w/cpp/20)
 [![Language](https://img.shields.io/badge/language-Hydrogen-blue?style=flat-square)](https://en.cppreference.com/w/cpp/20)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20x64-lightgrey?style=flat-square)](#build)
-[![Phase](https://img.shields.io/badge/phase-2%20%E2%80%93%20Core%20Language%20Expansion-orange?style=flat-square)](ROADMAP.md)
+[![Phase](https://img.shields.io/badge/phase-3%20%E2%80%93%20Runtime%20and%20Memory%20Model-orange?style=flat-square)](ROADMAP.md)
 [![Docs](https://img.shields.io/badge/docs-online-brightgreen?style=flat-square)](https://aurora-softwares.github.io/Hylang-Docs/)
 
 A C#-inspired systems programming language for [Australis OS](https://github.com/Aurora-Softwares) and general x64 systems.
@@ -22,15 +22,19 @@ Hylang has a full compiler pipeline — lexer, parser, AST, binder, type checker
 ## Language subset
 
 ```text
-using  namespace  class  enum
-public  private  internal  protected  static
-int  bool  string  string[]  null
+using  namespace  class  struct  interface  enum
+public  private  internal  protected  static  virtual  override
+int  bool  string  string[]  null  var
 if  else  while  for  break  continue  return
-new  this  :  +  -  *  /  %  ==  !=  <  <=  >  >=  &&  ||  !
+new  this  base  :  +  -  *  /  %  ==  !=  <  <=  >  >=  &&  ||  !
 ```
 
 - Fields, constructors, and methods — with overloading
-- Basic single inheritance with inherited member lookup and `protected` access
+- Single inheritance with inherited member lookup, `protected` access, `base(...)`, and `base.Member`
+- `virtual` / `override` dispatch for non-static instance methods
+- Namespace-scope interfaces, interface inheritance, and interface dispatch
+- Namespace-scope structs with bootstrap by-value semantics and interface boxing
+- Generic classes, interfaces, and methods, plus `var` local inference
 - Object creation, method calls, field access, and assignment
 - String concatenation across `string`, `int`, and `bool`
 - Array and string `.Length`, array indexing, string character indexing
@@ -70,6 +74,9 @@ build/hyc build tests/hello_world.hy -o build/hello_world
 build/hyc build tests/projects/app/App.hyproj -o build/demo_app
 ./build/demo_app
 
+# Run the Phase 2 proof project
+build/hyrun samples/mini_frontend_model/MiniFrontendModel.hyproj
+
 # Build a static library
 build/hyc build tests/projects/mathlib/Math.hyproj --target lib -o build/libmathlib.a
 ```
@@ -82,6 +89,6 @@ build/hyc build tests/projects/mathlib/Math.hyproj --target lib -o build/libmath
 
 ## Roadmap
 
-Hylang is developed in phases toward a self-hosted compiler and first-class support for Australis OS userland. The current active zone is **Phase 2 — Core Language Expansion**, with the inheritance-first Milestone 1 complete.
+Hylang is developed in phases toward a self-hosted compiler and first-class support for Australis OS userland. **Phase 2 — Core Language Expansion** is now complete, and the active zone is **Phase 3 — Runtime and Memory Model**.
 
 See [ROADMAP.md](ROADMAP.md) for the full plan.
