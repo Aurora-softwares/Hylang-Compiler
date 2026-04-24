@@ -528,6 +528,11 @@ struct ObjectCreationExpressionSyntax final : ExpressionSyntax {
     vector<unique_ptr<ExpressionSyntax>> arguments;
 };
 
+struct ArrayCreationExpressionSyntax final : ExpressionSyntax {
+    TypeSyntax element_type;
+    unique_ptr<ExpressionSyntax> count;
+};
+
 struct StatementSyntax {
     virtual ~StatementSyntax() = default;
     int line = 1;
@@ -1459,10 +1464,54 @@ private:
             return expression;
         }
         if (match(TokenKind::New)) {
+            const int new_line = token.line;
+            const int new_col = token.column;
+            // Parse the base type without consuming array rank brackets
+            TypeSyntax base_type;
+            base_type.line = current().line;
+            base_type.column = current().column;
+            if (check(TokenKind::Void)) {
+                base_type.name_parts.push_back(advance().text);
+            } else if (check(TokenKind::Identifier) || is_builtin_type_token(current().kind)) {
+                base_type.name_parts.push_back(advance().text);
+                while (match(TokenKind::Dot)) {
+                    const Token name_part = consume(TokenKind::Identifier, "Expected identifier after '.'");
+                    base_type.name_parts.push_back(name_part.text);
+                }
+                if (match(TokenKind::Less)) {
+                    if (!check(TokenKind::Greater)) {
+                        do {
+                            base_type.type_arguments.push_back(parse_type_syntax());
+                        } while (match(TokenKind::Comma));
+                    }
+                    consume(TokenKind::Greater, "Expected '>' after type arguments");
+                }
+            } else {
+                diagnostics_.add(file_, current().line, current().column, "Expected type name after 'new'");
+                base_type.name_parts.push_back("error");
+            }
+            // Detect array creation: new T[count] (bracket not immediately followed by ']')
+            if (check(TokenKind::OpenBracket) && index_ + 1 < tokens_.size() &&
+                tokens_[index_ + 1].kind != TokenKind::CloseBracket) {
+                advance(); // consume '['
+                auto count_expr = parse_expression();
+                consume(TokenKind::CloseBracket, "Expected ']' after array size");
+                auto creation = std::make_unique<ArrayCreationExpressionSyntax>();
+                creation->line = new_line;
+                creation->column = new_col;
+                creation->element_type = std::move(base_type);
+                creation->count = std::move(count_expr);
+                return creation;
+            }
+            // Object creation: consume any array rank brackets then parse constructor args
+            while (match(TokenKind::OpenBracket)) {
+                consume(TokenKind::CloseBracket, "Expected ']' after '['");
+                ++base_type.array_rank;
+            }
             auto expression = std::make_unique<ObjectCreationExpressionSyntax>();
-            expression->line = token.line;
-            expression->column = token.column;
-            expression->type = parse_type_syntax();
+            expression->line = new_line;
+            expression->column = new_col;
+            expression->type = std::move(base_type);
             consume(TokenKind::OpenParen, "Expected '(' after type name");
             if (!check(TokenKind::CloseParen)) {
                 do {
@@ -1692,6 +1741,7 @@ enum class BoundExpressionKind {
     Binary,
     Call,
     NewObject,
+    NewArray,
 };
 
 enum class BoundStatementKind {
@@ -1785,6 +1835,11 @@ struct BoundNewExpression final : BoundExpression {
     const ConstructorSymbol* constructor = nullptr;
     vector<std::unique_ptr<BoundExpression>> arguments;
     bool zero_initialize = false;
+};
+
+struct BoundArrayCreationExpression final : BoundExpression {
+    const TypeSymbol* element_type_symbol = nullptr;
+    std::unique_ptr<BoundExpression> count;
 };
 
 struct BoundStatement {
@@ -2327,6 +2382,7 @@ private:
     void install_builtins(SemanticModel& model) {
         model.namespaces.insert("System");
         model.namespaces.insert("System.IO");
+        model.namespaces.insert("System.Collections");
 
         auto create_builtin_class = [&](const string& namespace_name, const string& class_name) -> ClassSymbol* {
             auto klass = std::make_unique<ClassSymbol>();
@@ -3861,6 +3917,9 @@ private:
             if (const auto* creation = dynamic_cast<const ObjectCreationExpressionSyntax*>(&expression)) {
                 return bind_object_creation(*creation);
             }
+            if (const auto* array_creation = dynamic_cast<const ArrayCreationExpressionSyntax*>(&expression)) {
+                return bind_array_creation(*array_creation);
+            }
 
             return bind_value_expression(expression);
         }
@@ -3930,6 +3989,22 @@ private:
         }
 
         std::unique_ptr<BoundExpression> bind_assignable_expression(const ExpressionSyntax& expression) {
+            // Allow array index as an assignable target
+            if (const auto* elem_access = dynamic_cast<const ElementAccessExpressionSyntax*>(&expression)) {
+                auto bound = bind_element_access(*elem_access);
+                if (bound->kind == BoundExpressionKind::ArrayIndex) {
+                    return bound;
+                }
+                diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                 "Expected an assignable value expression");
+                auto fallback = std::make_unique<BoundLiteralExpression>();
+                fallback->kind = BoundExpressionKind::Literal;
+                fallback->type = &program_.semantic_model.error_type;
+                fallback->line = expression.line;
+                fallback->column = expression.column;
+                fallback->value = nullptr;
+                return fallback;
+            }
             EntityResolution entity = bind_entity(expression);
             const bool assignable = entity.kind == EntityResolution::Kind::Value &&
                                     entity.value != nullptr &&
@@ -4171,6 +4246,34 @@ private:
             } else {
                 bound->arguments = std::move(arguments);
             }
+            return bound;
+        }
+
+        std::unique_ptr<BoundExpression> bind_array_creation(const ArrayCreationExpressionSyntax& syntax) {
+            const TypeSymbol* element_type = resolve_type(syntax.element_type);
+            if (element_type->kind == TypeKind::Void) {
+                diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                 "Cannot create an array of void");
+                auto fallback = std::make_unique<BoundLiteralExpression>();
+                fallback->kind = BoundExpressionKind::Literal;
+                fallback->type = &program_.semantic_model.error_type;
+                fallback->line = syntax.line;
+                fallback->column = syntax.column;
+                fallback->value = nullptr;
+                return fallback;
+            }
+            auto count_expr = bind_expression(*syntax.count);
+            if (count_expr->type != &program_.semantic_model.int_type) {
+                diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                 "Array size must be of type 'int'");
+            }
+            auto bound = std::make_unique<BoundArrayCreationExpression>();
+            bound->kind = BoundExpressionKind::NewArray;
+            bound->type = program_.semantic_model.get_array_type(element_type);
+            bound->line = syntax.line;
+            bound->column = syntax.column;
+            bound->element_type_symbol = element_type;
+            bound->count = std::move(count_expr);
             return bound;
         }
 
@@ -5221,6 +5324,20 @@ private:
             auto receiver = std::get<std::shared_ptr<RuntimeObject>>(evaluate_expression(*field.receiver, frame).data);
             return receiver->fields[field.field];
         }
+        if (expression.kind == BoundExpressionKind::ArrayIndex) {
+            const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
+            Value array_value = evaluate_expression(*access.array_expression, frame);
+            Value index_value = evaluate_expression(*access.index_expression, frame);
+            if (!std::holds_alternative<std::shared_ptr<RuntimeArray>>(array_value.data)) {
+                throw std::runtime_error("Array index assignment requires an array");
+            }
+            const auto& array = std::get<std::shared_ptr<RuntimeArray>>(array_value.data);
+            const int64_t index = std::get<int64_t>(index_value.data);
+            if (array == nullptr || index < 0 || static_cast<std::size_t>(index) >= array->elements.size()) {
+                throw std::runtime_error("Array index out of range");
+            }
+            return array->elements[static_cast<std::size_t>(index)];
+        }
         throw std::runtime_error("Expression is not assignable");
     }
 
@@ -5410,6 +5527,21 @@ private:
                 }
                 return Value{instance};
             }
+            case BoundExpressionKind::NewArray: {
+                const auto& creation = static_cast<const BoundArrayCreationExpression&>(expression);
+                Value count_value = evaluate_expression(*creation.count, frame);
+                int64_t count = std::holds_alternative<int64_t>(count_value.data)
+                                    ? std::get<int64_t>(count_value.data)
+                                    : int64_t{0};
+                if (count < 0) {
+                    throw std::runtime_error("Array size cannot be negative");
+                }
+                auto array = std::make_shared<RuntimeArray>();
+                array->element_type = creation.element_type_symbol;
+                array->elements.resize(static_cast<std::size_t>(count),
+                                       default_runtime_value(creation.element_type_symbol));
+                return Value{array};
+            }
         }
         return Value{nullptr};
     }
@@ -5429,9 +5561,9 @@ string c_type_name(const TypeSymbol* type) {
         case TypeKind::Bool:
             return "bool";
         case TypeKind::String:
-            return "const char*";
+            return "HyString*";
         case TypeKind::Array:
-            return "HyStringArray";
+            return "HyArray*";
         case TypeKind::Class:
         case TypeKind::Struct:
             return sanitize_c_name(type->class_symbol->full_name) + "*";
@@ -5585,118 +5717,297 @@ private:
     }
 
     void emit_prelude(std::ostringstream& out) {
+        out << "#include <setjmp.h>\n";
         out << "#include <stdbool.h>\n";
         out << "#include <stdint.h>\n";
         out << "#include <stdio.h>\n";
         out << "#include <stdlib.h>\n";
         out << "#include <string.h>\n\n";
+
+        // --- Type ID constants ---
+        out << "#define HY_TYPE_ID_STRING (-1)\n";
+        out << "#define HY_TYPE_ID_ARRAY  (-2)\n\n";
+
+        // --- GC object header ---
         out << "typedef struct {\n";
         out << "    int32_t type_id;\n";
+        out << "    uint32_t gc_mark;\n";
         out << "} HyObjectHeader;\n\n";
+
+        // --- Managed string ---
         out << "typedef struct {\n";
+        out << "    HyObjectHeader __header;\n";
         out << "    int64_t length;\n";
-        out << "    const char** items;\n";
-        out << "} HyStringArray;\n\n";
+        out << "    char* bytes;\n";
+        out << "} HyString;\n\n";
+
+        // --- Managed array ---
+        out << "typedef struct {\n";
+        out << "    HyObjectHeader __header;\n";
+        out << "    int64_t length;\n";
+        out << "    int32_t element_is_ref;\n";
+        out << "    void* elements;\n";
+        out << "} HyArray;\n\n";
+
+        // --- type_id helper ---
         out << "static int32_t hy_object_type_id(const void* value) {\n";
-        out << "    return value == NULL ? -1 : ((const HyObjectHeader*)value)->type_id;\n";
+        out << "    return value == NULL ? 0 : ((const HyObjectHeader*)value)->type_id;\n";
         out << "}\n\n";
-        out << "static void** hy_managed_items = NULL;\n";
-        out << "static size_t hy_managed_count = 0;\n";
-        out << "static size_t hy_managed_capacity = 0;\n\n";
-        out << "static void hy_runtime_shutdown(void) {\n";
-        out << "    for (size_t index = 0; index < hy_managed_count; ++index) {\n";
-        out << "        free(hy_managed_items[index]);\n";
+
+        // --- GC heap state ---
+        out << "static void** hy_gc_heap = NULL;\n";
+        out << "static size_t hy_gc_heap_count = 0;\n";
+        out << "static size_t hy_gc_heap_capacity = 0;\n";
+        out << "static size_t hy_gc_bytes_allocated = 0;\n";
+        out << "static size_t hy_gc_threshold = (1u << 20);\n";
+        out << "static int hy_gc_stress = 0;\n";
+        out << "static void* hy_gc_stack_base = NULL;\n";
+        out << "typedef struct HyRootFrame {\n";
+        out << "    struct HyRootFrame* prev;\n";
+        out << "    size_t count;\n";
+        out << "    void*** slots;\n";
+        out << "} HyRootFrame;\n";
+        out << "static HyRootFrame* hy_gc_roots = NULL;\n\n";
+
+        // --- Forward declarations ---
+        out << "static void hy_gc_collect(void);\n";
+        out << "static void hy_gc_safe_point(void);\n";
+        out << "static void hy_runtime_fail(const char* message);\n";
+        out << "static void hy_gc_trace_class(void* obj, int32_t type_id);\n";
+        out << "static void hy_gc_mark_statics(void);\n\n";
+
+        // --- GC allocator ---
+        out << "static void* hy_gc_alloc(size_t size) {\n";
+        out << "    void* memory = calloc(1, size);\n";
+        out << "    if (memory == NULL) {\n";
+        out << "        fprintf(stderr, \"Hylang: allocation failed\\n\");\n";
+        out << "        exit(1);\n";
         out << "    }\n";
-        out << "    free(hy_managed_items);\n";
-        out << "    hy_managed_items = NULL;\n";
-        out << "    hy_managed_count = 0;\n";
-        out << "    hy_managed_capacity = 0;\n";
-        out << "}\n\n";
-        out << "static void hy_track_allocation(void* memory) {\n";
-        out << "    static bool hy_runtime_registered = false;\n";
-        out << "    if (!hy_runtime_registered) {\n";
-        out << "        atexit(hy_runtime_shutdown);\n";
-        out << "        hy_runtime_registered = true;\n";
-        out << "    }\n";
-        out << "    if (hy_managed_count == hy_managed_capacity) {\n";
-        out << "        size_t next_capacity = hy_managed_capacity == 0 ? 16 : hy_managed_capacity * 2;\n";
-        out << "        void** next_items = (void**)realloc(hy_managed_items, next_capacity * sizeof(void*));\n";
-        out << "        if (next_items == NULL) {\n";
-        out << "            fprintf(stderr, \"Hylang allocation tracking failed\\n\");\n";
+        out << "    if (hy_gc_heap_count == hy_gc_heap_capacity) {\n";
+        out << "        size_t next_cap = hy_gc_heap_capacity == 0 ? 64 : hy_gc_heap_capacity * 2;\n";
+        out << "        void** next = (void**)realloc(hy_gc_heap, next_cap * sizeof(void*));\n";
+        out << "        if (next == NULL) {\n";
+        out << "            fprintf(stderr, \"Hylang: GC heap resize failed\\n\");\n";
         out << "            free(memory);\n";
         out << "            exit(1);\n";
         out << "        }\n";
-        out << "        hy_managed_items = next_items;\n";
-        out << "        hy_managed_capacity = next_capacity;\n";
+        out << "        hy_gc_heap = next;\n";
+        out << "        hy_gc_heap_capacity = next_cap;\n";
         out << "    }\n";
-        out << "    hy_managed_items[hy_managed_count++] = memory;\n";
-        out << "}\n\n";
-        out << "static void* hy_alloc_managed(size_t size) {\n";
-        out << "    void* memory = calloc(1, size);\n";
-        out << "    if (memory == NULL) {\n";
-        out << "        fprintf(stderr, \"Hylang allocation failed\\n\");\n";
-        out << "        exit(1);\n";
-        out << "    }\n";
-        out << "    hy_track_allocation(memory);\n";
+        out << "    hy_gc_heap[hy_gc_heap_count++] = memory;\n";
+        out << "    hy_gc_bytes_allocated += size;\n";
         out << "    return memory;\n";
         out << "}\n\n";
+
+        out << "static void hy_gc_push_roots(HyRootFrame* frame, void*** slots, size_t count) {\n";
+        out << "    frame->prev = hy_gc_roots;\n";
+        out << "    frame->count = count;\n";
+        out << "    frame->slots = slots;\n";
+        out << "    hy_gc_roots = frame;\n";
+        out << "}\n\n";
+
+        out << "static void hy_gc_pop_roots(HyRootFrame* frame) {\n";
+        out << "    if (hy_gc_roots == frame) {\n";
+        out << "        hy_gc_roots = frame->prev;\n";
+        out << "    }\n";
+        out << "}\n\n";
+
+        // --- GC mark helpers ---
+        out << "static void hy_gc_mark_object(void* obj);\n\n";
+        out << "static void hy_gc_try_mark(void* candidate) {\n";
+        out << "    if (candidate == NULL) return;\n";
+        out << "    for (size_t i = 0; i < hy_gc_heap_count; i++) {\n";
+        out << "        if (hy_gc_heap[i] == candidate) {\n";
+        out << "            hy_gc_mark_object(candidate);\n";
+        out << "            break;\n";
+        out << "        }\n";
+        out << "    }\n";
+        out << "}\n\n";
+
+        out << "static void hy_gc_mark_roots(void) {\n";
+        out << "    for (HyRootFrame* frame = hy_gc_roots; frame != NULL; frame = frame->prev) {\n";
+        out << "        for (size_t i = 0; i < frame->count; ++i) {\n";
+        out << "            if (frame->slots[i] != NULL) {\n";
+        out << "                hy_gc_try_mark(*frame->slots[i]);\n";
+        out << "            }\n";
+        out << "        }\n";
+        out << "    }\n";
+        out << "}\n\n";
+
+        // --- trace object ---
+        out << "static void hy_gc_trace_object(void* obj) {\n";
+        out << "    if (obj == NULL) return;\n";
+        out << "    HyObjectHeader* hdr = (HyObjectHeader*)obj;\n";
+        out << "    if (hdr->type_id == HY_TYPE_ID_STRING) return;\n";
+        out << "    if (hdr->type_id == HY_TYPE_ID_ARRAY) {\n";
+        out << "        HyArray* arr = (HyArray*)obj;\n";
+        out << "        if (arr->element_is_ref && arr->elements != NULL) {\n";
+        out << "            int64_t* elems = (int64_t*)arr->elements;\n";
+        out << "            for (int64_t i = 0; i < arr->length; i++) {\n";
+        out << "                void* ref = (void*)(intptr_t)elems[i];\n";
+        out << "                hy_gc_try_mark(ref);\n";
+        out << "            }\n";
+        out << "        }\n";
+        out << "        return;\n";
+        out << "    }\n";
+        out << "    hy_gc_trace_class(obj, hdr->type_id);\n";
+        out << "}\n\n";
+
+        out << "static void hy_gc_mark_object(void* obj) {\n";
+        out << "    if (obj == NULL) return;\n";
+        out << "    HyObjectHeader* hdr = (HyObjectHeader*)obj;\n";
+        out << "    if (hdr->gc_mark) return;\n";
+        out << "    hdr->gc_mark = 1;\n";
+        out << "    hy_gc_trace_object(obj);\n";
+        out << "}\n\n";
+
+        // --- GC collect ---
+        out << "static void hy_gc_collect(void) {\n";
+        out << "    for (size_t i = 0; i < hy_gc_heap_count; i++) {\n";
+        out << "        ((HyObjectHeader*)hy_gc_heap[i])->gc_mark = 0;\n";
+        out << "    }\n";
+        out << "    hy_gc_mark_statics();\n";
+        out << "    hy_gc_mark_roots();\n";
+        out << "    size_t live = 0;\n";
+        out << "    for (size_t i = 0; i < hy_gc_heap_count; i++) {\n";
+        out << "        HyObjectHeader* hdr = (HyObjectHeader*)hy_gc_heap[i];\n";
+        out << "        if (hdr->gc_mark) {\n";
+        out << "            hy_gc_heap[live++] = hy_gc_heap[i];\n";
+        out << "        } else {\n";
+        out << "            if (hdr->type_id == HY_TYPE_ID_STRING) {\n";
+        out << "                free(((HyString*)hdr)->bytes);\n";
+        out << "            } else if (hdr->type_id == HY_TYPE_ID_ARRAY) {\n";
+        out << "                free(((HyArray*)hdr)->elements);\n";
+        out << "            }\n";
+        out << "            free(hy_gc_heap[i]);\n";
+        out << "        }\n";
+        out << "    }\n";
+        out << "    hy_gc_heap_count = live;\n";
+        out << "    hy_gc_bytes_allocated = 0;\n";
+        out << "}\n\n";
+
+        out << "static void hy_gc_safe_point(void) {\n";
+        out << "    if (hy_gc_stress || hy_gc_bytes_allocated >= hy_gc_threshold) {\n";
+        out << "        hy_gc_collect();\n";
+        out << "    }\n";
+        out << "}\n\n";
+
+        // --- GC init ---
+        out << "static void hy_gc_init(void* stack_base) {\n";
+        out << "    hy_gc_stack_base = stack_base;\n";
+        out << "    const char* stress = getenv(\"HYLANG_GC_STRESS\");\n";
+        out << "    hy_gc_stress = (stress != NULL && stress[0] == '1');\n";
+        out << "    const char* threshold = getenv(\"HYLANG_GC_THRESHOLD\");\n";
+        out << "    if (threshold != NULL && threshold[0] != '\\0') {\n";
+        out << "        size_t t = (size_t)atol(threshold);\n";
+        out << "        if (t > 0) hy_gc_threshold = t;\n";
+        out << "    }\n";
+        out << "}\n\n";
+
+        // --- GC shutdown ---
+        out << "static void hy_gc_shutdown(void) {\n";
+        out << "    for (size_t i = 0; i < hy_gc_heap_count; i++) {\n";
+        out << "        HyObjectHeader* hdr = (HyObjectHeader*)hy_gc_heap[i];\n";
+        out << "        if (hdr->type_id == HY_TYPE_ID_STRING) free(((HyString*)hdr)->bytes);\n";
+        out << "        else if (hdr->type_id == HY_TYPE_ID_ARRAY) free(((HyArray*)hdr)->elements);\n";
+        out << "        free(hy_gc_heap[i]);\n";
+        out << "    }\n";
+        out << "    free(hy_gc_heap);\n";
+        out << "    hy_gc_heap = NULL;\n";
+        out << "    hy_gc_heap_count = 0;\n";
+        out << "    hy_gc_heap_capacity = 0;\n";
+        out << "}\n\n";
+
+        // --- Fail helper ---
         out << "static void hy_runtime_fail(const char* message) {\n";
         out << "    fprintf(stderr, \"%s\\n\", message);\n";
         out << "    exit(1);\n";
         out << "}\n\n";
-        out << "static const char* hy_array_index(HyStringArray array, int64_t index) {\n";
-        out << "    if (array.items == NULL || index < 0 || index >= array.length) {\n";
+
+        // --- Array element pointer helper ---
+        out << "static void* hy_array_ptr(HyArray* arr, int64_t idx) {\n";
+        out << "    if (arr == NULL || idx < 0 || idx >= arr->length) {\n";
         out << "        hy_runtime_fail(\"Array index out of range\");\n";
         out << "    }\n";
-        out << "    return array.items[index];\n";
-        out << "}\n";
-        out << "static const char* hy_alloc_string_copy(const char* value) {\n";
-        out << "    const char* safe_value = value == NULL ? \"null\" : value;\n";
-        out << "    size_t length = strlen(safe_value);\n";
-        out << "    char* result = (char*)hy_alloc_managed(length + 1);\n";
-        out << "    memcpy(result, safe_value, length + 1);\n";
-        out << "    return result;\n";
-        out << "}\n";
-        out << "static const char* hy_string_index(const char* value, int64_t index) {\n";
-        out << "    const char* safe_value = value == NULL ? \"\" : value;\n";
-        out << "    size_t length = strlen(safe_value);\n";
-        out << "    if (index < 0 || (size_t)index >= length) {\n";
-        out << "        hy_runtime_fail(\"String index out of range\");\n";
+        out << "    return (void*)((int64_t*)arr->elements + idx);\n";
+        out << "}\n\n";
+
+        // --- Array new helper ---
+        out << "static HyArray* hy_array_new(int64_t count, int32_t element_is_ref) {\n";
+        out << "    if (count < 0) hy_runtime_fail(\"Array size cannot be negative\");\n";
+        out << "    HyArray* arr = (HyArray*)hy_gc_alloc(sizeof(HyArray));\n";
+        out << "    arr->__header.type_id = HY_TYPE_ID_ARRAY;\n";
+        out << "    arr->length = count;\n";
+        out << "    arr->element_is_ref = element_is_ref;\n";
+        out << "    if (count > 0) {\n";
+        out << "        arr->elements = calloc((size_t)count, sizeof(int64_t));\n";
+        out << "        if (!arr->elements) hy_runtime_fail(\"Array element allocation failed\");\n";
         out << "    }\n";
-        out << "    char* result = (char*)hy_alloc_managed(2);\n";
-        out << "    result[0] = safe_value[index];\n";
-        out << "    result[1] = '\\0';\n";
-        out << "    return result;\n";
+        out << "    return arr;\n";
+        out << "}\n\n";
+
+        // --- Managed string helpers ---
+        out << "static HyString* hy_string_new(const char* cstr, int64_t length) {\n";
+        out << "    HyString* s = (HyString*)hy_gc_alloc(sizeof(HyString));\n";
+        out << "    s->__header.type_id = HY_TYPE_ID_STRING;\n";
+        out << "    s->length = length;\n";
+        out << "    if (length > 0) {\n";
+        out << "        s->bytes = (char*)malloc((size_t)length + 1);\n";
+        out << "        if (!s->bytes) hy_runtime_fail(\"String allocation failed\");\n";
+        out << "        memcpy(s->bytes, cstr, (size_t)length);\n";
+        out << "        s->bytes[length] = '\\0';\n";
+        out << "    } else {\n";
+        out << "        s->bytes = (char*)malloc(1);\n";
+        out << "        if (s->bytes) s->bytes[0] = '\\0';\n";
+        out << "    }\n";
+        out << "    return s;\n";
+        out << "}\n\n";
+        out << "static HyString* hy_string_literal(const char* cstr) {\n";
+        out << "    int64_t length = (int64_t)strlen(cstr);\n";
+        out << "    return hy_string_new(cstr, length);\n";
+        out << "}\n\n";
+        out << "static HyString* hy_string_from_cstr(const char* cstr) {\n";
+        out << "    if (cstr == NULL) return hy_string_new(\"\", 0);\n";
+        out << "    return hy_string_new(cstr, (int64_t)strlen(cstr));\n";
+        out << "}\n\n";
+        out << "static int64_t hy_string_length(HyString* s) {\n";
+        out << "    return s == NULL ? 0 : s->length;\n";
         out << "}\n";
-        out << "static int64_t hy_string_length(const char* value) {\n";
-        out << "    return (int64_t)strlen(value == NULL ? \"\" : value);\n";
+        out << "static HyString* hy_string_index(HyString* s, int64_t index) {\n";
+        out << "    if (s == NULL || index < 0 || index >= s->length) hy_runtime_fail(\"String index out of range\");\n";
+        out << "    return hy_string_new(s->bytes + index, 1);\n";
         out << "}\n";
-        out << "static const char* hy_string_from_int(int64_t value) {\n";
+        out << "static HyString* hy_string_from_int(int64_t value) {\n";
         out << "    char buffer[32];\n";
-        out << "    snprintf(buffer, sizeof(buffer), \"%lld\", (long long)value);\n";
-        out << "    return hy_alloc_string_copy(buffer);\n";
+        out << "    int len = snprintf(buffer, sizeof(buffer), \"%lld\", (long long)value);\n";
+        out << "    return hy_string_new(buffer, (int64_t)(len > 0 ? len : 0));\n";
         out << "}\n";
-        out << "static const char* hy_string_from_bool(bool value) {\n";
-        out << "    return hy_alloc_string_copy(value ? \"true\" : \"false\");\n";
+        out << "static HyString* hy_string_from_bool(bool value) {\n";
+        out << "    return value ? hy_string_literal(\"true\") : hy_string_literal(\"false\");\n";
         out << "}\n";
-        out << "static const char* hy_string_concat(const char* left, const char* right) {\n";
-        out << "    const char* safe_left = left == NULL ? \"null\" : left;\n";
-        out << "    const char* safe_right = right == NULL ? \"null\" : right;\n";
-        out << "    size_t left_length = strlen(safe_left);\n";
-        out << "    size_t right_length = strlen(safe_right);\n";
-        out << "    char* result = (char*)hy_alloc_managed(left_length + right_length + 1);\n";
-        out << "    memcpy(result, safe_left, left_length);\n";
-        out << "    memcpy(result + left_length, safe_right, right_length + 1);\n";
+        out << "static HyString* hy_string_concat(HyString* left, HyString* right) {\n";
+        out << "    int64_t ll = left == NULL ? 0 : left->length;\n";
+        out << "    int64_t rl = right == NULL ? 0 : right->length;\n";
+        out << "    HyString* result = (HyString*)hy_gc_alloc(sizeof(HyString));\n";
+        out << "    result->__header.type_id = HY_TYPE_ID_STRING;\n";
+        out << "    result->length = ll + rl;\n";
+        out << "    result->bytes = (char*)malloc((size_t)(ll + rl) + 1);\n";
+        out << "    if (!result->bytes) hy_runtime_fail(\"String concat allocation failed\");\n";
+        out << "    if (ll > 0) memcpy(result->bytes, left->bytes, (size_t)ll);\n";
+        out << "    if (rl > 0) memcpy(result->bytes + ll, right->bytes, (size_t)rl);\n";
+        out << "    result->bytes[ll + rl] = '\\0';\n";
         out << "    return result;\n";
         out << "}\n";
-        out << "static bool hy_string_equals(const char* left, const char* right) {\n";
-        out << "    if (left == NULL || right == NULL) {\n";
-        out << "        return left == right;\n";
-        out << "    }\n";
-        out << "    return strcmp(left, right) == 0;\n";
-        out << "}\n";
-        out << "static void hy_console_write_string(const char* value) {\n";
-        out << "    printf(\"%s\", value == NULL ? \"null\" : value);\n";
+        out << "static bool hy_string_equals(HyString* left, HyString* right) {\n";
+        out << "    if (left == NULL && right == NULL) return true;\n";
+        out << "    if (left == NULL || right == NULL) return false;\n";
+        out << "    if (left->length != right->length) return false;\n";
+        out << "    return memcmp(left->bytes, right->bytes, (size_t)left->length) == 0;\n";
+        out << "}\n\n";
+
+        // --- Console helpers ---
+        out << "static void hy_console_write_string(HyString* value) {\n";
+        out << "    if (value != NULL && value->bytes != NULL) fwrite(value->bytes, 1, (size_t)value->length, stdout);\n";
         out << "}\n";
         out << "static void hy_console_write_int(int64_t value) {\n";
         out << "    printf(\"%lld\", (long long)value);\n";
@@ -5704,8 +6015,9 @@ private:
         out << "static void hy_console_write_bool(bool value) {\n";
         out << "    printf(\"%s\", value ? \"true\" : \"false\");\n";
         out << "}\n";
-        out << "static void hy_console_writeline_string(const char* value) {\n";
-        out << "    printf(\"%s\\n\", value == NULL ? \"null\" : value);\n";
+        out << "static void hy_console_writeline_string(HyString* value) {\n";
+        out << "    if (value != NULL && value->bytes != NULL) fwrite(value->bytes, 1, (size_t)value->length, stdout);\n";
+        out << "    putchar('\\n');\n";
         out << "}\n";
         out << "static void hy_console_writeline_int(int64_t value) {\n";
         out << "    printf(\"%lld\\n\", (long long)value);\n";
@@ -5713,71 +6025,75 @@ private:
         out << "static void hy_console_writeline_bool(bool value) {\n";
         out << "    printf(\"%s\\n\", value ? \"true\" : \"false\");\n";
         out << "}\n\n";
-        out << "static bool hy_file_exists(const char* path) {\n";
-        out << "    if (path == NULL) {\n";
-        out << "        return false;\n";
-        out << "    }\n";
-        out << "    FILE* file = fopen(path, \"rb\");\n";
-        out << "    if (file == NULL) {\n";
-        out << "        return false;\n";
-        out << "    }\n";
+
+        // --- File helpers ---
+        out << "static bool hy_file_exists(HyString* path) {\n";
+        out << "    if (path == NULL || path->bytes == NULL) return false;\n";
+        out << "    FILE* file = fopen(path->bytes, \"rb\");\n";
+        out << "    if (file == NULL) return false;\n";
         out << "    fclose(file);\n";
         out << "    return true;\n";
         out << "}\n";
-        out << "static const char* hy_file_read_all_text(const char* path) {\n";
-        out << "    if (path == NULL) {\n";
-        out << "        return NULL;\n";
-        out << "    }\n";
-        out << "    FILE* file = fopen(path, \"rb\");\n";
-        out << "    if (file == NULL) {\n";
-        out << "        return NULL;\n";
-        out << "    }\n";
-        out << "    if (fseek(file, 0, SEEK_END) != 0) {\n";
-        out << "        fclose(file);\n";
-        out << "        return NULL;\n";
-        out << "    }\n";
+        out << "static HyString* hy_file_read_all_text(HyString* path) {\n";
+        out << "    if (path == NULL || path->bytes == NULL) return NULL;\n";
+        out << "    FILE* file = fopen(path->bytes, \"rb\");\n";
+        out << "    if (file == NULL) return NULL;\n";
+        out << "    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return NULL; }\n";
         out << "    long size = ftell(file);\n";
-        out << "    if (size < 0) {\n";
-        out << "        fclose(file);\n";
-        out << "        return NULL;\n";
-        out << "    }\n";
+        out << "    if (size < 0) { fclose(file); return NULL; }\n";
         out << "    rewind(file);\n";
-        out << "    char* buffer = (char*)hy_alloc_managed((size_t)size + 1);\n";
-        out << "    size_t read_count = fread(buffer, 1, (size_t)size, file);\n";
+        out << "    char* buf = (char*)malloc((size_t)size + 1);\n";
+        out << "    if (!buf) { fclose(file); hy_runtime_fail(\"File read allocation failed\"); }\n";
+        out << "    size_t read_count = fread(buf, 1, (size_t)size, file);\n";
         out << "    fclose(file);\n";
-        out << "    buffer[read_count] = '\\0';\n";
-        out << "    return buffer;\n";
+        out << "    buf[read_count] = '\\0';\n";
+        out << "    HyString* result = (HyString*)hy_gc_alloc(sizeof(HyString));\n";
+        out << "    result->__header.type_id = HY_TYPE_ID_STRING;\n";
+        out << "    result->length = (int64_t)read_count;\n";
+        out << "    result->bytes = buf;\n";
+        out << "    return result;\n";
         out << "}\n";
-        out << "static void hy_file_write_all_text(const char* path, const char* content) {\n";
-        out << "    if (path == NULL) {\n";
-        out << "        hy_runtime_fail(\"Hylang file write failed\");\n";
+        out << "static void hy_file_write_all_text(HyString* path, HyString* content) {\n";
+        out << "    if (path == NULL || path->bytes == NULL) hy_runtime_fail(\"File write: null path\");\n";
+        out << "    FILE* file = fopen(path->bytes, \"wb\");\n";
+        out << "    if (file == NULL) hy_runtime_fail(\"File write failed\");\n";
+        out << "    if (content != NULL && content->length > 0) {\n";
+        out << "        if (fwrite(content->bytes, 1, (size_t)content->length, file) != (size_t)content->length) {\n";
+        out << "            fclose(file);\n";
+        out << "            hy_runtime_fail(\"File write failed\");\n";
+        out << "        }\n";
         out << "    }\n";
-        out << "    FILE* file = fopen(path, \"wb\");\n";
-        out << "    if (file == NULL) {\n";
-        out << "        hy_runtime_fail(\"Hylang file write failed\");\n";
-        out << "    }\n";
-        out << "    const char* safe_content = content == NULL ? \"\" : content;\n";
-        out << "    size_t length = strlen(safe_content);\n";
-        out << "    if (length > 0 && fwrite(safe_content, 1, length, file) != length) {\n";
-        out << "        fclose(file);\n";
-        out << "        hy_runtime_fail(\"Hylang file write failed\");\n";
-        out << "    }\n";
-        out << "    if (fclose(file) != 0) {\n";
-        out << "        hy_runtime_fail(\"Hylang file write failed\");\n";
-        out << "    }\n";
+        out << "    if (fclose(file) != 0) hy_runtime_fail(\"File close failed\");\n";
         out << "}\n\n";
     }
 
     void emit_enum_helpers(std::ostringstream& out) {
         for (const auto& enum_holder : program_.semantic_model.enums) {
-            out << "static const char* " << enum_to_string_name(*enum_holder) << "(int64_t value) {\n";
+            out << "static HyString* " << enum_to_string_name(*enum_holder) << "(int64_t value) {\n";
             out << "    switch (value) {\n";
             for (const auto& member : enum_holder->members) {
-                out << "        case " << member->value << ": return \"" << escape_c_string(member->name) << "\";\n";
+                out << "        case " << member->value << ": return hy_string_literal(\""
+                    << escape_c_string(member->name) << "\");\n";
             }
             out << "        default: return hy_string_from_int(value);\n";
             out << "    }\n";
             out << "}\n\n";
+        }
+    }
+
+    static bool is_gc_ref_type(const TypeSymbol* type) {
+        if (type == nullptr) return false;
+        switch (type->kind) {
+            case TypeKind::String:
+            case TypeKind::Array:
+            case TypeKind::Class:
+            case TypeKind::Struct:
+            case TypeKind::Interface:
+            case TypeKind::TypeParameter:
+            case TypeKind::Null:
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -5812,6 +6128,50 @@ private:
             }
         }
         out << "\n";
+
+        // Emit per-class GC trace functions (typed parameter, only own fields)
+        for (const auto* klass : classes) {
+            const string sname = class_struct_name(*klass);
+            out << "static void hy_gc_trace_" << sname << "(" << sname << "* self) {\n";
+            out << "    if (self == NULL) return;\n";
+            // Recurse into the embedded base struct
+            if (klass->base_class != nullptr) {
+                const string base_sname = class_struct_name(*klass->base_class);
+                out << "    hy_gc_trace_" << base_sname << "(&self->" << base_field_name() << ");\n";
+            }
+            // Trace only this class's own reference-type instance fields
+            bool has_own = false;
+            for (const auto& field : klass->fields) {
+                if (field->is_static || !is_gc_ref_type(field->type)) continue;
+                has_own = true;
+                out << "    hy_gc_try_mark((void*)self->" << sanitize_c_name(field->name) << ");\n";
+            }
+            if (!has_own && klass->base_class == nullptr) {
+                out << "    (void)self;\n";
+            }
+            out << "}\n\n";
+        }
+
+        // Dispatch: call the typed trace function via cast
+        out << "static void hy_gc_trace_class(void* obj, int32_t type_id) {\n";
+        out << "    switch (type_id) {\n";
+        for (const auto* klass : classes) {
+            const string sname = class_struct_name(*klass);
+            out << "        case " << emitted_type_id(*klass) << ": hy_gc_trace_" << sname << "((" << sname << "*)obj); break;\n";
+        }
+        out << "        default: break;\n";
+        out << "    }\n";
+        out << "}\n\n";
+
+        // Mark all static reference-type fields
+        out << "static void hy_gc_mark_statics(void) {\n";
+        for (const auto* klass : classes) {
+            for (const auto& field : klass->fields) {
+                if (!field->is_static || !is_gc_ref_type(field->type)) continue;
+                out << "    hy_gc_try_mark((void*)" << static_field_name(*field) << ");\n";
+            }
+        }
+        out << "}\n\n";
     }
 
     void emit_upcast_helpers(std::ostringstream& out) {
@@ -6021,7 +6381,7 @@ private:
             if (klass->kind == TypeKind::Struct) {
                 out << class_struct_name(*klass) << "* " << zero_helper_name(*klass) << "(void) {\n";
                 out << "    " << class_struct_name(*klass) << "* self = (" << class_struct_name(*klass)
-                    << "*)hy_alloc_managed(sizeof(" << class_struct_name(*klass) << "));\n";
+                    << "*)hy_gc_alloc(sizeof(" << class_struct_name(*klass) << "));\n";
                 out << "    " << header_access_expression("self", *klass) << " = " << emitted_type_id(*klass) << ";\n";
                 out << "    return self;\n";
                 out << "}\n\n";
@@ -6030,7 +6390,7 @@ private:
             if (klass->constructors.empty()) {
                 out << class_struct_name(*klass) << "* " << new_helper_name(*klass, 0) << "(void) {\n";
                 out << "    " << class_struct_name(*klass) << "* self = (" << class_struct_name(*klass)
-                    << "*)hy_alloc_managed(sizeof(" << class_struct_name(*klass) << "));\n";
+                    << "*)hy_gc_alloc(sizeof(" << class_struct_name(*klass) << "));\n";
                 out << "    " << header_access_expression("self", *klass) << " = " << emitted_type_id(*klass) << ";\n";
                 if (klass->kind == TypeKind::Struct) {
                     out << "    return self;\n";
@@ -6050,6 +6410,7 @@ private:
                     out << ", " << c_type_name(parameter.type) << " " << sanitize_c_name(parameter.name);
                 }
                 out << ") {\n";
+                emit_function_preamble(out, klass, ctor->parameters, *bound_body.body, true, &program_.semantic_model.void_type, 1);
                 if (bound_body.base_constructor != nullptr) {
                     out << "    " << constructor_name(*bound_body.base_constructor) << "("
                         << emit_class_upcast("self", *klass, *bound_body.base_constructor->owner);
@@ -6061,7 +6422,10 @@ private:
                     out << "    " << implicit_constructor_name(*klass) << "(self);\n";
                 }
                 emit_block(out, *bound_body.body, 1);
+                emit_function_cleanup(out, 1);
                 out << "}\n\n";
+                current_function_has_roots_ = false;
+                current_function_return_type_ = nullptr;
 
                 out << class_struct_name(*klass) << "* " << new_helper_name(*klass, ctor->slot)
                     << "(";
@@ -6076,7 +6440,7 @@ private:
                 }
                 out << ") {\n";
                 out << "    " << class_struct_name(*klass) << "* self = (" << class_struct_name(*klass)
-                    << "*)hy_alloc_managed(sizeof(" << class_struct_name(*klass) << "));\n";
+                    << "*)hy_gc_alloc(sizeof(" << class_struct_name(*klass) << "));\n";
                 out << "    " << header_access_expression("self", *klass) << " = " << emitted_type_id(*klass) << ";\n";
                 out << "    " << constructor_name(*ctor) << "(self";
                 for (const auto& parameter : ctor->parameters) {
@@ -6109,11 +6473,22 @@ private:
                     out << "void";
                 }
                 out << ") {\n";
-                emit_block(out, *program_.methods.at(method.get())->body, 1);
+                const auto& body = *program_.methods.at(method.get())->body;
+                emit_function_preamble(out,
+                                       klass,
+                                       method->parameters,
+                                       body,
+                                       !method->is_static,
+                                       method->return_type,
+                                       1);
+                emit_block(out, body, 1);
+                emit_function_cleanup(out, 1);
                 if (method->return_type == &program_.semantic_model.void_type) {
                     out << "    return;\n";
                 }
                 out << "}\n\n";
+                current_function_has_roots_ = false;
+                current_function_return_type_ = nullptr;
             }
         }
     }
@@ -6123,10 +6498,15 @@ private:
             return;
         }
         out << "int main(int argc, char** argv) {\n";
+        out << "    volatile char hy__stack_probe;\n";
+        out << "    hy_gc_init((void*)&hy__stack_probe);\n";
+        out << "    atexit(hy_gc_shutdown);\n";
         if (!program_.entry_point->parameters.empty()) {
-            out << "    HyStringArray hy_args;\n";
-            out << "    hy_args.length = argc > 1 ? argc - 1 : 0;\n";
-            out << "    hy_args.items = argc > 1 ? (const char**)(argv + 1) : NULL;\n";
+            out << "    int64_t hy__argc = argc > 1 ? argc - 1 : 0;\n";
+            out << "    HyArray* hy_args = hy_array_new(hy__argc, 1);\n";
+            out << "    for (int64_t hy__i = 0; hy__i < hy__argc; hy__i++) {\n";
+            out << "        ((int64_t*)hy_args->elements)[hy__i] = (int64_t)(intptr_t)hy_string_from_cstr(argv[hy__i + 1]);\n";
+            out << "    }\n";
             if (program_.entry_point->return_type == &program_.semantic_model.int_type) {
                 out << "    return (int)" << method_name(*program_.entry_point) << "(hy_args);\n";
             } else {
@@ -6144,6 +6524,143 @@ private:
         out << "}\n";
     }
 
+    void collect_locals(const BoundStatement& statement,
+                        vector<const VariableSymbol*>& locals,
+                        std::unordered_set<const VariableSymbol*>& seen) {
+        switch (statement.kind) {
+            case BoundStatementKind::Block: {
+                const auto& block = static_cast<const BoundBlockStatement&>(statement);
+                for (const auto& child : block.statements) {
+                    collect_locals(*child, locals, seen);
+                }
+                break;
+            }
+            case BoundStatementKind::VariableDeclaration: {
+                const auto& declaration = static_cast<const BoundVariableDeclarationStatement&>(statement);
+                if (seen.insert(declaration.variable).second) {
+                    locals.push_back(declaration.variable);
+                }
+                break;
+            }
+            case BoundStatementKind::If: {
+                const auto& if_statement = static_cast<const BoundIfStatement&>(statement);
+                collect_locals(*if_statement.then_statement, locals, seen);
+                if (if_statement.else_statement != nullptr) {
+                    collect_locals(*if_statement.else_statement, locals, seen);
+                }
+                break;
+            }
+            case BoundStatementKind::While: {
+                const auto& while_statement = static_cast<const BoundWhileStatement&>(statement);
+                collect_locals(*while_statement.body, locals, seen);
+                break;
+            }
+            case BoundStatementKind::For: {
+                const auto& for_statement = static_cast<const BoundForStatement&>(statement);
+                if (for_statement.initializer != nullptr) {
+                    collect_locals(*for_statement.initializer, locals, seen);
+                }
+                collect_locals(*for_statement.body, locals, seen);
+                break;
+            }
+            case BoundStatementKind::Expression:
+            case BoundStatementKind::Break:
+            case BoundStatementKind::Continue:
+            case BoundStatementKind::Return:
+                break;
+        }
+    }
+
+    vector<const VariableSymbol*> collect_locals(const BoundBlockStatement& body) {
+        vector<const VariableSymbol*> locals;
+        std::unordered_set<const VariableSymbol*> seen;
+        collect_locals(body, locals, seen);
+        return locals;
+    }
+
+    string storage_default_expression(const TypeSymbol* type) const {
+        switch (type->kind) {
+            case TypeKind::Int:
+            case TypeKind::Enum:
+                return "0";
+            case TypeKind::Bool:
+                return "false";
+            case TypeKind::Void:
+                return "";
+            default:
+                return "NULL";
+        }
+    }
+
+    string emit_local_storage_declaration(const VariableSymbol& variable) {
+        return c_type_name(variable.type) + " " + local_name(variable) + " = " + storage_default_expression(variable.type);
+    }
+
+    void emit_function_preamble(std::ostringstream& out,
+                                const ClassSymbol* owner,
+                                const vector<ParameterSymbol>& parameters,
+                                const BoundBlockStatement& body,
+                                bool include_self,
+                                const TypeSymbol* return_type,
+                                int level) {
+        const auto locals = collect_locals(body);
+        for (const auto* local : locals) {
+            indent(out, level);
+            out << emit_local_storage_declaration(*local) << ";\n";
+        }
+        if (!locals.empty()) {
+            out << "\n";
+        }
+
+        vector<string> root_slots;
+        if (include_self && owner != nullptr) {
+            root_slots.push_back("(void**)&self");
+        }
+        for (const auto& parameter : parameters) {
+            if (is_gc_ref_type(parameter.type)) {
+                root_slots.push_back("(void**)&" + sanitize_c_name(parameter.name));
+            }
+        }
+        for (const auto* local : locals) {
+            if (is_gc_ref_type(local->type)) {
+                root_slots.push_back("(void**)&" + local_name(*local));
+            }
+        }
+
+        current_function_has_roots_ = !root_slots.empty();
+        current_function_return_type_ = return_type;
+
+        if (current_function_has_roots_) {
+            indent(out, level);
+            out << "void** hy__root_slots[] = {";
+            for (std::size_t index = 0; index < root_slots.size(); ++index) {
+                if (index == 0) {
+                    out << " ";
+                } else {
+                    out << ", ";
+                }
+                out << root_slots[index];
+            }
+            out << " };\n";
+            indent(out, level);
+            out << "HyRootFrame hy__root_frame;\n";
+            indent(out, level);
+            out << "hy_gc_push_roots(&hy__root_frame, hy__root_slots, " << root_slots.size() << ");\n";
+            if (return_type != nullptr && return_type != &program_.semantic_model.void_type) {
+                indent(out, level);
+                out << c_type_name(return_type) << " hy__return_value = " << storage_default_expression(return_type) << ";\n";
+            }
+            out << "\n";
+        }
+    }
+
+    void emit_function_cleanup(std::ostringstream& out, int level) {
+        if (current_function_has_roots_) {
+            indent(out, level);
+            out << "hy_gc_pop_roots(&hy__root_frame);\n";
+        }
+    }
+
     void indent(std::ostringstream& out, int level) {
         for (int index = 0; index < level; ++index) {
             out << "    ";
@@ -6157,14 +6674,19 @@ private:
                 break;
             case BoundStatementKind::VariableDeclaration: {
                 const auto& declaration = static_cast<const BoundVariableDeclarationStatement&>(statement);
+                const string initializer = emit_variable_initialization(declaration);
                 indent(out, level);
-                out << emit_variable_declaration(declaration) << ";\n";
+                out << initializer << ";\n";
+                indent(out, level);
+                out << "hy_gc_safe_point();\n";
                 break;
             }
             case BoundStatementKind::Expression: {
                 const auto& expression = static_cast<const BoundExpressionStatement&>(statement);
                 indent(out, level);
                 out << emit_expression(*expression.expression) << ";\n";
+                indent(out, level);
+                out << "hy_gc_safe_point();\n";
                 break;
             }
             case BoundStatementKind::If: {
@@ -6181,6 +6703,8 @@ private:
                     out << "}";
                 }
                 out << "\n";
+                indent(out, level);
+                out << "hy_gc_safe_point();\n";
                 break;
             }
             case BoundStatementKind::While: {
@@ -6188,8 +6712,12 @@ private:
                 indent(out, level);
                 out << "while (" << emit_expression(*while_statement.condition) << ") {\n";
                 emit_statement(out, *while_statement.body, level + 1);
+                indent(out, level + 1);
+                out << "hy_gc_safe_point();\n";
                 indent(out, level);
                 out << "}\n";
+                indent(out, level);
+                out << "hy_gc_safe_point();\n";
                 break;
             }
             case BoundStatementKind::For: {
@@ -6207,8 +6735,12 @@ private:
                 }
                 out << ") {\n";
                 emit_statement(out, *for_statement.body, level + 1);
+                indent(out, level + 1);
+                out << "hy_gc_safe_point();\n";
                 indent(out, level);
                 out << "}\n";
+                indent(out, level);
+                out << "hy_gc_safe_point();\n";
                 break;
             }
             case BoundStatementKind::Break:
@@ -6223,8 +6755,19 @@ private:
                 const auto& return_statement = static_cast<const BoundReturnStatement&>(statement);
                 indent(out, level);
                 if (return_statement.expression != nullptr) {
-                    out << "return " << emit_expression(*return_statement.expression) << ";\n";
+                    if (current_function_has_roots_) {
+                        out << "hy__return_value = " << emit_expression(*return_statement.expression) << ";\n";
+                        emit_function_cleanup(out, level);
+                        indent(out, level);
+                        out << "return hy__return_value;\n";
+                    } else {
+                        out << "return " << emit_expression(*return_statement.expression) << ";\n";
+                    }
                 } else {
+                    if (current_function_has_roots_) {
+                        emit_function_cleanup(out, level);
+                        indent(out, level);
+                    }
                     out << "return;\n";
                 }
                 break;
@@ -6246,7 +6789,6 @@ private:
             case TypeKind::Bool:
                 return "false";
             case TypeKind::Array:
-                return "(HyStringArray){0, NULL}";
             case TypeKind::String:
             case TypeKind::Class:
             case TypeKind::Interface:
@@ -6266,21 +6808,22 @@ private:
         return "local_" + sanitize_c_name(variable.name) + "_" + std::to_string(variable.id);
     }
 
-    string emit_variable_declaration(const BoundVariableDeclarationStatement& declaration) {
+    string emit_variable_initialization(const BoundVariableDeclarationStatement& declaration) {
         std::ostringstream builder;
-        builder << c_type_name(declaration.variable->type) << " " << local_name(*declaration.variable);
+        builder << "(" << local_name(*declaration.variable) << " = ";
         if (declaration.initializer != nullptr) {
-            builder << " = " << emit_expression(*declaration.initializer);
+            builder << emit_expression(*declaration.initializer);
         } else {
-            builder << " = " << default_expression(declaration.variable->type);
+            builder << default_expression(declaration.variable->type);
         }
+        builder << ")";
         return builder.str();
     }
 
     string emit_for_initializer(const BoundStatement& statement) {
         switch (statement.kind) {
             case BoundStatementKind::VariableDeclaration:
-                return emit_variable_declaration(static_cast<const BoundVariableDeclarationStatement&>(statement));
+                return emit_variable_initialization(static_cast<const BoundVariableDeclarationStatement&>(statement));
             case BoundStatementKind::Expression:
                 return emit_expression(*static_cast<const BoundExpressionStatement&>(statement).expression);
             default:
@@ -6298,7 +6841,11 @@ private:
         if (expression.type == &program_.semantic_model.bool_type) {
             return "hy_string_from_bool(" + emit_expression(expression) + ")";
         }
-        return "\"null\"";
+        if (expression.type != nullptr && expression.type->kind == TypeKind::Enum &&
+            expression.type->enum_symbol != nullptr) {
+            return emit_enum_string(expression);
+        }
+        return "hy_string_literal(\"null\")";
     }
 
     string emit_enum_string(const BoundExpression& expression) {
@@ -6333,7 +6880,7 @@ private:
                     return std::get<bool>(literal.value) ? "true" : "false";
                 }
                 if (std::holds_alternative<string>(literal.value)) {
-                    return "\"" + escape_c_string(std::get<string>(literal.value)) + "\"";
+                    return "hy_string_literal(\"" + escape_c_string(std::get<string>(literal.value)) + "\")";
                 }
                 return "NULL";
             }
@@ -6356,12 +6903,23 @@ private:
             }
             case BoundExpressionKind::ArrayLength: {
                 const auto& length = static_cast<const BoundArrayLengthExpression&>(expression);
-                return "((int64_t)(" + emit_expression(*length.array_expression) + ".length))";
+                const string arr_expr = emit_expression(*length.array_expression);
+                return "(" + arr_expr + " == NULL ? (int64_t)0 : (" + arr_expr + ")->length)";
             }
             case BoundExpressionKind::ArrayIndex: {
                 const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
-                return "hy_array_index(" + emit_expression(*access.array_expression) + ", " +
-                       emit_expression(*access.index_expression) + ")";
+                const string elem_cast = c_type_name(access.type);
+                const string arr = emit_expression(*access.array_expression);
+                const string idx = emit_expression(*access.index_expression);
+                // For reference types: cast int64_t storage back to pointer type
+                if (is_gc_ref_type(access.type)) {
+                    return "(" + elem_cast + ")(intptr_t)(*(int64_t*)hy_array_ptr(" + arr + ", " + idx + "))";
+                }
+                // For bool: cast int64_t to bool
+                if (access.type != nullptr && access.type->kind == TypeKind::Bool) {
+                    return "(bool)(*(int64_t*)hy_array_ptr(" + arr + ", " + idx + "))";
+                }
+                return "*(int64_t*)hy_array_ptr(" + arr + ", " + idx + ")";
             }
             case BoundExpressionKind::StringIndex: {
                 const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
@@ -6374,6 +6932,20 @@ private:
             }
             case BoundExpressionKind::Assignment: {
                 const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
+                // Array index assignment requires storing into int64_t element storage
+                if (assignment.target->kind == BoundExpressionKind::ArrayIndex) {
+                    const auto& access = static_cast<const BoundArrayIndexExpression&>(*assignment.target);
+                    const string arr = emit_expression(*access.array_expression);
+                    const string idx = emit_expression(*access.index_expression);
+                    const string val = emit_expression(*assignment.expression);
+                    if (is_gc_ref_type(access.type)) {
+                        return "(*(int64_t*)hy_array_ptr(" + arr + ", " + idx + ") = (int64_t)(intptr_t)(" + val + "))";
+                    }
+                    if (access.type != nullptr && access.type->kind == TypeKind::Bool) {
+                        return "(*(int64_t*)hy_array_ptr(" + arr + ", " + idx + ") = (int64_t)(" + val + "))";
+                    }
+                    return "(*(int64_t*)hy_array_ptr(" + arr + ", " + idx + ") = (" + val + "))";
+                }
                 return "(" + emit_expression(*assignment.target) + " = " + emit_expression(*assignment.expression) + ")";
             }
             case BoundExpressionKind::Conversion: {
@@ -6479,6 +7051,8 @@ private:
                     return builder.str();
                 }
 
+                // Determine the generic definition to check for TypeParameter boxing
+                const MethodSymbol* generic_def = call.method->generic_definition;
                 std::ostringstream builder;
                 builder << method_name(*call.method) << "(";
                 bool wrote = false;
@@ -6490,7 +7064,24 @@ private:
                     if (wrote) {
                         builder << ", ";
                     }
-                    builder << emit_expression(*call.arguments[index]);
+                    const BoundExpression& arg = *call.arguments[index];
+                    // Box primitive to void* when generic definition has TypeParameter parameter
+                    bool needs_box = false;
+                    if (generic_def != nullptr && index < generic_def->parameters.size()) {
+                        needs_box = generic_def->parameters[index].type != nullptr &&
+                                    generic_def->parameters[index].type->kind == TypeKind::TypeParameter;
+                    }
+                    if (needs_box && arg.type != nullptr) {
+                        if (arg.type->kind == TypeKind::Int || arg.type->kind == TypeKind::Enum) {
+                            builder << "(void*)(intptr_t)(" << emit_expression(arg) << ")";
+                        } else if (arg.type->kind == TypeKind::Bool) {
+                            builder << "(void*)(intptr_t)(int64_t)(" << emit_expression(arg) << ")";
+                        } else {
+                            builder << "(void*)(" << emit_expression(arg) << ")";
+                        }
+                    } else {
+                        builder << emit_expression(arg);
+                    }
                     wrote = true;
                 }
                 if (!wrote) {
@@ -6500,6 +7091,23 @@ private:
                 string result = builder.str();
                 if (result.find("(void)") != string::npos) {
                     result.erase(result.find("void"), 4);
+                }
+                // Unbox void* return to primitive when generic definition returns TypeParameter
+                bool needs_unbox = generic_def != nullptr &&
+                                   generic_def->return_type != nullptr &&
+                                   generic_def->return_type->kind == TypeKind::TypeParameter &&
+                                   call.method->return_type != nullptr &&
+                                   call.method->return_type->kind != TypeKind::TypeParameter;
+                if (needs_unbox) {
+                    const TypeSymbol* ret = call.method->return_type;
+                    if (ret->kind == TypeKind::Int || ret->kind == TypeKind::Enum) {
+                        return "(int64_t)(intptr_t)(" + result + ")";
+                    }
+                    if (ret->kind == TypeKind::Bool) {
+                        return "(bool)(int64_t)(intptr_t)(" + result + ")";
+                    }
+                    // Reference type: cast void* to the specific pointer type
+                    return "(" + c_type_name(ret) + ")(" + result + ")";
                 }
                 return result;
             }
@@ -6526,6 +7134,11 @@ private:
                     result.erase(result.find("void"), 4);
                 }
                 return result;
+            }
+            case BoundExpressionKind::NewArray: {
+                const auto& creation = static_cast<const BoundArrayCreationExpression&>(expression);
+                const int32_t element_is_ref = is_gc_ref_type(creation.element_type_symbol) ? 1 : 0;
+                return "hy_array_new(" + emit_expression(*creation.count) + ", " + std::to_string(element_is_ref) + ")";
             }
         }
         return "NULL";
@@ -6567,6 +7180,8 @@ private:
     }
 
     const BoundProgram& program_;
+    bool current_function_has_roots_ = false;
+    const TypeSymbol* current_function_return_type_ = nullptr;
 };
 
 struct ProjectManifest {
@@ -6722,6 +7337,54 @@ vector<CompilationUnitSyntax> parse_units(const vector<fs::path>& source_files, 
     return units;
 }
 
+static const char* hy_stdlib_source = R"(
+namespace System.Collections {
+    public class List<T> {
+        private T[] _items;
+        private int _count;
+
+        public List() {
+            _items = new T[4];
+            _count = 0;
+        }
+
+        public void Add(T value) {
+            if (_count == _items.Length) {
+                int newCap = _count * 2;
+                T[] newItems = new T[newCap];
+                int i = 0;
+                while (i < _count) {
+                    newItems[i] = _items[i];
+                    i = i + 1;
+                }
+                _items = newItems;
+            }
+            _items[_count] = value;
+            _count = _count + 1;
+        }
+
+        public T Get(int index) {
+            return _items[index];
+        }
+
+        public void Set(int index, T value) {
+            _items[index] = value;
+        }
+
+        public int Count() {
+            return _count;
+        }
+    }
+}
+)";
+
+CompilationUnitSyntax parse_stdlib_unit(DiagnosticBag& diagnostics) {
+    const fs::path stdlib_path = "<stdlib>";
+    Lexer lexer(stdlib_path, hy_stdlib_source, diagnostics);
+    Parser parser(stdlib_path, lexer.lex(), diagnostics);
+    return parser.parse();
+}
+
 std::unique_ptr<BoundProgram> load_program_from_target(const fs::path& input_path, DiagnosticBag& diagnostics) {
     vector<fs::path> source_files;
     if (input_path.extension() == ".hyproj") {
@@ -6734,6 +7397,12 @@ std::unique_ptr<BoundProgram> load_program_from_target(const fs::path& input_pat
     std::sort(source_files.begin(), source_files.end());
     source_files.erase(std::unique(source_files.begin(), source_files.end()), source_files.end());
     auto units = parse_units(source_files, diagnostics);
+    if (diagnostics.has_errors()) {
+        return nullptr;
+    }
+
+    // Prepend stdlib unit (contains System.Collections.List<T>, etc.)
+    units.insert(units.begin(), parse_stdlib_unit(diagnostics));
     if (diagnostics.has_errors()) {
         return nullptr;
     }

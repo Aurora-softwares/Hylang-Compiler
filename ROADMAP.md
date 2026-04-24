@@ -233,15 +233,15 @@ Goals:
 
 Checklist:
 
-- [ ] Replace the bootstrap allocation strategy with a real GC-backed managed runtime
-- [ ] Define stable runtime object and metadata layout
-- [ ] Make strings and arrays behave consistently across all backends
-- [ ] Design `unsafe` blocks
-- [ ] Design pointer support
-- [ ] Design stack allocation support
-- [ ] Design manual allocation/free APIs
+- [x] Replace the bootstrap process-lifetime allocation path in compiled output with an in-tree managed runtime
+- [x] Define stable runtime object and metadata layout
+- [x] Make strings and arrays behave consistently across all backends at the language-semantics level
+- [x] Design `unsafe` blocks
+- [x] Design pointer support
+- [x] Design stack allocation support
+- [x] Design manual allocation/free APIs
 - [ ] Add raw memory and buffer primitives suitable for systems code
-- [ ] Define the safe/unsafe boundary clearly in docs and compiler rules
+- [x] Define the safe/unsafe boundary clearly in docs and compiler rules
 
 Main work:
 
@@ -259,6 +259,19 @@ Important design choice:
 
 - managed-by-default should remain the normal experience
 - unsafe/system code should be explicit and easy to audit
+
+Delivered foundation:
+
+- compiled output now uses an in-tree non-moving mark-sweep collector
+- managed strings and general `T[]` arrays are part of the runtime surface
+- `new T[count]` works across interpreter and compiled modes
+- bootstrap `System.Collections.List<T>` exists and is proven via `samples/managed_collections`
+- GC stress controls exist for compiled output via `HYLANG_GC_STRESS` and `HYLANG_GC_THRESHOLD`
+- `docs/spec/phase3-runtime.md` and `docs/spec/phase3-unsafe.md` capture the runtime contract and deferred unsafe design
+
+Current note:
+
+- the language/runtime behavior is aligned across both execution modes, while the interpreter still keeps a bootstrap reference-managed implementation internally
 
 Exit criteria:
 

@@ -100,6 +100,12 @@ add_test(
 set_tests_properties(hyrun_string_equality PROPERTIES PASS_REGULAR_EXPRESSION "true:true:false:true")
 
 add_test(
+    NAME hyrun_array_features
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/array_features.hy
+)
+set_tests_properties(hyrun_array_features PROPERTIES PASS_REGULAR_EXPRESSION "Ints=7.*Strings=4.*Nodes=ok.*Pairs=9.*Len=4")
+
+add_test(
     NAME hyrun_file_roundtrip
     COMMAND ${CMAKE_COMMAND}
         -DMODE=run
@@ -203,6 +209,16 @@ add_test(
         -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/string_equality.hy
         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/string_equality
         -DEXPECTED_TEXT=true:true:false:true
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_array_features
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/array_features.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/array_features
+        "-DEXPECTED_TEXT=Ints=7.*Strings=4.*Nodes=ok.*Pairs=9.*Len=4"
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildAndRun.cmake
 )
 
@@ -315,6 +331,42 @@ add_hyrun_negative_test(
     hyrun_file_wrong_arguments_fails
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/file_wrong_arguments.hy
     "No overload of 'Exists' matches the provided arguments"
+)
+
+add_hyrun_negative_test(
+    hyrun_array_size_type_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/array_size_type.hy
+    "Array size must be of type 'int'"
+)
+
+add_hyrun_negative_test(
+    hyrun_array_void_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/array_void.hy
+    "Cannot create an array of void"
+)
+
+add_hyrun_negative_test(
+    hyrun_array_wrong_assign_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/array_wrong_assign.hy
+    "Cannot assign expression of type 'string' to target of type 'int'"
+)
+
+add_hyc_negative_test(
+    hyc_array_size_type_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/array_size_type.hy
+    "Array size must be of type 'int'"
+)
+
+add_hyc_negative_test(
+    hyc_array_void_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/array_void.hy
+    "Cannot create an array of void"
+)
+
+add_hyc_negative_test(
+    hyc_array_wrong_assign_fails
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/array_wrong_assign.hy
+    "Cannot assign expression of type 'string' to target of type 'int'"
 )
 
 # ---- new positive tests (interpreter) ----
@@ -719,4 +771,41 @@ add_hyc_negative_test(
     hyc_inheritance_method_conflict_fails
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/inheritance_method_conflict.hy
     "conflicts with inherited method"
+)
+
+# ---- Phase 3: Runtime and Managed Collections Tests ----
+
+# Managed collections proof project (interpreter)
+add_test(
+    NAME hyrun_managed_collections_proof
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/samples/managed_collections/ManagedCollections.hyproj
+)
+set_tests_properties(hyrun_managed_collections_proof PROPERTIES PASS_REGULAR_EXPRESSION "Count=1000.*Sum=500500.*Children=3.*NameBytes=4")
+
+add_test(
+    NAME hyrun_managed_collections_gc_stress
+    COMMAND ${CMAKE_COMMAND} -E env HYLANG_GC_STRESS=1 $<TARGET_FILE:hyrun> ${CMAKE_CURRENT_SOURCE_DIR}/samples/managed_collections/ManagedCollections.hyproj
+)
+set_tests_properties(hyrun_managed_collections_gc_stress PROPERTIES PASS_REGULAR_EXPRESSION "Count=1000.*Sum=500500.*Children=3.*NameBytes=4")
+
+# Managed collections proof project (compiler)
+add_test(
+    NAME hyc_build_and_run_managed_collections_proof
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DPROJECT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/managed_collections/ManagedCollections.hyproj
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/managed_collections
+        -DEXPECTED_TEXT=Count=1000
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildProjectAndRunWithArgs.cmake
+)
+
+add_test(
+    NAME hyc_build_and_run_managed_collections_gc_stress
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hyc>
+        -DPROJECT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/managed_collections/ManagedCollections.hyproj
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/managed_collections_gc_stress
+        -DRUN_ENV=HYLANG_GC_STRESS=1
+        "-DEXPECTED_TEXT=Count=1000.*Sum=500500.*Children=3.*NameBytes=4"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildProjectAndRunWithArgs.cmake
 )

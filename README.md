@@ -36,8 +36,10 @@ new  this  base  :  +  -  *  /  %  ==  !=  <  <=  >  >=  &&  ||  !
 - Namespace-scope structs with bootstrap by-value semantics and interface boxing
 - Generic classes, interfaces, and methods, plus `var` local inference
 - Object creation, method calls, field access, and assignment
+- General managed arrays via `new T[count]`
 - String concatenation across `string`, `int`, and `bool`
 - Array and string `.Length`, array indexing, string character indexing
+- Minimal bootstrap `System.Collections.List<T>`
 - `System.Console.Write` / `WriteLine` and `System.IO.File` read/write/exists
 
 See the [full language reference](https://aurora-softwares.github.io/Hylang-Docs/) for details on every feature.
@@ -77,15 +79,18 @@ build/hyc build tests/projects/app/App.hyproj -o build/demo_app
 # Run the Phase 2 proof project
 build/hyrun samples/mini_frontend_model/MiniFrontendModel.hyproj
 
+# Run the Phase 3 managed collections proof project
+build/hyrun samples/managed_collections/ManagedCollections.hyproj
+
 # Build a static library
 build/hyc build tests/projects/mathlib/Math.hyproj --target lib -o build/libmathlib.a
 ```
 
 ## Runtime model
 
-- The interpreter uses reference-managed runtime objects.
-- The C backend emits tracked managed allocations that live for the process lifetime and are released at shutdown.
-- A proper GC integration is planned for Phase 3.
+- The interpreter keeps bootstrap reference-managed runtime objects while matching the same visible string/array semantics as compiled mode.
+- The C backend now emits an in-tree non-moving mark-sweep GC with precise emitted root frames and managed string/array objects.
+- `HYLANG_GC_STRESS=1` forces collection at runtime safe points, and `HYLANG_GC_THRESHOLD=<bytes>` lowers the compiled-runtime collection threshold for stress/debugging.
 
 ## Roadmap
 

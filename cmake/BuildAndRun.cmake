@@ -10,6 +10,10 @@ if (NOT DEFINED RUN_ARGS)
     set(RUN_ARGS)
 endif()
 
+if (NOT DEFINED RUN_ENV)
+    set(RUN_ENV)
+endif()
+
 file(MAKE_DIRECTORY "$ENV{PWD}")
 get_filename_component(OUTPUT_DIR "${OUTPUT_FILE}" DIRECTORY)
 file(MAKE_DIRECTORY "${OUTPUT_DIR}")
@@ -25,12 +29,21 @@ if (NOT BUILD_RESULT EQUAL 0)
     message(FATAL_ERROR "hyc build failed\n${BUILD_STDOUT}\n${BUILD_STDERR}")
 endif()
 
-execute_process(
-    COMMAND "${OUTPUT_FILE}" ${RUN_ARGS}
-    RESULT_VARIABLE RUN_RESULT
-    OUTPUT_VARIABLE RUN_STDOUT
-    ERROR_VARIABLE RUN_STDERR
-)
+if (RUN_ENV)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env ${RUN_ENV} "${OUTPUT_FILE}" ${RUN_ARGS}
+        RESULT_VARIABLE RUN_RESULT
+        OUTPUT_VARIABLE RUN_STDOUT
+        ERROR_VARIABLE RUN_STDERR
+    )
+else()
+    execute_process(
+        COMMAND "${OUTPUT_FILE}" ${RUN_ARGS}
+        RESULT_VARIABLE RUN_RESULT
+        OUTPUT_VARIABLE RUN_STDOUT
+        ERROR_VARIABLE RUN_STDERR
+    )
+endif()
 
 if (NOT RUN_RESULT EQUAL 0)
     message(FATAL_ERROR "compiled executable failed\n${RUN_STDOUT}\n${RUN_STDERR}")
