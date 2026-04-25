@@ -1104,3 +1104,58 @@ add_test(
         -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_lsp_smoke
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyLspSmoke.cmake
 )
+
+add_test(
+    NAME hy_build_self_hosting_workspace
+    COMMAND hy build ${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.hyproj
+)
+set_tests_properties(hy_build_self_hosting_workspace PROPERTIES PASS_REGULAR_EXPRESSION "Hydrogen.Compiler.Core.*Hydrogen.Compiler.Syntax.*Hydrogen.Compiler.Cli.*Hydrogen.Compiler.Tests")
+
+add_test(
+    NAME hy_test_self_hosting_workspace
+    COMMAND hy test ${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.hyproj
+)
+set_tests_properties(hy_test_self_hosting_workspace PROPERTIES PASS_REGULAR_EXPRESSION "phase5-self-hosting-ok")
+
+add_test(
+    NAME hy_fmt_self_hosting_check
+    COMMAND hy fmt --check ${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting
+)
+
+add_test(
+    NAME hy_check_self_hosting_json
+    COMMAND hy check ${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.hyproj --json
+)
+
+add_test(
+    NAME hy_self_hosting_tokens_golden
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DMODE=tokens
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase5/lexer_features.hy
+        -DEXPECTED_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase5/lexer_features.tokens.expected
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyRunAndCompare.cmake
+)
+
+add_test(
+    NAME hy_self_hosting_parse_golden
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DMODE=parse
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase5/parser_features.hy
+        -DEXPECTED_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase5/parser_features.parse.expected
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyRunAndCompare.cmake
+)
+
+add_test(
+    NAME hy_self_hosting_parse_recovery_golden
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DMODE=parse
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase5/parser_broken.hy
+        -DEXPECTED_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase5/parser_broken.parse.expected
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyRunAndCompare.cmake
+)

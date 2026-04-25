@@ -1,0 +1,12 @@
+format = 2
+name = "Hydrogen.Compiler.Syntax"
+version = "0.1.0"
+type = "lib"
+sources = ["SyntaxKind.hy", "SyntaxFacts.hy", "SyntaxToken.hy", "SyntaxNode.hy", "Lexer.hy", "Parser.hy", "SyntaxTree.hy"]
+project_references = ["../Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj"]
+
+[package]
+id = "Hydrogen.Compiler.Syntax"
+description = "Hydrogen lexer and parser prototype for Phase 5 self-hosting preparation"
+authors = ["Aurora Softwares"]
+license = "MIT"

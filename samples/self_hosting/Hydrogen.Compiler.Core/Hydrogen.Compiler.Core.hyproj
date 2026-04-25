@@ -1,0 +1,12 @@
+format = 2
+name = "Hydrogen.Compiler.Core"
+version = "0.1.0"
+type = "lib"
+sources = ["Text.hy", "Diagnostics.hy"]
+project_references = []
+
+[package]
+id = "Hydrogen.Compiler.Core"
+description = "Core text and diagnostic types for the Phase 5 Hydrogen compiler prototype"
+authors = ["Aurora Softwares"]
+license = "MIT"

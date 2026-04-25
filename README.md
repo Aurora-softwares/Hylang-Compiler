@@ -3,7 +3,7 @@
 [![Language](https://img.shields.io/badge/language-C%2B%2B20-blue?style=flat-square)](https://en.cppreference.com/w/cpp/20)
 [![Language](https://img.shields.io/badge/language-Hydrogen-blue?style=flat-square)](https://en.cppreference.com/w/cpp/20)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20x64-lightgrey?style=flat-square)](#build)
-[![Phase](https://img.shields.io/badge/phase-4%20%E2%80%93%20Tooling%20and%20Workflow-orange?style=flat-square)](ROADMAP.md)
+[![Phase](https://img.shields.io/badge/phase-5%20%E2%80%93%20Self--Hosting%20Preparation-blue?style=flat-square)](ROADMAP.md)
 [![Docs](https://img.shields.io/badge/docs-online-brightgreen?style=flat-square)](https://aurora-softwares.github.io/Hylang-Docs/)
 
 A C#-inspired systems programming language for [Australis OS](https://github.com/Aurora-Softwares) and general x64 systems.
@@ -81,8 +81,9 @@ Current workflow support includes:
 - VS Code assets under `tools/vscode/hylang`
 - `samples/hexlab` as the systems showcase workspace
 - `samples/sdk_demo` as the Phase 4 tooling/package/LSP proof workspace
+- `samples/self_hosting` as the Phase 5 Hydrogen compiler-library proof workspace
 
-The low-level Phase 3 closeout slice is executable in both `hyrun` and compiled output: raw `System.Runtime.Memory`, `unsafe` blocks, checked pointer indexing/arithmetic, `stackalloc`, `sizeof`, and `Buffer.DangerousData()` all run today. Phase 4 is complete at bootstrap scope with a local package registry, lightweight language server, expanded diagnostics, and a dedicated SDK demo workspace.
+The low-level Phase 3 closeout slice is executable in both `hyrun` and compiled output: raw `System.Runtime.Memory`, `unsafe` blocks, checked pointer indexing/arithmetic, `stackalloc`, `sizeof`, and `Buffer.DangerousData()` all run today. Phase 4 is complete at bootstrap scope with a local package registry, lightweight language server, expanded diagnostics, and a dedicated SDK demo workspace. Phase 5 is now complete at prototype scope: Hydrogen can build reusable compiler libraries that tokenize and parse meaningful `.hy` files.
 
 See the [full language reference](https://aurora-softwares.github.io/Hylang-Docs/) for details on every feature.
 
@@ -137,6 +138,12 @@ build/hy package init-registry build/local-registry
 build/hy package publish samples/sdk_demo/SdkDemo.Core/SdkDemo.Core.hyproj --registry build/local-registry
 build/hy package search SdkDemo --registry build/local-registry
 
+# Exercise the Phase 5 self-hosting preparation proof
+build/hy build samples/self_hosting/Hydrogen.Compiler.hyproj
+build/hy test samples/self_hosting/Hydrogen.Compiler.hyproj
+build/hy run samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- tokens tests/hello_world.hy
+build/hy run samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- parse tests/hello_world.hy
+
 # Emit debug metadata alongside generated output
 build/hy build tests/hello_world.hy -o build/hello_world_debug --debug
 
@@ -180,6 +187,6 @@ Current bootstrap boundaries:
 
 ## Roadmap
 
-Hylang is developed in phases toward a self-hosted compiler and first-class support for Australis OS userland. Phase 3 includes an executable bootstrap unsafe/manual-memory slice, and **Phase 4 — Tooling and Developer Workflow** is complete at local-first bootstrap scope.
+Hylang is developed in phases toward a self-hosted compiler and first-class support for Australis OS userland. Phase 5 has landed the first reusable Hydrogen compiler libraries under `samples/self_hosting`; Phase 6 is where the real self-hosted compiler effort begins.
 
 See [ROADMAP.md](ROADMAP.md) for the full plan.

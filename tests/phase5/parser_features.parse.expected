@@ -1,0 +1,209 @@
+CompilationUnit
+  UsingDirective
+    Token Using using
+    QualifiedName
+      Token Identifier System
+    Token Semicolon ;
+  NamespaceDeclaration
+    Token Namespace namespace
+    QualifiedName
+      Token Identifier Demo
+    Token OpenBrace {
+    Modifier Public
+    Token Public public
+    EnumDeclaration
+      Token Enum enum
+      Token Identifier Mode
+      Token OpenBrace {
+      EnumMember
+        Token Identifier Scan
+        Token Comma ,
+      EnumMember
+        Token Identifier Dump
+      Token CloseBrace }
+    Modifier Public
+    Token Public public
+    ClassDeclaration
+      Token Class class
+      Token Identifier Box
+      TypeArgumentOrParameterList
+        Token Less <
+        Token Identifier T
+        Token Greater >
+      Token OpenBrace {
+      Modifier Private
+      Token Private private
+      MemberDeclaration
+        TypeSyntax
+          Token Identifier T
+        Token Identifier value
+        Token Semicolon ;
+      Modifier Public
+      Token Public public
+      ConstructorDeclaration
+        Token Identifier Box
+        ParameterList
+          Token OpenParen (
+          Parameter
+            TypeSyntax
+              Token Identifier T
+            Token Identifier input
+          Token CloseParen )
+        BlockStatement
+          Token OpenBrace {
+          ExpressionStatement
+            Expression
+              PrimaryExpression
+                Token Identifier value
+              Token Equals =
+              AssignmentTail
+                Expression
+                  PrimaryExpression
+                    Token Identifier input
+            Token Semicolon ;
+          Token CloseBrace }
+      Modifier Public
+      Token Public public
+      MemberDeclaration
+        TypeSyntax
+          Token Identifier T
+        Token Identifier Value
+        ParameterList
+          Token OpenParen (
+          Token CloseParen )
+        BlockStatement
+          Token OpenBrace {
+          ReturnStatement
+            Token Return return
+            Expression
+              PrimaryExpression
+                Token Identifier value
+            Token Semicolon ;
+          Token CloseBrace }
+      Token CloseBrace }
+    Modifier Public
+    Token Public public
+    ClassDeclaration
+      Token Class class
+      Token Identifier Program
+      Token OpenBrace {
+      Modifier Public
+      Token Public public
+      Modifier Static
+      Token Static static
+      MemberDeclaration
+        TypeSyntax
+          Token Int int
+        Token Identifier Main
+        ParameterList
+          Token OpenParen (
+          Parameter
+            TypeSyntax
+              Token StringKeyword string
+              Token OpenBracket [
+              Token CloseBracket ]
+            Token Identifier args
+          Token CloseParen )
+        BlockStatement
+          Token OpenBrace {
+          LocalDeclaration
+            TypeSyntax
+              Token Int int
+            Token Identifier total
+            Token Equals =
+            Expression
+              PrimaryExpression
+                Token Number 0
+            Token Semicolon ;
+          ForStatement
+            Token For for
+            Token OpenParen (
+            LocalDeclaration
+              TypeSyntax
+                Token Int int
+              Token Identifier i
+              Token Equals =
+              Expression
+                PrimaryExpression
+                  Token Number 0
+              Token Semicolon ;
+            Expression
+              PrimaryExpression
+                Token Identifier i
+              BinaryOperator Less
+                Token Less <
+                PrimaryExpression
+                  Token Number 3
+            Token Semicolon ;
+            Expression
+              PrimaryExpression
+                Token Identifier i
+              Token Equals =
+              AssignmentTail
+                Expression
+                  PrimaryExpression
+                    Token Identifier i
+                  BinaryOperator Plus
+                    Token Plus +
+                    PrimaryExpression
+                      Token Number 1
+            Token CloseParen )
+            BlockStatement
+              Token OpenBrace {
+              ExpressionStatement
+                Expression
+                  PrimaryExpression
+                    Token Identifier total
+                  Token Equals =
+                  AssignmentTail
+                    Expression
+                      PrimaryExpression
+                        Token Identifier total
+                      BinaryOperator Plus
+                        Token Plus +
+                        PrimaryExpression
+                          Token Identifier i
+                Token Semicolon ;
+              Token CloseBrace }
+          IfStatement
+            Token If if
+            ParenthesizedExpression
+              Token OpenParen (
+              Expression
+                PrimaryExpression
+                  Token Identifier total
+                BinaryOperator EqualsEquals
+                  Token EqualsEquals ==
+                  PrimaryExpression
+                    Token Number 3
+              Token CloseParen )
+            BlockStatement
+              Token OpenBrace {
+              ExpressionStatement
+                Expression
+                  PrimaryExpression
+                    Token Identifier System
+                  Token Dot .
+                  MemberAccessExpression
+                    Token Identifier Console
+                  Token Dot .
+                  MemberAccessExpression
+                    Token Identifier WriteLine
+                  ArgumentList
+                    Token OpenParen (
+                    Expression
+                      PrimaryExpression
+                        Token String "ok"
+                    Token CloseParen )
+                Token Semicolon ;
+              Token CloseBrace }
+          ReturnStatement
+            Token Return return
+            Expression
+              PrimaryExpression
+                Token Identifier total
+            Token Semicolon ;
+          Token CloseBrace }
+      Token CloseBrace }
+    Token CloseBrace }
+  Token EndOfFile <eof>

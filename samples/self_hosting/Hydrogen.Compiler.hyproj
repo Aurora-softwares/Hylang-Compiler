@@ -1,0 +1,11 @@
+format = 2
+name = "Hydrogen.Compiler"
+version = "0.1.0"
+type = "workspace"
+members = ["Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj", "Hydrogen.Compiler.Syntax/Hydrogen.Compiler.Syntax.hyproj", "Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj", "Hydrogen.Compiler.Tests/Hydrogen.Compiler.Tests.hyproj"]
+
+[package]
+id = "Hydrogen.Compiler"
+description = "Phase 5 self-hosting preparation workspace"
+authors = ["Aurora Softwares"]
+license = "MIT"

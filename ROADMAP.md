@@ -51,7 +51,7 @@ Checked items reflect the current repo state as of now.
 - [x] Phase 2: Core Language Expansion is complete
 - [x] Phase 3: Runtime and Memory Model is complete at bootstrap scope
 - [x] Phase 4: Tooling and Developer Workflow is complete at local-first bootstrap scope
-- [ ] Phase 5: Self-Hosting Preparation has not started in earnest
+- [x] Phase 5: Self-Hosting Preparation is complete at prototype scope
 - [ ] Phase 6: Self-Hosted Compiler has not started
 - [ ] Phase 7: Full Standard Library has not started in earnest
 - [ ] Phase 8: Backend Evolution has not started in earnest
@@ -371,39 +371,49 @@ Deferred beyond Phase 4:
 
 ## Phase 5: Self-Hosting Preparation
 
+Status: complete at prototype scope
+
 Goals:
 
 - make the compiler architecture clean enough to be reimplemented in Hylang without losing momentum
 
 Checklist:
 
-- [ ] Split the compiler into clearer libraries/modules
-- [ ] Document the bound IR and semantic model
-- [ ] Stabilize core compiler data structures
-- [ ] Move more support libraries into Hylang
-- [ ] Build a tokenizer in Hylang
-- [ ] Build a parser prototype in Hylang
-- [ ] Build at least one code-processing utility in Hylang
-- [ ] Prove Hylang is comfortable for compiler-style data processing
+- [x] Document the bootstrap compiler pipeline and Phase 6 boundary
+- [x] Document the bound IR and semantic model contracts at architecture level
+- [x] Stabilize the frontend-facing compiler data shapes needed for a first Hydrogen prototype
+- [x] Move compiler support types into Hydrogen libraries
+- [x] Build a tokenizer in Hydrogen
+- [x] Build a parser prototype in Hydrogen
+- [x] Build a code-processing CLI utility in Hydrogen
+- [x] Prove Hydrogen is comfortable for compiler-style data processing
 
 Main work:
 
-- split the compiler into clearer layers and libraries
+- document the compiler layers and contracts without a risky C++ source split
 - document the bound IR and semantic rules
 - stabilize core data structures needed by a future self-hosted compiler
-- build more of the standard library in Hylang
+- build compiler support libraries in Hydrogen
 - prove that Hylang can implement parsing, binding, and data-heavy algorithms comfortably
 
-Recommended proof projects:
+Delivered proof project:
 
-- tokenizer in Hylang
-- parser prototype in Hylang
-- small codegen utility in Hylang
-- stdlib components in Hylang
+- `samples/self_hosting/Hydrogen.Compiler.Core`
+- `samples/self_hosting/Hydrogen.Compiler.Syntax`
+- `samples/self_hosting/Hydrogen.Compiler.Cli`
+- `samples/self_hosting/Hydrogen.Compiler.Tests`
+- golden token and parse fixtures under `tests/phase5`
 
 Exit criteria:
 
 - the compiler can be decomposed into pieces that are realistic to rewrite incrementally in Hylang
+
+Deferred to Phase 6:
+
+- binding and type checking in Hydrogen
+- typed IR generation in Hydrogen
+- backend integration
+- self-compilation
 
 ## Phase 6: Self-Hosted Compiler
 
