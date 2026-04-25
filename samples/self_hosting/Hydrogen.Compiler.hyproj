@@ -2,10 +2,10 @@ format = 2
 name = "Hydrogen.Compiler"
 version = "0.1.0"
 type = "workspace"
-members = ["Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj", "Hydrogen.Compiler.Syntax/Hydrogen.Compiler.Syntax.hyproj", "Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj", "Hydrogen.Compiler.Tests/Hydrogen.Compiler.Tests.hyproj"]
+members = ["Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj", "Hydrogen.Compiler.Syntax/Hydrogen.Compiler.Syntax.hyproj", "Hydrogen.Compiler.IR/Hydrogen.Compiler.IR.hyproj", "Hydrogen.Compiler.Binding/Hydrogen.Compiler.Binding.hyproj", "Hydrogen.Compiler.RuntimeModel/Hydrogen.Compiler.RuntimeModel.hyproj", "Hydrogen.Compiler.CodeGen.X64/Hydrogen.Compiler.CodeGen.X64.hyproj", "Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj", "Hydrogen.Compiler.Tests/Hydrogen.Compiler.Tests.hyproj"]
 
 [package]
 id = "Hydrogen.Compiler"
-description = "Phase 5 self-hosting preparation workspace"
+description = "Phase 6 self-hosted compiler workspace"
 authors = ["Aurora Softwares"]
 license = "MIT"

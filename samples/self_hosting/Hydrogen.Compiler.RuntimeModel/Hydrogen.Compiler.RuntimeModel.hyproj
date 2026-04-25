@@ -1,0 +1,12 @@
+format = 2
+name = "Hydrogen.Compiler.RuntimeModel"
+version = "0.1.0"
+type = "lib"
+sources = ["NativeRuntimeContract.hy"]
+project_references = ["../Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj"]
+
+[package]
+id = "Hydrogen.Compiler.RuntimeModel"
+description = "Hydrogen-owned runtime contract notes for Phase 6 native output"
+authors = ["Aurora Softwares"]
+license = "MIT"

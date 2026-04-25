@@ -1,4 +1,8 @@
+using Hydrogen.Compiler.Binding;
+using Hydrogen.Compiler.CodeGen.X64;
 using Hydrogen.Compiler.Diagnostics;
+using Hydrogen.Compiler.IR;
+using Hydrogen.Compiler.RuntimeModel;
 using Hydrogen.Compiler.Syntax;
 using Hydrogen.Compiler.Text;
 using System.Testing;
@@ -20,7 +24,30 @@ namespace Hydrogen.Compiler.Tests {
             SyntaxTree broken = SyntaxTree.Parse(new SourceText("public class Broken { public void M( { return; }"));
             Assert.True(broken.Diagnostics().Count() != 0, "broken source should report diagnostics");
 
-            System.Console.WriteLine("phase5-self-hosting-ok");
+            TinyProgramBinder binder = new TinyProgramBinder();
+            BindResult bind = binder.Bind(hello);
+            Assert.True(bind.Success(), "tiny WriteLine program should bind");
+            Assert.Equal("Hello", bind.Program().Message(), "bound IR should preserve the WriteLine literal");
+            Assert.True(bind.Program().ExitCode() == 0, "missing return should default to zero");
+
+            SyntaxTree returns = SyntaxTree.Parse(new SourceText("public class Program { public static int Main(string[] args) { System.Console.WriteLine(\"First\"); System.Console.WriteLine(\"Second\"); return 7; } }"));
+            BindResult returnBind = binder.Bind(returns);
+            Assert.True(returnBind.Success(), "tiny program with return should bind");
+            Assert.Equal("First\nSecond", returnBind.Program().Message(), "native IR should preserve multiple WriteLine literals");
+            Assert.True(returnBind.Program().ExitCode() == 7, "native IR should preserve integer return code");
+
+            ElfImageBuilder builder = new ElfImageBuilder();
+            byte[] image = builder.BuildWriteLineProgram(new IrProgram("Hello", 0));
+            Assert.True(image.Length > 166, "ELF image should contain headers, code, and text");
+            Assert.True(image[0] == (byte)0x7f, "ELF magic byte 0 should be valid");
+            Assert.True(image[1] == (byte)0x45, "ELF magic byte 1 should be valid");
+            Assert.True(image[2] == (byte)0x4c, "ELF magic byte 2 should be valid");
+            Assert.True(image[3] == (byte)0x46, "ELF magic byte 3 should be valid");
+
+            NativeRuntimeContract runtime = new NativeRuntimeContract();
+            Assert.Equal("linux-x64-elf phase6a-tiny", runtime.Describe(), "runtime model should name the native target");
+
+            System.Console.WriteLine("phase6-self-hosting-foundation-ok");
             return 0;
         }
     }

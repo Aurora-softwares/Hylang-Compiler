@@ -3,10 +3,10 @@ name = "Hydrogen.Compiler.Tests"
 version = "0.1.0"
 type = "test"
 sources = ["Program.hy"]
-project_references = ["../Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj", "../Hydrogen.Compiler.Syntax/Hydrogen.Compiler.Syntax.hyproj"]
+project_references = ["../Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj", "../Hydrogen.Compiler.Syntax/Hydrogen.Compiler.Syntax.hyproj", "../Hydrogen.Compiler.Binding/Hydrogen.Compiler.Binding.hyproj", "../Hydrogen.Compiler.IR/Hydrogen.Compiler.IR.hyproj", "../Hydrogen.Compiler.RuntimeModel/Hydrogen.Compiler.RuntimeModel.hyproj", "../Hydrogen.Compiler.CodeGen.X64/Hydrogen.Compiler.CodeGen.X64.hyproj"]
 
 [package]
 id = "Hydrogen.Compiler.Tests"
-description = "Tests for the Phase 5 Hydrogen compiler prototype"
+description = "Tests for the Phase 6 Hydrogen compiler workspace"
 authors = ["Aurora Softwares"]
 license = "MIT"

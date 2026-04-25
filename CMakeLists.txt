@@ -1109,13 +1109,13 @@ add_test(
     NAME hy_build_self_hosting_workspace
     COMMAND hy build ${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.hyproj
 )
-set_tests_properties(hy_build_self_hosting_workspace PROPERTIES PASS_REGULAR_EXPRESSION "Hydrogen.Compiler.Core.*Hydrogen.Compiler.Syntax.*Hydrogen.Compiler.Cli.*Hydrogen.Compiler.Tests")
+set_tests_properties(hy_build_self_hosting_workspace PROPERTIES PASS_REGULAR_EXPRESSION "Hydrogen.Compiler.Core.*Hydrogen.Compiler.Syntax.*Hydrogen.Compiler.IR.*Hydrogen.Compiler.Binding.*Hydrogen.Compiler.RuntimeModel.*Hydrogen.Compiler.CodeGen.X64.*Hydrogen.Compiler.Cli.*Hydrogen.Compiler.Tests")
 
 add_test(
     NAME hy_test_self_hosting_workspace
     COMMAND hy test ${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.hyproj
 )
-set_tests_properties(hy_test_self_hosting_workspace PROPERTIES PASS_REGULAR_EXPRESSION "phase5-self-hosting-ok")
+set_tests_properties(hy_test_self_hosting_workspace PROPERTIES PASS_REGULAR_EXPRESSION "phase6-self-hosting-foundation-ok")
 
 add_test(
     NAME hy_fmt_self_hosting_check
@@ -1125,6 +1125,23 @@ add_test(
 add_test(
     NAME hy_check_self_hosting_json
     COMMAND hy check ${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.hyproj --json
+)
+
+add_test(
+    NAME hy_self_hosting_check_tiny_program
+    COMMAND hy run ${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- check ${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/native_hello.hy
+)
+set_tests_properties(hy_self_hosting_check_tiny_program PROPERTIES PASS_REGULAR_EXPRESSION "Program.WriteLine")
+
+add_test(
+    NAME hy_self_hosting_compile_native_hello_elf
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/native_hello.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/native_hello
+        -DEXPECTED_OUTPUT=Hydrogen\ native\ hello\n
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake
 )
 
 add_test(

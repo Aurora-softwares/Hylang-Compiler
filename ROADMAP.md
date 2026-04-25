@@ -52,7 +52,7 @@ Checked items reflect the current repo state as of now.
 - [x] Phase 3: Runtime and Memory Model is complete at bootstrap scope
 - [x] Phase 4: Tooling and Developer Workflow is complete at local-first bootstrap scope
 - [x] Phase 5: Self-Hosting Preparation is complete at prototype scope
-- [ ] Phase 6: Self-Hosted Compiler has not started
+- [ ] Phase 6: Self-Hosted Compiler is in progress with the Phase 6A native ELF foundation landed
 - [ ] Phase 7: Full Standard Library has not started in earnest
 - [ ] Phase 8: Backend Evolution has not started in earnest
 - [ ] Phase 9: Hylang for Australis OS Userland has not started
@@ -417,16 +417,26 @@ Deferred to Phase 6:
 
 ## Phase 6: Self-Hosted Compiler
 
+Status: in progress
+
 Goals:
 
 - write a Hylang compiler in Hylang
-- keep the bootstrap compiler only as the trusted seed until the self-hosted one is proven
+- keep the bootstrap compiler as the trusted seed until the self-hosted one is proven
+- add a direct Linux x64 ELF output path that does not use C emission, an assembler, or a linker
 
 Checklist:
 
-- [ ] Write foundational compiler utilities in Hylang
-- [ ] Write frontend pieces in Hylang
-- [ ] Reuse or mirror the existing semantic model/backend strategy
+- [x] Write foundational compiler utilities in Hylang
+- [x] Write frontend pieces in Hylang
+- [x] Add first Hydrogen-owned binding/checking project
+- [x] Add first Hydrogen-owned typed IR project
+- [x] Add first Hydrogen-owned native runtime contract project
+- [x] Add first Hydrogen-owned Linux x64 codegen project
+- [x] Add `check <file.hy>` to the Hydrogen compiler CLI
+- [x] Add `compile <file.hy> -o <output>` to the Hydrogen compiler CLI
+- [x] Emit a valid Linux x64 ELF executable directly from Hydrogen for a tiny WriteLine proof program
+- [ ] Reuse or mirror the full existing semantic model/backend strategy
 - [ ] Build a Hylang compiler that can compile meaningful Hylang programs
 - [ ] Reach self-compilation
 - [ ] Compare bootstrap and self-hosted compiler output on a shared test corpus
@@ -436,10 +446,11 @@ Suggested path:
 
 1. write utility libraries in Hylang first
 2. write frontend pieces in Hylang while the bootstrap compiler still builds them
-3. write a Hylang compiler that targets the existing IR/backend strategy
-4. reach a stage where the self-hosted compiler can compile itself
-5. compare outputs of bootstrap and self-hosted compilers on a shared test corpus
-6. gradually promote the self-hosted compiler to primary status
+3. expand the tiny native ELF proof into a compiler-shaped native runtime subset
+4. write a Hylang compiler that targets the Hydrogen IR/native backend strategy
+5. reach a stage where the self-hosted compiler can compile itself
+6. compare outputs of bootstrap and self-hosted compilers on a shared test corpus
+7. gradually promote the self-hosted compiler to primary status
 
 Important rule:
 

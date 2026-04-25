@@ -1,0 +1,12 @@
+format = 2
+name = "Hydrogen.Compiler.Binding"
+version = "0.1.0"
+type = "lib"
+sources = ["TinyProgramBinder.hy"]
+project_references = ["../Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj", "../Hydrogen.Compiler.Syntax/Hydrogen.Compiler.Syntax.hyproj", "../Hydrogen.Compiler.IR/Hydrogen.Compiler.IR.hyproj"]
+
+[package]
+id = "Hydrogen.Compiler.Binding"
+description = "Phase 6 Hydrogen binder and checker foundation"
+authors = ["Aurora Softwares"]
+license = "MIT"

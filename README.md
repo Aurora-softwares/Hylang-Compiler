@@ -81,9 +81,9 @@ Current workflow support includes:
 - VS Code assets under `tools/vscode/hylang`
 - `samples/hexlab` as the systems showcase workspace
 - `samples/sdk_demo` as the Phase 4 tooling/package/LSP proof workspace
-- `samples/self_hosting` as the Phase 5 Hydrogen compiler-library proof workspace
+- `samples/self_hosting` as the Phase 6 Hydrogen compiler workspace
 
-The low-level Phase 3 closeout slice is executable in both `hyrun` and compiled output: raw `System.Runtime.Memory`, `unsafe` blocks, checked pointer indexing/arithmetic, `stackalloc`, `sizeof`, and `Buffer.DangerousData()` all run today. Phase 4 is complete at bootstrap scope with a local package registry, lightweight language server, expanded diagnostics, and a dedicated SDK demo workspace. Phase 5 is now complete at prototype scope: Hydrogen can build reusable compiler libraries that tokenize and parse meaningful `.hy` files.
+The low-level Phase 3 closeout slice is executable in both `hyrun` and compiled output: raw `System.Runtime.Memory`, `unsafe` blocks, checked pointer indexing/arithmetic, `stackalloc`, `sizeof`, and `Buffer.DangerousData()` all run today. Phase 4 is complete at bootstrap scope with a local package registry, lightweight language server, expanded diagnostics, and a dedicated SDK demo workspace. Phase 5 is complete at prototype scope, and Phase 6 has started: Hydrogen now owns the first checker/IR/runtime-contract/codegen projects and can emit a tiny Linux x64 ELF executable directly from Hydrogen code.
 
 See the [full language reference](https://aurora-softwares.github.io/Hylang-Docs/) for details on every feature.
 
@@ -138,11 +138,15 @@ build/hy package init-registry build/local-registry
 build/hy package publish samples/sdk_demo/SdkDemo.Core/SdkDemo.Core.hyproj --registry build/local-registry
 build/hy package search SdkDemo --registry build/local-registry
 
-# Exercise the Phase 5 self-hosting preparation proof
+# Exercise the Phase 6 self-hosted compiler foundation
 build/hy build samples/self_hosting/Hydrogen.Compiler.hyproj
 build/hy test samples/self_hosting/Hydrogen.Compiler.hyproj
 build/hy run samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- tokens tests/hello_world.hy
 build/hy run samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- parse tests/hello_world.hy
+build/hy run samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- check tests/phase6/native_hello.hy
+build/hy run samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- compile tests/phase6/native_hello.hy -o build/native_hello
+chmod +x build/native_hello
+./build/native_hello
 
 # Emit debug metadata alongside generated output
 build/hy build tests/hello_world.hy -o build/hello_world_debug --debug
@@ -187,6 +191,6 @@ Current bootstrap boundaries:
 
 ## Roadmap
 
-Hylang is developed in phases toward a self-hosted compiler and first-class support for Australis OS userland. Phase 5 has landed the first reusable Hydrogen compiler libraries under `samples/self_hosting`; Phase 6 is where the real self-hosted compiler effort begins.
+Hylang is developed in phases toward a self-hosted compiler and first-class support for Australis OS userland. Phase 6 is now in progress under `samples/self_hosting`; the current native path can already write a tiny Linux x64 ELF directly from Hydrogen, while full self-hosting still requires binder/runtime/backend expansion and stage1/stage2 comparison.
 
 See [ROADMAP.md](ROADMAP.md) for the full plan.

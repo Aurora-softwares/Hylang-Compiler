@@ -1,0 +1,12 @@
+format = 2
+name = "Hydrogen.Compiler.IR"
+version = "0.1.0"
+type = "lib"
+sources = ["IrProgram.hy"]
+project_references = ["../Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj"]
+
+[package]
+id = "Hydrogen.Compiler.IR"
+description = "Phase 6 Hydrogen typed IR foundation"
+authors = ["Aurora Softwares"]
+license = "MIT"
