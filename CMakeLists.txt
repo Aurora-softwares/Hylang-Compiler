@@ -1131,7 +1131,7 @@ add_test(
     NAME hy_self_hosting_check_tiny_program
     COMMAND hy run ${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- check ${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/native_hello.hy
 )
-set_tests_properties(hy_self_hosting_check_tiny_program PROPERTIES PASS_REGULAR_EXPRESSION "Program.WriteLine")
+set_tests_properties(hy_self_hosting_check_tiny_program PROPERTIES PASS_REGULAR_EXPRESSION "WriteLineLiteral\\(\\\"Hydrogen native hello\\\"\\)")
 
 add_test(
     NAME hy_self_hosting_compile_native_hello_elf

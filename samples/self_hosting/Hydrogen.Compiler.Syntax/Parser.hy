@@ -1,16 +1,15 @@
 using Hydrogen.Compiler.Diagnostics;
 using Hydrogen.Compiler.Text;
-using System.Collections;
 
 namespace Hydrogen.Compiler.Syntax {
     public class Parser {
-        private List<SyntaxToken> tokens;
+        private SyntaxTokenList tokens;
         private DiagnosticBag diagnostics;
         private int index;
         private string output;
         private int indent;
 
-        public Parser(List<SyntaxToken> inputTokens, DiagnosticBag inputDiagnostics) {
+        public Parser(SyntaxTokenList inputTokens, DiagnosticBag inputDiagnostics) {
             tokens = inputTokens;
             diagnostics = inputDiagnostics;
             index = 0;

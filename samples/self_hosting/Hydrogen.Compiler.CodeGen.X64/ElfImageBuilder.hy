@@ -2,21 +2,199 @@ using Hydrogen.Compiler.IR;
 
 namespace Hydrogen.Compiler.CodeGen.X64 {
     public class ElfImageBuilder {
+        public byte[] BuildText(string text, int exitCode) {
+            return BuildSysWriteExit(text, exitCode);
+        }
+
         public byte[] BuildWriteLineProgram(IrProgram program) {
             string text = program.Message() + "\n";
-            int codeOffset = 120;
-            int codeSize = 46;
-            int totalSize = codeOffset + codeSize + text.Length;
-            byte[] image = new byte[totalSize];
+            return BuildSysWriteExit(text, program.ExitCode());
+        }
 
+        public byte[] BuildIrModuleDebug(IrModule module) {
+            return BuildSysWriteExit(module.ToDebugText(), 0);
+        }
+
+        public byte[] BuildEntryPoint(IrEntryPoint entryPoint) {
+            // Emit a write syscall for each WriteLine literal, then exit(exitCode).
+            IrOp[] ops = entryPoint.Ops();
+
+            // Gather payloads and final exit code.
+            string[] payloads = new string[0];
+            int payloadCount = 0;
+            int exitCode = 0;
+            int i = 0;
+            while (i < ops.Length) {
+                if (ops[i].Kind() == IrOp.KindWriteLineLiteral()) {
+                    payloads = AppendString(payloads, payloadCount, ops[i].Text() + "\n");
+                    payloadCount = payloadCount + 1;
+                } else if (ops[i].Kind() == IrOp.KindExit()) {
+                    exitCode = ops[i].ExitCode();
+                }
+                i = i + 1;
+            }
+
+            int headerSize = 64 + 56;
+            X64Assembler code = new X64Assembler();
+
+            int[] leaSites = new int[0];
+            int leaCount = 0;
+            int[] payloadIndexByLea = new int[0];
+            int payloadIndexCount = 0;
+
+            int p = 0;
+            while (p < payloadCount) {
+                // mov rax, 1
+                code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc0); code.Emit32(1);
+                // mov rdi, 1
+                code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc7); code.Emit32(1);
+                // lea rsi, [rip+disp32] (patch later)
+                int leaStart = code.Position();
+                code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x35); code.Emit32(0);
+                leaSites = AppendInt(leaSites, leaCount, leaStart);
+                leaCount = leaCount + 1;
+                payloadIndexByLea = AppendInt(payloadIndexByLea, payloadIndexCount, p);
+                payloadIndexCount = payloadIndexCount + 1;
+                // mov rdx, len
+                code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc2); code.Emit32(payloads[p].Length);
+                // syscall
+                code.EmitByte(0x0f); code.EmitByte(0x05);
+                p = p + 1;
+            }
+
+            // exit(exitCode)
+            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc0); code.Emit32(60);
+            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc7); code.Emit32(exitCode);
+            code.EmitByte(0x0f); code.EmitByte(0x05);
+
+            byte[] codeBytes = code.ToArray();
+            int codeOffset = headerSize;
+
+            // rodata starts after code
+            int rodataOffset = codeOffset + codeBytes.Length;
+            int[] payloadOffsets = new int[payloadCount];
+            int roCursor = rodataOffset;
+            int pi = 0;
+            while (pi < payloadCount) {
+                payloadOffsets[pi] = roCursor;
+                roCursor = roCursor + payloads[pi].Length;
+                pi = pi + 1;
+            }
+            int totalSize = roCursor;
+
+            // Patch each lea to point at its payload
+            int l = 0;
+            while (l < leaCount) {
+                int leaStart = leaSites[l];
+                int payloadIndex = payloadIndexByLea[l];
+                int target = payloadOffsets[payloadIndex];
+                int nextIp = codeOffset + leaStart + 7;
+                int disp = target - nextIp;
+                WriteDisp32(codeBytes, leaStart + 3, disp);
+                l = l + 1;
+            }
+
+            byte[] image = new byte[totalSize];
             WriteElfHeader(image, codeOffset);
             WriteProgramHeader(image, totalSize);
-            WriteCode(image, codeOffset, text.Length, program.ExitCode());
 
-            int index = 0;
-            while (index < text.Length) {
-                image[codeOffset + codeSize + index] = (byte)AsciiCode(text[index]);
-                index = index + 1;
+            int ci = 0;
+            while (ci < codeBytes.Length) {
+                image[codeOffset + ci] = codeBytes[ci];
+                ci = ci + 1;
+            }
+
+            int dataCursor = rodataOffset;
+            int di = 0;
+            while (di < payloadCount) {
+                string payload = payloads[di];
+                int k = 0;
+                while (k < payload.Length) {
+                    image[dataCursor + k] = (byte)AsciiCode(payload[k]);
+                    k = k + 1;
+                }
+                dataCursor = dataCursor + payload.Length;
+                di = di + 1;
+            }
+
+            return image;
+        }
+
+        private void WriteDisp32(byte[] bytes, int offset, int value) {
+            int temp = value;
+            bytes[offset + 0] = (byte)Mod256(temp);
+            temp = temp / 256;
+            bytes[offset + 1] = (byte)Mod256(temp);
+            temp = temp / 256;
+            bytes[offset + 2] = (byte)Mod256(temp);
+            temp = temp / 256;
+            bytes[offset + 3] = (byte)Mod256(temp);
+        }
+
+        private int Mod256(int value) {
+            int result = value % 256;
+            if (result < 0) {
+                result = result + 256;
+            }
+            return result;
+        }
+
+        private byte[] BuildSysWriteExit(string text, int exitCode) {
+            string payload = text;
+            if (payload.Length == 0 || payload[payload.Length - 1] != "\n") {
+                payload = payload + "\n";
+            }
+
+            // ELF layout: [hdr64=64][phdr=56][padding...][code][rodata]
+            int headerSize = 64 + 56;
+            X64Assembler code = new X64Assembler();
+
+            // Linux syscall ABI:
+            // write(1, rip+disp32, len); exit(exitCode)
+            //
+            // mov rax, 1
+            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc0); code.Emit32(1);
+            // mov rdi, 1
+            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc7); code.Emit32(1);
+            // lea rsi, [rip+disp32]  (disp patched later)
+            int leaOffset = code.Position();
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x35); code.Emit32(0);
+            // mov rdx, len
+            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc2); code.Emit32(payload.Length);
+            // syscall
+            code.EmitByte(0x0f); code.EmitByte(0x05);
+            // mov rax, 60
+            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc0); code.Emit32(60);
+            // mov rdi, exitCode
+            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc7); code.Emit32(exitCode);
+            // syscall
+            code.EmitByte(0x0f); code.EmitByte(0x05);
+
+            byte[] codeBytes = code.ToArray();
+            int codeOffset = headerSize;
+            int rodataOffset = codeOffset + codeBytes.Length;
+            int totalSize = rodataOffset + payload.Length;
+
+            // Patch RIP-relative displacement: target = rodataOffset, nextIP = leaEnd
+            int leaInstrStart = leaOffset;
+            int nextIp = codeOffset + leaInstrStart + 7;
+            int disp = rodataOffset - nextIp;
+            WriteDisp32(codeBytes, leaInstrStart + 3, disp);
+
+            byte[] image = new byte[totalSize];
+            WriteElfHeader(image, codeOffset);
+            WriteProgramHeader(image, totalSize);
+
+            int i = 0;
+            while (i < codeBytes.Length) {
+                image[codeOffset + i] = codeBytes[i];
+                i = i + 1;
+            }
+
+            int j = 0;
+            while (j < payload.Length) {
+                image[rodataOffset + j] = (byte)AsciiCode(payload[j]);
+                j = j + 1;
             }
 
             return image;
@@ -57,53 +235,26 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             Write64(image, 112, 0x1000);
         }
 
-        private void WriteCode(byte[] image, int offset, int messageLength, int exitCode) {
-            int index = offset;
-            index = Emit(image, index, 0x48);
-            index = Emit(image, index, 0xc7);
-            index = Emit(image, index, 0xc0);
-            Write32(image, index, 1);
-            index = index + 4;
-
-            index = Emit(image, index, 0x48);
-            index = Emit(image, index, 0xc7);
-            index = Emit(image, index, 0xc7);
-            Write32(image, index, 1);
-            index = index + 4;
-
-            index = Emit(image, index, 0x48);
-            index = Emit(image, index, 0x8d);
-            index = Emit(image, index, 0x35);
-            Write32(image, index, 25);
-            index = index + 4;
-
-            index = Emit(image, index, 0x48);
-            index = Emit(image, index, 0xc7);
-            index = Emit(image, index, 0xc2);
-            Write32(image, index, messageLength);
-            index = index + 4;
-
-            index = Emit(image, index, 0x0f);
-            index = Emit(image, index, 0x05);
-
-            index = Emit(image, index, 0x48);
-            index = Emit(image, index, 0xc7);
-            index = Emit(image, index, 0xc0);
-            Write32(image, index, 60);
-            index = index + 4;
-
-            index = Emit(image, index, 0x48);
-            index = Emit(image, index, 0xc7);
-            index = Emit(image, index, 0xc7);
-            Write32(image, index, exitCode);
-            index = index + 4;
-            index = Emit(image, index, 0x0f);
-            Emit(image, index, 0x05);
+        private string[] AppendString(string[] items, int count, string item) {
+            string[] next = new string[count + 1];
+            int i = 0;
+            while (i < count) {
+                next[i] = items[i];
+                i = i + 1;
+            }
+            next[count] = item;
+            return next;
         }
 
-        private int Emit(byte[] image, int offset, int value) {
-            SetByte(image, offset, value);
-            return offset + 1;
+        private int[] AppendInt(int[] items, int count, int item) {
+            int[] next = new int[count + 1];
+            int i = 0;
+            while (i < count) {
+                next[i] = items[i];
+                i = i + 1;
+            }
+            next[count] = item;
+            return next;
         }
 
         private void SetByte(byte[] image, int offset, int value) {

@@ -1,5 +1,4 @@
 using Hydrogen.Compiler.Text;
-using System.Collections;
 
 namespace Hydrogen.Compiler.Diagnostics {
     public class Diagnostic {
@@ -25,36 +24,53 @@ namespace Hydrogen.Compiler.Diagnostics {
     }
 
     public class DiagnosticBag {
-        private List<Diagnostic> diagnostics;
+        private Diagnostic[] diagnostics;
+        private int count;
 
         public DiagnosticBag() {
-            diagnostics = new List<Diagnostic>();
+            diagnostics = new Diagnostic[16];
+            count = 0;
         }
 
         public void Report(int line, int column, string message) {
-            diagnostics.Add(new Diagnostic(new TextLocation(line, column), message));
+            if (count >= diagnostics.Length) {
+                Grow();
+            }
+            diagnostics[count] = new Diagnostic(new TextLocation(line, column), message);
+            count = count + 1;
         }
 
         public int Count() {
-            return diagnostics.Count();
+            return count;
         }
 
         public Diagnostic Get(int index) {
-            return diagnostics.Get(index);
+            return diagnostics[index];
         }
 
         public bool HasErrors() {
-            return diagnostics.Count() != 0;
+            return count != 0;
         }
 
         public string ToText() {
             string result = "";
             int index = 0;
-            while (index < diagnostics.Count()) {
-                result = result + diagnostics.Get(index).ToLine() + "\n";
+            while (index < count) {
+                result = result + diagnostics[index].ToLine() + "\n";
                 index = index + 1;
             }
             return result;
+        }
+
+        private void Grow() {
+            int newSize = diagnostics.Length * 2;
+            Diagnostic[] next = new Diagnostic[newSize];
+            int i = 0;
+            while (i < diagnostics.Length) {
+                next[i] = diagnostics[i];
+                i = i + 1;
+            }
+            diagnostics = next;
         }
     }
 }

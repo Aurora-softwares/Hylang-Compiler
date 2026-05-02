@@ -2,7 +2,7 @@ format = 2
 name = "Hydrogen.Compiler.Core"
 version = "0.1.0"
 type = "lib"
-sources = ["Text.hy", "Diagnostics.hy"]
+sources = ["Text.hy", "Diagnostics.hy", "PathUtils.hy", "HyprojManifest.hy", "ProjectClosure.hy"]
 project_references = []
 
 [package]

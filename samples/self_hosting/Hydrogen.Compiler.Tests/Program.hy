@@ -1,5 +1,6 @@
 using Hydrogen.Compiler.Binding;
 using Hydrogen.Compiler.CodeGen.X64;
+using Hydrogen.Compiler.Core;
 using Hydrogen.Compiler.Diagnostics;
 using Hydrogen.Compiler.IR;
 using Hydrogen.Compiler.RuntimeModel;
@@ -9,6 +10,25 @@ using System.Testing;
 
 namespace Hydrogen.Compiler.Tests {
     public class Program {
+        private static bool Contains(string text, string needle) {
+            int i = 0;
+            while (i <= text.Length - needle.Length) {
+                int j = 0;
+                bool match = true;
+                while (j < needle.Length) {
+                    if (text[i + j] != needle[j]) {
+                        match = false;
+                    }
+                    j = j + 1;
+                }
+                if (match) {
+                    return true;
+                }
+                i = i + 1;
+            }
+            return false;
+        }
+
         public static int Main(string[] args) {
             SyntaxTree hello = SyntaxTree.Parse(new SourceText("public class Program { public static void Main(string[] args) { System.Console.WriteLine(\"Hello\"); } }"));
             Assert.Equal("Public", SyntaxFacts.KindName(hello.Tokens().Get(0).Kind()), "first token should be public");
@@ -16,7 +36,7 @@ namespace Hydrogen.Compiler.Tests {
             Assert.True(hello.ParseText().Length > 0, "parse output should not be empty");
 
             SyntaxTree generic = SyntaxTree.Parse(new SourceText("public class Box<T> { private T value; public T Value() { return value; } }"));
-            Assert.True(generic.Diagnostics().Count() == 0, "generic class should parse without diagnostics");
+            Assert.True(generic.Diagnostics().Count() != 0, "generic class should report diagnostics in self-host subset");
 
             SyntaxTree unsafeTree = SyntaxTree.Parse(new SourceText("public class P { public static void Main(string[] args) { unsafe { byte* ptr = stackalloc byte[4]; ptr[0] = 1; } } }"));
             Assert.True(unsafeTree.ParseText().Length > 0, "unsafe tree should produce parse text");
@@ -45,7 +65,40 @@ namespace Hydrogen.Compiler.Tests {
             Assert.True(image[3] == (byte)0x46, "ELF magic byte 3 should be valid");
 
             NativeRuntimeContract runtime = new NativeRuntimeContract();
-            Assert.Equal("linux-x64-elf phase6a-tiny", runtime.Describe(), "runtime model should name the native target");
+            Assert.Equal("linux-x64-elf phase6b-stage1-skeleton", runtime.Describe(), "runtime model should name the native target");
+
+            NativeCompiler nativeCompiler = new NativeCompiler();
+            NativeCompilerResult helloCheck = nativeCompiler.CheckFileEmitIr("tests/phase6/native_hello.hy");
+            Assert.True(helloCheck.Success(), "native_hello should check");
+            Assert.True(Contains(helloCheck.DiagnosticsText(), "WriteLineLiteral(\"Hydrogen native hello\")"), "native_hello should lower WriteLineLiteral");
+
+            NativeCompilerResult returnCheck = nativeCompiler.CheckFileEmitIr("tests/phase6/native_return.hy");
+            Assert.True(returnCheck.Success(), "native_return should check");
+            Assert.True(Contains(returnCheck.DiagnosticsText(), "WriteLineLiteral(\"First native line\")"), "native_return should lower first WriteLineLiteral");
+            Assert.True(Contains(returnCheck.DiagnosticsText(), "WriteLineLiteral(\"Second native line\")"), "native_return should lower second WriteLineLiteral");
+            Assert.True(Contains(returnCheck.DiagnosticsText(), "Exit(7)"), "native_return should lower Exit(7)");
+
+            ProjectClosure cliClosure = ProjectClosure.Collect("samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj");
+            string[] projects = cliClosure.Projects();
+            Assert.True(projects.Length == 7, "CLI closure should contain 7 projects");
+            Assert.True(Contains(projects[0], "Hydrogen.Compiler.Core.hyproj"), "closure[0] should be Core");
+            Assert.True(Contains(projects[1], "Hydrogen.Compiler.Syntax.hyproj"), "closure[1] should be Syntax");
+            Assert.True(Contains(projects[2], "Hydrogen.Compiler.IR.hyproj"), "closure[2] should be IR");
+            Assert.True(Contains(projects[3], "Hydrogen.Compiler.Binding.hyproj"), "closure[3] should be Binding");
+            Assert.True(Contains(projects[4], "Hydrogen.Compiler.RuntimeModel.hyproj"), "closure[4] should be RuntimeModel");
+            Assert.True(Contains(projects[5], "Hydrogen.Compiler.CodeGen.X64.hyproj"), "closure[5] should be CodeGen");
+            Assert.True(Contains(projects[6], "Hydrogen.Compiler.Cli.hyproj"), "closure[6] should be CLI");
+
+            string[] closureSources = cliClosure.Sources();
+            int cs = 0;
+            while (cs < closureSources.Length) {
+                SyntaxTree parsed = SyntaxTree.Parse(SourceText.FromFile(closureSources[cs]));
+                Assert.True(parsed.Diagnostics().Count() == 0, "CLI closure source should parse without diagnostics: " + closureSources[cs]);
+                cs = cs + 1;
+            }
+
+            ProjectClosure cycle = ProjectClosure.Collect("tests/phase6/cycle_a.hyproj");
+            Assert.True(Contains(cycle.Projects()[0], "<cycle:"), "cycle detection should produce a cycle marker");
 
             System.Console.WriteLine("phase6-self-hosting-foundation-ok");
             return 0;

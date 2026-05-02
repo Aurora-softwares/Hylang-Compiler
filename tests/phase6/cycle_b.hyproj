@@ -1,0 +1,7 @@
+format = 2
+name = "CycleB"
+version = "0.1.0"
+type = "exe"
+sources = ["native_return.hy"]
+project_references = ["cycle_a.hyproj"]
+

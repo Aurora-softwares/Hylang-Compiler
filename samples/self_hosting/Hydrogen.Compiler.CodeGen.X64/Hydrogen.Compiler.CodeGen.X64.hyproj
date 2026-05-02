@@ -2,7 +2,7 @@ format = 2
 name = "Hydrogen.Compiler.CodeGen.X64"
 version = "0.1.0"
 type = "lib"
-sources = ["ElfImageBuilder.hy", "NativeCompiler.hy"]
+sources = ["X64Assembler.hy", "ElfImageBuilder.hy", "IrLowering.hy", "NativeCompiler.hy"]
 project_references = ["../Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj", "../Hydrogen.Compiler.Syntax/Hydrogen.Compiler.Syntax.hyproj", "../Hydrogen.Compiler.Binding/Hydrogen.Compiler.Binding.hyproj", "../Hydrogen.Compiler.IR/Hydrogen.Compiler.IR.hyproj", "../Hydrogen.Compiler.RuntimeModel/Hydrogen.Compiler.RuntimeModel.hyproj"]
 
 [package]

@@ -2,7 +2,7 @@ format = 2
 name = "Hydrogen.Compiler.IR"
 version = "0.1.0"
 type = "lib"
-sources = ["IrProgram.hy"]
+sources = ["IrProgram.hy", "IrEntryPoint.hy", "IrFunction.hy", "IrModule.hy"]
 project_references = ["../Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj"]
 
 [package]

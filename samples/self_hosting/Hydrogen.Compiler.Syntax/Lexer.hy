@@ -1,6 +1,5 @@
 using Hydrogen.Compiler.Diagnostics;
 using Hydrogen.Compiler.Text;
-using System.Collections;
 
 namespace Hydrogen.Compiler.Syntax {
     public class Lexer {
@@ -18,8 +17,8 @@ namespace Hydrogen.Compiler.Syntax {
             column = 1;
         }
 
-        public List<SyntaxToken> LexAll() {
-            List<SyntaxToken> tokens = new List<SyntaxToken>();
+        public SyntaxTokenList LexAll() {
+            SyntaxTokenList tokens = new SyntaxTokenList();
             while (true) {
                 SyntaxToken token = NextToken();
                 tokens.Add(token);
