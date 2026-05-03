@@ -18,6 +18,10 @@ namespace Hydrogen.Compiler.Syntax {
             int namespaceCount = 0;
             ClassDeclarationSyntax[] classes = new ClassDeclarationSyntax[0];
             int classCount = 0;
+			EnumDeclarationSyntax[] enums = new EnumDeclarationSyntax[0];
+			int enumCount = 0;
+			InterfaceDeclarationSyntax[] interfaces = new InterfaceDeclarationSyntax[0];
+			int interfaceCount = 0;
 
             while (!Check(SyntaxKind.EndOfFileToken)) {
                 SkipModifiers();
@@ -31,11 +35,22 @@ namespace Hydrogen.Compiler.Syntax {
                     classCount = classCount + 1;
                     continue;
                 }
+				if (Check(SyntaxKind.EnumKeyword)) {
+					enums = AppendEnum(enums, enumCount, ParseEnum());
+					enumCount = enumCount + 1;
+					continue;
+				}
+				if (Check(SyntaxKind.InterfaceKeyword)) {
+					interfaces = AppendInterface(interfaces, interfaceCount, ParseInterface());
+					interfaceCount = interfaceCount + 1;
+					continue;
+				}
+
                 diagnostics.Report(Current().Line(), Current().Column(), "Expected namespace or class declaration");
                 Advance();
             }
             Consume(SyntaxKind.EndOfFileToken, "Expected end of file");
-            return new CompilationUnitSyntax(usings, namespaces, classes);
+            return new CompilationUnitSyntax(usings, namespaces, classes, enums, interfaces);
         }
 
         private UsingDirectiveSyntax[] ParseUsingDirectives() {
@@ -57,6 +72,11 @@ namespace Hydrogen.Compiler.Syntax {
             Consume(SyntaxKind.OpenBraceToken, "Expected '{' after namespace");
             ClassDeclarationSyntax[] classes = new ClassDeclarationSyntax[0];
             int classCount = 0;
+			EnumDeclarationSyntax[] enums = new EnumDeclarationSyntax[0];
+			int enumCount = 0;
+			InterfaceDeclarationSyntax[] interfaces = new InterfaceDeclarationSyntax[0];
+			int interfaceCount = 0;
+
             while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
                 SkipModifiers();
                 if (Check(SyntaxKind.ClassKeyword) || Check(SyntaxKind.StructKeyword)) {
@@ -64,11 +84,21 @@ namespace Hydrogen.Compiler.Syntax {
                     classCount = classCount + 1;
                     continue;
                 }
+				if (Check(SyntaxKind.EnumKeyword)) {
+					enums = AppendEnum(enums, enumCount, ParseEnum());
+					enumCount = enumCount + 1;
+					continue;
+				}
+				if (Check(SyntaxKind.InterfaceKeyword)) {
+					interfaces = AppendInterface(interfaces, interfaceCount, ParseInterface());
+					interfaceCount = interfaceCount + 1;
+					continue;
+				}
                 diagnostics.Report(Current().Line(), Current().Column(), "Expected class declaration");
                 Advance();
             }
             Consume(SyntaxKind.CloseBraceToken, "Expected '}' after namespace");
-            return new NamespaceDeclarationSyntax(name, classes);
+            return new NamespaceDeclarationSyntax(name, classes, enums, interfaces);
         }
 
         private ClassDeclarationSyntax ParseClass() {
@@ -99,12 +129,20 @@ namespace Hydrogen.Compiler.Syntax {
             int count = 0;
             while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
                 bool isStatic = false;
-                while (SyntaxFacts.IsModifier(Current().Kind())) {
-                    if (Current().Kind() == SyntaxKind.StaticKeyword) {
-                        isStatic = true;
-                    }
-                    Advance();
-                }
+				bool isVirtual = false;
+				bool isOverride = false;
+				while (SyntaxFacts.IsModifier(Current().Kind())) {
+					if (Current().Kind() == SyntaxKind.StaticKeyword) {
+						isStatic = true;
+					}
+					if (Current().Kind() == SyntaxKind.VirtualKeyword) {
+						isVirtual = true;
+					}
+					if (Current().Kind() == SyntaxKind.OverrideKeyword) {
+						isOverride = true;
+					}
+					Advance();
+				}
 
                 TypeSyntax returnType = ParseType();
                 string name = "";
@@ -113,7 +151,7 @@ namespace Hydrogen.Compiler.Syntax {
                     if (Check(SyntaxKind.OpenParenToken)) {
                         ParameterSyntax[] parameters = ParseParameterList();
                         StatementSyntax body = ParseBlock();
-                        methods = AppendMethod(methods, count, new MethodDeclarationSyntax(name, isStatic, returnType, parameters, body));
+                        methods = AppendMethod(methods, count, new MethodDeclarationSyntax(name, isStatic, isVirtual, isOverride, returnType, parameters, body));
                         count = count + 1;
                         continue;
                     }
@@ -121,7 +159,7 @@ namespace Hydrogen.Compiler.Syntax {
                     // Constructor: no explicit return type. Treat as void-returning method named after the type.
                     ParameterSyntax[] parameters2 = ParseParameterList();
                     StatementSyntax body2 = ParseBlock();
-                    methods = AppendMethod(methods, count, new MethodDeclarationSyntax(returnType.DisplayName(), false, new TypeSyntax("void"), parameters2, body2));
+                    methods = AppendMethod(methods, count, new MethodDeclarationSyntax(returnType.DisplayName(), false, false, false, new TypeSyntax("void"), parameters2, body2));
                     count = count + 1;
                     continue;
                 } else {
@@ -136,6 +174,83 @@ namespace Hydrogen.Compiler.Syntax {
             }
             return methods;
         }
+
+		private EnumDeclarationSyntax ParseEnum() {
+			Consume(SyntaxKind.EnumKeyword, "Expected enum");
+			string name = ConsumeIdentifier("Expected enum name");
+
+			Consume(SyntaxKind.OpenBraceToken, "Expected '{' after enum name");
+
+			EnumMemberSyntax[] members = new EnumMemberSyntax[0];
+			int count = 0;
+			int nextValue = 0;
+
+			while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+				string memberName = ConsumeIdentifier("Expected enum member name");
+
+				int value = nextValue;
+				bool hasExplicitValue = false;
+
+				if (Check(SyntaxKind.EqualsToken)) {
+					Advance();
+
+					if (Check(SyntaxKind.NumberToken)) {
+						value = ParseDecimalIntLiteral(Current());
+						hasExplicitValue = true;
+						Advance();
+					} else {
+						diagnostics.Report(Current().Line(), Current().Column(), "Expected numeric enum value");
+					}
+				}
+
+				members = AppendEnumMember(members, count, new EnumMemberSyntax(memberName, value, hasExplicitValue));
+				count = count + 1;
+				nextValue = value + 1;
+
+				if (Check(SyntaxKind.CommaToken)) {
+					Advance();
+					continue;
+				}
+
+				if (!Check(SyntaxKind.CloseBraceToken)) {
+					diagnostics.Report(Current().Line(), Current().Column(), "Expected ',' or '}' after enum member");
+					Advance();
+				}
+			}
+
+			Consume(SyntaxKind.CloseBraceToken, "Expected '}' after enum");
+			return new EnumDeclarationSyntax(name, members);
+		}
+
+		private InterfaceDeclarationSyntax ParseInterface() {
+			Consume(SyntaxKind.InterfaceKeyword, "Expected interface");
+			string name = ConsumeIdentifier("Expected interface name");
+
+			Consume(SyntaxKind.OpenBraceToken, "Expected '{' after interface name");
+
+			MethodDeclarationSyntax[] methods = new MethodDeclarationSyntax[0];
+			int count = 0;
+
+			while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+				SkipModifiers();
+
+				TypeSyntax returnType = ParseType();
+				string methodName = ConsumeIdentifier("Expected interface method name");
+				ParameterSyntax[] parameters = ParseParameterList();
+
+				Consume(SyntaxKind.SemicolonToken, "Expected ';' after interface method");
+
+				methods = AppendMethod(
+					methods,
+					count,
+					new MethodDeclarationSyntax(methodName, false, false, false, returnType, parameters, null)
+				);
+				count = count + 1;
+			}
+
+			Consume(SyntaxKind.CloseBraceToken, "Expected '}' after interface");
+			return new InterfaceDeclarationSyntax(name, methods);
+		}
 
         private ParameterSyntax[] ParseParameterList() {
             Consume(SyntaxKind.OpenParenToken, "Expected '('");
@@ -184,6 +299,26 @@ namespace Hydrogen.Compiler.Syntax {
             if (Check(SyntaxKind.ReturnKeyword)) {
                 return ParseReturn();
             }
+			if (Check(SyntaxKind.TryKeyword)) {
+				return ParseTry();
+			}
+			if (Check(SyntaxKind.ThrowKeyword)) {
+				return ParseThrow();
+			}
+			if (Check(SyntaxKind.BreakKeyword)) {
+				Advance();
+				Consume(SyntaxKind.SemicolonToken, "Expected ';' after break");
+				return StatementSyntax.Break();
+			}
+			if (Check(SyntaxKind.ContinueKeyword)) {
+				Advance();
+				Consume(SyntaxKind.SemicolonToken, "Expected ';' after continue");
+				return StatementSyntax.Continue();
+			}
+			if (Check(SyntaxKind.UnsafeKeyword)) {
+				Advance();
+				return ParseBlock();
+			}
 
             // local declaration: <type|var> <id> [= expr] ;
             if (LooksLikeLocalDeclaration()) {
@@ -263,6 +398,36 @@ namespace Hydrogen.Compiler.Syntax {
             Consume(SyntaxKind.SemicolonToken, "Expected ';' after return");
             return StatementSyntax.Return(expression);
         }
+
+		private StatementSyntax ParseTry() {
+			Consume(SyntaxKind.TryKeyword, "Expected try");
+			StatementSyntax tryBlock = ParseBlock();
+			Consume(SyntaxKind.CatchKeyword, "Expected catch after try block");
+
+			TypeSyntax catchType = new TypeSyntax("string");
+			string catchName = "";
+			if (Check(SyntaxKind.OpenParenToken)) {
+				Advance();
+				catchType = ParseType();
+				catchName = ConsumeIdentifier("Expected catch variable name");
+				Consume(SyntaxKind.CloseParenToken, "Expected ')' after catch clause");
+			}
+
+			StatementSyntax catchBlock = ParseBlock();
+			return StatementSyntax.Try(tryBlock, catchType, catchName, catchBlock);
+		}
+
+		private StatementSyntax ParseThrow() {
+			Consume(SyntaxKind.ThrowKeyword, "Expected throw");
+			ExpressionSyntax expression = null;
+			if (!Check(SyntaxKind.SemicolonToken)) {
+				expression = ParseExpression();
+			} else {
+				diagnostics.Report(Current().Line(), Current().Column(), "Expected expression after throw");
+			}
+			Consume(SyntaxKind.SemicolonToken, "Expected ';' after throw");
+			return StatementSyntax.Throw(expression);
+		}
 
         private ExpressionSyntax ParseExpression() {
             return ParseAssignment();
@@ -395,9 +560,27 @@ namespace Hydrogen.Compiler.Syntax {
                 ExpressionSyntax[] ctorArgs = ParseArgumentList();
                 return ExpressionSyntax.ObjectCreation(type);
             }
+			if (Check(SyntaxKind.SizeOfKeyword)) {
+				Advance();
+				Consume(SyntaxKind.OpenParenToken, "Expected '(' after sizeof");
+				TypeSyntax type = ParseType();
+				Consume(SyntaxKind.CloseParenToken, "Expected ')' after sizeof type");
+				return ExpressionSyntax.SizeOf(type);
+			}
             if (Current().Kind() == SyntaxKind.IdentifierToken) {
                 return ExpressionSyntax.NameExpr(Advance().Text());
             }
+			if (Check(SyntaxKind.StackAllocKeyword)) {
+				Advance();
+
+				TypeSyntax type = ParseType();
+
+				Consume(SyntaxKind.OpenBracketToken, "Expected '[' after stackalloc type");
+				ExpressionSyntax size = ParseExpression();
+				Consume(SyntaxKind.CloseBracketToken, "Expected ']'");
+
+				return ExpressionSyntax.ArrayCreation(type, size);
+			}
 
             diagnostics.Report(Current().Line(), Current().Column(), "Expected expression");
             // Ensure we always make progress to avoid infinite loops on unexpected tokens.
@@ -613,6 +796,28 @@ namespace Hydrogen.Compiler.Syntax {
             return next;
         }
 
+		private EnumDeclarationSyntax[] AppendEnum(EnumDeclarationSyntax[] items, int count, EnumDeclarationSyntax item) {
+			EnumDeclarationSyntax[] next = new EnumDeclarationSyntax[count + 1];
+			int i = 0;
+			while (i < count) {
+				next[i] = items[i];
+				i = i + 1;
+			}
+			next[count] = item;
+			return next;
+		}
+
+		private InterfaceDeclarationSyntax[] AppendInterface(InterfaceDeclarationSyntax[] items, int count, InterfaceDeclarationSyntax item) {
+			InterfaceDeclarationSyntax[] next = new InterfaceDeclarationSyntax[count + 1];
+			int i = 0;
+			while (i < count) {
+				next[i] = items[i];
+				i = i + 1;
+			}
+			next[count] = item;
+			return next;
+		}
+
         private ParameterSyntax[] AppendParameter(ParameterSyntax[] items, int count, ParameterSyntax item) {
             ParameterSyntax[] next = new ParameterSyntax[count + 1];
             int i = 0;
@@ -645,5 +850,50 @@ namespace Hydrogen.Compiler.Syntax {
             next[count] = item;
             return next;
         }
+
+		private EnumMemberSyntax[] AppendEnumMember(EnumMemberSyntax[] items, int count, EnumMemberSyntax item) {
+			EnumMemberSyntax[] next = new EnumMemberSyntax[count + 1];
+			int i = 0;
+			while (i < count) {
+				next[i] = items[i];
+				i = i + 1;
+			}
+			next[count] = item;
+			return next;
+		}
+
+		private int ParseDecimalIntLiteral(SyntaxToken token) {
+			string text = token.Text();
+
+			int value = 0;
+			int i = 0;
+
+			while (i < text.Length) {
+				string ch = text[i];
+
+				int digit = -1;
+
+				if (ch == "0") { digit = 0; }
+				if (ch == "1") { digit = 1; }
+				if (ch == "2") { digit = 2; }
+				if (ch == "3") { digit = 3; }
+				if (ch == "4") { digit = 4; }
+				if (ch == "5") { digit = 5; }
+				if (ch == "6") { digit = 6; }
+				if (ch == "7") { digit = 7; }
+				if (ch == "8") { digit = 8; }
+				if (ch == "9") { digit = 9; }
+
+				if (digit < 0) {
+					diagnostics.Report(token.Line(), token.Column(), "Invalid integer literal '" + text + "'");
+					return 0;
+				}
+
+				value = value * 10 + digit;
+				i = i + 1;
+			}
+
+			return value;
+		}
     }
 }

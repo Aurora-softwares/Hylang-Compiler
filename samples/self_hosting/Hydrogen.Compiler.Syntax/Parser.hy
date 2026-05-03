@@ -226,6 +226,14 @@ namespace Hydrogen.Compiler.Syntax {
                 ParseReturnStatement();
                 return;
             }
+            if (Check(SyntaxKind.TryKeyword)) {
+                ParseTryStatement();
+                return;
+            }
+            if (Check(SyntaxKind.ThrowKeyword)) {
+                ParseThrowStatement();
+                return;
+            }
             if (Check(SyntaxKind.UnsafeKeyword)) {
                 ParseUnsafeStatement();
                 return;
@@ -294,6 +302,33 @@ namespace Hydrogen.Compiler.Syntax {
                 ParseExpression();
             }
             EmitToken(Consume(SyntaxKind.SemicolonToken, "Expected ';' after return"));
+            Pop();
+        }
+
+        private void ParseTryStatement() {
+            Emit("TryStatement");
+            Push();
+            EmitToken(Consume(SyntaxKind.TryKeyword, "Expected try"));
+            ParseBlock();
+            EmitToken(Consume(SyntaxKind.CatchKeyword, "Expected catch after try block"));
+            if (Check(SyntaxKind.OpenParenToken)) {
+                EmitToken(Advance());
+                ParseTypeSyntax();
+                EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected catch variable name"));
+                EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')' after catch clause"));
+            }
+            ParseBlock();
+            Pop();
+        }
+
+        private void ParseThrowStatement() {
+            Emit("ThrowStatement");
+            Push();
+            EmitToken(Consume(SyntaxKind.ThrowKeyword, "Expected throw"));
+            if (!Check(SyntaxKind.SemicolonToken)) {
+                ParseExpression();
+            }
+            EmitToken(Consume(SyntaxKind.SemicolonToken, "Expected ';' after throw"));
             Pop();
         }
 

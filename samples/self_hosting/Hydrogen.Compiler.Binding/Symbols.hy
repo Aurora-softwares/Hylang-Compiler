@@ -2,13 +2,9 @@ namespace Hydrogen.Compiler.Binding {
     public class TypeSymbol {
         private string name;
 
-        public TypeSymbol(string inputName) {
-            name = inputName;
-        }
+        public TypeSymbol(string inputName) { name = inputName; }
 
-        public string Name() {
-            return name;
-        }
+        public string Name() { return name; }
     }
 
     public class ParameterSymbol {
@@ -20,13 +16,9 @@ namespace Hydrogen.Compiler.Binding {
             type = inputType;
         }
 
-        public string Name() {
-            return name;
-        }
+        public string Name() { return name; }
 
-        public TypeSymbol Type() {
-            return type;
-        }
+        public TypeSymbol Type() { return type; }
     }
 
     public class MethodSymbol {
@@ -42,21 +34,39 @@ namespace Hydrogen.Compiler.Binding {
             parameters = inputParameters;
         }
 
-        public string Name() {
-            return name;
-        }
+        public string Name() { return name; }
 
-        public bool IsStatic() {
-            return isStatic;
-        }
+        public bool IsStatic() { return isStatic; }
 
-        public TypeSymbol ReturnType() {
-            return returnType;
-        }
+        public TypeSymbol ReturnType() { return returnType; }
 
-        public ParameterSymbol[] Parameters() {
-            return parameters;
-        }
+        public ParameterSymbol[] Parameters() { return parameters; }
     }
+
+	public class EnumSymbol {
+		private string name;
+		private EnumMemberSymbol[] members;
+
+		public EnumSymbol(string inputName, EnumMemberSymbol[] inputMembers) {
+			name = inputName;
+			members = inputMembers;
+		}
+
+		public string Name() { return name; }
+		public EnumMemberSymbol[] Members() { return members; }
+	}
+
+	public class EnumMemberSymbol {
+		private string name;
+		private int value;
+
+		public EnumMemberSymbol(string inputName, int inputValue) {
+			name = inputName;
+			value = inputValue;
+		}
+
+		public string Name() { return name; }
+		public int Value() { return value; }
+	}
 }
 

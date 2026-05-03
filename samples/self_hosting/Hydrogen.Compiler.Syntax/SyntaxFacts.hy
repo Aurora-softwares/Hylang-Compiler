@@ -69,6 +69,9 @@ namespace Hydrogen.Compiler.Syntax {
             if (kind == SyntaxKind.BreakKeyword) { return "Break"; }
             if (kind == SyntaxKind.ContinueKeyword) { return "Continue"; }
             if (kind == SyntaxKind.ReturnKeyword) { return "Return"; }
+            if (kind == SyntaxKind.TryKeyword) { return "Try"; }
+            if (kind == SyntaxKind.CatchKeyword) { return "Catch"; }
+            if (kind == SyntaxKind.ThrowKeyword) { return "Throw"; }
             if (kind == SyntaxKind.NewKeyword) { return "New"; }
             if (kind == SyntaxKind.ThisKeyword) { return "This"; }
             if (kind == SyntaxKind.BaseKeyword) { return "Base"; }
@@ -116,6 +119,9 @@ namespace Hydrogen.Compiler.Syntax {
             if (text == "break") { return SyntaxKind.BreakKeyword; }
             if (text == "continue") { return SyntaxKind.ContinueKeyword; }
             if (text == "return") { return SyntaxKind.ReturnKeyword; }
+            if (text == "try") { return SyntaxKind.TryKeyword; }
+            if (text == "catch") { return SyntaxKind.CatchKeyword; }
+            if (text == "throw") { return SyntaxKind.ThrowKeyword; }
             if (text == "new") { return SyntaxKind.NewKeyword; }
             if (text == "this") { return SyntaxKind.ThisKeyword; }
             if (text == "base") { return SyntaxKind.BaseKeyword; }

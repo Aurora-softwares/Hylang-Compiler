@@ -91,52 +91,119 @@ namespace Hydrogen.Compiler.Binding {
             return null;
         }
 
-        public static GlobalSymbolTable Build(CompilationUnitSyntax root, DiagnosticBag diagnostics) {
-            UsingDirectiveSyntax[] usings = root.Usings();
-            string[] typeFullNames = new string[0];
-            TypeInfo[] typeInfos = new TypeInfo[0];
-            int typeCount = 0;
+		public static GlobalSymbolTable Build(CompilationUnitSyntax root, DiagnosticBag diagnostics) {
+			UsingDirectiveSyntax[] usings = root.Usings();
+			string[] typeFullNames = new string[0];
+			TypeInfo[] typeInfos = new TypeInfo[0];
+			int typeCount = 0;
 
-            ClassDeclarationSyntax[] topClasses = root.Classes();
-            int i = 0;
-            while (i < topClasses.Length) {
-                string name = topClasses[i].Name();
-                string full = name;
-                if (Contains(typeFullNames, full)) {
-                    diagnostics.Report(1, 1, "duplicate type: " + full);
-                } else {
-                    TypeInfo info = BuildTypeInfo("", topClasses[i], usings, diagnostics);
-                    typeFullNames = AppendString(typeFullNames, typeCount, full);
-                    typeInfos = AppendType(typeInfos, typeCount, info);
-                    typeCount = typeCount + 1;
-                }
-                i = i + 1;
-            }
+			ClassDeclarationSyntax[] topClasses = root.Classes();
+			int c = 0;
+			while (c < topClasses.Length) {
+				string name = topClasses[c].Name();
+				string full = name;
+				if (Contains(typeFullNames, full)) {
+					diagnostics.Report(1, 1, "duplicate type: " + full);
+				} else {
+					TypeInfo info = BuildTypeInfo("", topClasses[c], usings, diagnostics);
+					typeFullNames = AppendString(typeFullNames, typeCount, full);
+					typeInfos = AppendType(typeInfos, typeCount, info);
+					typeCount = typeCount + 1;
+				}
+				c = c + 1;
+			}
 
-            NamespaceDeclarationSyntax[] namespaces = root.Namespaces();
-            int n = 0;
-            while (n < namespaces.Length) {
-                string nsName = namespaces[n].Name();
-                ClassDeclarationSyntax[] classes = namespaces[n].Classes();
-                int c = 0;
-                while (c < classes.Length) {
-                    string name2 = classes[c].Name();
-                    string full2 = nsName + "." + name2;
-                    if (Contains(typeFullNames, full2)) {
-                        diagnostics.Report(1, 1, "duplicate type: " + full2);
-                    } else {
-                        TypeInfo info2 = BuildTypeInfo(nsName, classes[c], usings, diagnostics);
-                        typeFullNames = AppendString(typeFullNames, typeCount, full2);
-                        typeInfos = AppendType(typeInfos, typeCount, info2);
-                        typeCount = typeCount + 1;
-                    }
-                    c = c + 1;
-                }
-                n = n + 1;
-            }
+			EnumDeclarationSyntax[] topEnums = root.Enums();
+			int e = 0;
+			while (e < topEnums.Length) {
+				string name = topEnums[e].Name();
+				string full = name;
+				if (Contains(typeFullNames, full)) {
+					diagnostics.Report(1, 1, "duplicate type: " + full);
+				} else {
+					TypeInfo info = BuildEnumTypeInfo("", topEnums[e]);
+					typeFullNames = AppendString(typeFullNames, typeCount, full);
+					typeInfos = AppendType(typeInfos, typeCount, info);
+					typeCount = typeCount + 1;
+				}
+				e = e + 1;
+			}
 
-            return new GlobalSymbolTable(typeInfos);
-        }
+			InterfaceDeclarationSyntax[] topInterfaces = root.Interfaces();
+			int i = 0;
+			while (i < topInterfaces.Length) {
+				string name = topInterfaces[i].Name();
+				string full = name;
+				if (Contains(typeFullNames, full)) {
+					diagnostics.Report(1, 1, "duplicate type: " + full);
+				} else {
+					TypeInfo info = BuildInterfaceTypeInfo("", topInterfaces[i]);
+					typeFullNames = AppendString(typeFullNames, typeCount, full);
+					typeInfos = AppendType(typeInfos, typeCount, info);
+					typeCount = typeCount + 1;
+				}
+				i = i + 1;
+			}
+
+			NamespaceDeclarationSyntax[] namespaces = root.Namespaces();
+			int n = 0;
+			while (n < namespaces.Length) {
+				string nsName = namespaces[n].Name();
+				ClassDeclarationSyntax[] classes = namespaces[n].Classes();
+				EnumDeclarationSyntax[] enums = namespaces[n].Enums();
+				InterfaceDeclarationSyntax[] interfaces = namespaces[n].Interfaces();
+
+				int c2 = 0;
+				while (c2 < classes.Length) {
+					string name2 = classes[c2].Name();
+					string full2 = nsName + "." + name2;
+					if (Contains(typeFullNames, full2)) {
+						diagnostics.Report(1, 1, "duplicate type: " + full2);
+					} else {
+						TypeInfo info2 = BuildTypeInfo(nsName, classes[c2], usings, diagnostics);
+						typeFullNames = AppendString(typeFullNames, typeCount, full2);
+						typeInfos = AppendType(typeInfos, typeCount, info2);
+						typeCount = typeCount + 1;
+					}
+					c2 = c2 + 1;
+				}
+				int e2 = 0;
+				while (e2 < enums.Length) {
+					string enumName = enums[e2].Name();
+					string enumFull = nsName + "." + enumName;
+
+					if (Contains(typeFullNames, enumFull)) {
+						diagnostics.Report(1, 1, "duplicate type: " + enumFull);
+					} else {
+						TypeInfo enumInfo = BuildEnumTypeInfo(nsName, enums[e2]);
+						typeFullNames = AppendString(typeFullNames, typeCount, enumFull);
+						typeInfos = AppendType(typeInfos, typeCount, enumInfo);
+						typeCount = typeCount + 1;
+					}
+
+					e2 = e2 + 1;
+				}
+				int i2 = 0;
+				while (i2 < interfaces.Length) {
+					string interfaceName = interfaces[i2].Name();
+					string interfaceFull = nsName + "." + interfaceName;
+
+					if (Contains(typeFullNames, interfaceFull)) {
+						diagnostics.Report(1, 1, "duplicate type: " + interfaceFull);
+					} else {
+						TypeInfo interfaceInfo = BuildInterfaceTypeInfo(nsName, interfaces[i2]);
+						typeFullNames = AppendString(typeFullNames, typeCount, interfaceFull);
+						typeInfos = AppendType(typeInfos, typeCount, interfaceInfo);
+						typeCount = typeCount + 1;
+					}
+
+					i2 = i2 + 1;
+				}
+				n = n + 1;
+			}
+
+			return new GlobalSymbolTable(typeInfos);
+		}
 
         public TypeInfo TryResolveType(string typeName, string currentNamespaceName, UsingDirectiveSyntax[] usings) {
             string resolved = ResolveTypeName(typeName, currentNamespaceName, usings);
@@ -220,6 +287,16 @@ namespace Hydrogen.Compiler.Binding {
 
             return new TypeInfo(namespaceName, cl.Name(), methods);
         }
+
+		private static TypeInfo BuildEnumTypeInfo(string namespaceName, EnumDeclarationSyntax en) {
+			MethodSignature[] methods = new MethodSignature[0];
+			return new TypeInfo(namespaceName, en.Name(), methods);
+		}
+
+		private static TypeInfo BuildInterfaceTypeInfo(string namespaceName, InterfaceDeclarationSyntax iface) {
+			MethodSignature[] methods = BuildInterfaceMethods(iface.Methods());
+			return new TypeInfo(namespaceName, iface.Name(), methods);
+		}
 
         private static bool Contains(string[] items, string value) {
             int i = 0;
@@ -306,5 +383,34 @@ namespace Hydrogen.Compiler.Binding {
             next[count] = item;
             return next;
         }
+
+		private static MethodSignature[] BuildInterfaceMethods(MethodDeclarationSyntax[] methods) {
+			MethodSignature[] signatures = new MethodSignature[methods.Length];
+
+			int i = 0;
+			while (i < methods.Length) {
+				ParameterSyntax[] parameters = methods[i].Parameters();
+				TypeSymbol[] parameterTypes = new TypeSymbol[parameters.Length];
+
+				int p = 0;
+				while (p < parameters.Length) {
+					parameterTypes[p] = new TypeSymbol(parameters[p].Type().DisplayName());
+					p = p + 1;
+				}
+
+				TypeSymbol returnType = new TypeSymbol(methods[i].ReturnType().DisplayName());
+
+				signatures[i] = new MethodSignature(
+					methods[i].Name(),
+					methods[i].IsStatic(),
+					returnType,
+					parameterTypes
+				);
+
+				i = i + 1;
+			}
+
+			return signatures;
+		}
     }
 }

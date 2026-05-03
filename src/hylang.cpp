@@ -168,6 +168,9 @@ enum class TokenKind {
     Break,
     Continue,
     Return,
+    Try,
+    Catch,
+    Throw,
     New,
     This,
     Base,
@@ -421,6 +424,9 @@ private:
             {"break", TokenKind::Break},
             {"continue", TokenKind::Continue},
             {"return", TokenKind::Return},
+            {"try", TokenKind::Try},
+            {"catch", TokenKind::Catch},
+            {"throw", TokenKind::Throw},
             {"new", TokenKind::New},
             {"this", TokenKind::This},
             {"base", TokenKind::Base},
@@ -653,6 +659,19 @@ struct BreakStatementSyntax final : StatementSyntax {};
 struct ContinueStatementSyntax final : StatementSyntax {};
 
 struct ReturnStatementSyntax final : StatementSyntax {
+    unique_ptr<ExpressionSyntax> expression;
+};
+
+struct TryStatementSyntax final : StatementSyntax {
+    unique_ptr<BlockStatementSyntax> try_block;
+    TypeSyntax catch_type;
+    string catch_variable_name;
+    int catch_line = 1;
+    int catch_column = 1;
+    unique_ptr<BlockStatementSyntax> catch_block;
+};
+
+struct ThrowStatementSyntax final : StatementSyntax {
     unique_ptr<ExpressionSyntax> expression;
 };
 
@@ -1272,6 +1291,12 @@ private:
         if (match(TokenKind::Return)) {
             return parse_return_statement(previous());
         }
+        if (match(TokenKind::Try)) {
+            return parse_try_statement(previous());
+        }
+        if (match(TokenKind::Throw)) {
+            return parse_throw_statement(previous());
+        }
         if (match(TokenKind::Unsafe)) {
             return parse_unsafe_statement(previous());
         }
@@ -1356,6 +1381,39 @@ private:
             statement->expression = parse_expression();
         }
         consume(TokenKind::Semicolon, "Expected ';' after return statement");
+        return statement;
+    }
+
+    unique_ptr<StatementSyntax> parse_try_statement(const Token& token) {
+        auto statement = std::make_unique<TryStatementSyntax>();
+        statement->line = token.line;
+        statement->column = token.column;
+        statement->try_block = parse_block_statement();
+        const Token catch_token = consume(TokenKind::Catch, "Expected 'catch' after try block");
+        statement->catch_line = catch_token.line;
+        statement->catch_column = catch_token.column;
+        if (match(TokenKind::OpenParen)) {
+            statement->catch_type = parse_type_syntax();
+            const Token name = consume(TokenKind::Identifier, "Expected catch variable name");
+            statement->catch_variable_name = name.text;
+            consume(TokenKind::CloseParen, "Expected ')' after catch clause");
+        } else {
+            statement->catch_type.name_parts.push_back("string");
+        }
+        statement->catch_block = parse_block_statement();
+        return statement;
+    }
+
+    unique_ptr<StatementSyntax> parse_throw_statement(const Token& token) {
+        auto statement = std::make_unique<ThrowStatementSyntax>();
+        statement->line = token.line;
+        statement->column = token.column;
+        if (!check(TokenKind::Semicolon)) {
+            statement->expression = parse_expression();
+        } else {
+            diagnostics_.add(file_, token.line, token.column, "Expected expression after 'throw'");
+        }
+        consume(TokenKind::Semicolon, "Expected ';' after throw statement");
         return statement;
     }
 
@@ -1801,6 +1859,8 @@ private:
                kind == TokenKind::Break ||
                kind == TokenKind::Continue ||
                kind == TokenKind::Return ||
+               kind == TokenKind::Try ||
+               kind == TokenKind::Throw ||
                kind == TokenKind::Unsafe ||
                kind == TokenKind::Var ||
                is_expression_start_token(kind) ||
@@ -1984,6 +2044,8 @@ enum class BoundStatementKind {
     Break,
     Continue,
     Return,
+    Try,
+    Throw,
 };
 
 struct BoundExpression {
@@ -2125,6 +2187,16 @@ struct BoundBreakStatement final : BoundStatement {};
 struct BoundContinueStatement final : BoundStatement {};
 
 struct BoundReturnStatement final : BoundStatement {
+    std::unique_ptr<BoundExpression> expression;
+};
+
+struct BoundTryStatement final : BoundStatement {
+    std::unique_ptr<BoundBlockStatement> try_block;
+    const VariableSymbol* catch_variable = nullptr;
+    std::unique_ptr<BoundBlockStatement> catch_block;
+};
+
+struct BoundThrowStatement final : BoundStatement {
     std::unique_ptr<BoundExpression> expression;
 };
 
@@ -4383,6 +4455,48 @@ private:
                 }
                 return bound;
             }
+            if (const auto* try_statement = dynamic_cast<const TryStatementSyntax*>(&statement)) {
+                auto bound = std::make_unique<BoundTryStatement>();
+                bound->kind = BoundStatementKind::Try;
+                bound->line = try_statement->line;
+                bound->column = try_statement->column;
+                bound->try_block = bind_block(*try_statement->try_block);
+
+                push_scope();
+                if (!try_statement->catch_variable_name.empty()) {
+                    const TypeSymbol* catch_type = resolve_type(try_statement->catch_type);
+                    if (catch_type != &program_.semantic_model.string_type &&
+                        catch_type != &program_.semantic_model.error_type) {
+                        diagnostics_.add(find_file_for_class(&current_class_),
+                                         try_statement->catch_line,
+                                         try_statement->catch_column,
+                                         "Catch variables currently must be of type 'string'");
+                    }
+                    bound->catch_variable = declare_local(try_statement->catch_variable_name,
+                                                          &program_.semantic_model.string_type);
+                }
+                bound->catch_block = bind_block(*try_statement->catch_block);
+                pop_scope();
+                return bound;
+            }
+            if (const auto* throw_statement = dynamic_cast<const ThrowStatementSyntax*>(&statement)) {
+                auto bound = std::make_unique<BoundThrowStatement>();
+                bound->kind = BoundStatementKind::Throw;
+                bound->line = throw_statement->line;
+                bound->column = throw_statement->column;
+                if (throw_statement->expression != nullptr) {
+                    bound->expression = bind_expression(*throw_statement->expression);
+                } else {
+                    auto literal = std::make_unique<BoundLiteralExpression>();
+                    literal->kind = BoundExpressionKind::Literal;
+                    literal->type = &program_.semantic_model.string_type;
+                    literal->line = throw_statement->line;
+                    literal->column = throw_statement->column;
+                    literal->value = string("throw");
+                    bound->expression = std::move(literal);
+                }
+                return bound;
+            }
 
             auto fallback = std::make_unique<BoundExpressionStatement>();
             fallback->kind = BoundStatementKind::Expression;
@@ -6496,6 +6610,26 @@ private:
                 }
                 return ExecutionResult{FlowSignal::Return, Value{nullptr}};
             }
+            case BoundStatementKind::Try: {
+                const auto& try_statement = static_cast<const BoundTryStatement&>(statement);
+                try {
+                    return execute_statement(*try_statement.try_block, frame);
+                } catch (const std::runtime_error& ex) {
+                    if (try_statement.catch_variable != nullptr) {
+                        frame.locals[try_statement.catch_variable] = Value{string(ex.what())};
+                    }
+                    return execute_statement(*try_statement.catch_block, frame);
+                }
+            }
+            case BoundStatementKind::Throw: {
+                const auto& throw_statement = static_cast<const BoundThrowStatement&>(statement);
+                string message = "throw";
+                if (throw_statement.expression != nullptr) {
+                    const Value value = evaluate_expression(*throw_statement.expression, frame);
+                    message = stringify_value(value, throw_statement.expression->type);
+                }
+                throw std::runtime_error(message);
+            }
         }
         return {};
     }
@@ -7119,9 +7253,12 @@ private:
         out << "static const char* hy_runtime_file = NULL;\n";
         out << "static int32_t hy_runtime_line = 0;\n";
         out << "static int32_t hy_runtime_column = 0;\n\n";
+        out << "static jmp_buf* hy_exception_target = NULL;\n";
+        out << "static const char* hy_exception_message = NULL;\n\n";
 
         out << "static void hy_runtime_set_location(const char* file, int32_t line, int32_t column);\n";
         out << "static void hy_runtime_fail(const char* message);\n";
+        out << "static void hy_throw_string(HyString* message);\n";
         out << "static void* hy_array_ptr(HyArray* arr, int64_t index);\n\n";
 
         out << "static HyPointer hy_ptr_null(void) {\n";
@@ -7449,6 +7586,14 @@ private:
         out << "        fprintf(stderr, \"Runtime error: %s\\n\", message);\n";
         out << "    }\n";
         out << "    exit(1);\n";
+        out << "}\n\n";
+
+        out << "static void hy_throw_string(HyString* message) {\n";
+        out << "    hy_exception_message = message == NULL ? \"throw\" : message->bytes;\n";
+        out << "    if (hy_exception_target != NULL) {\n";
+        out << "        longjmp(*hy_exception_target, 1);\n";
+        out << "    }\n";
+        out << "    hy_runtime_fail(hy_exception_message);\n";
         out << "}\n\n";
 
         // --- Array element pointer helper ---
@@ -8144,10 +8289,20 @@ private:
                 collect_locals(*for_statement.body, locals, seen);
                 break;
             }
+            case BoundStatementKind::Try: {
+                const auto& try_statement = static_cast<const BoundTryStatement&>(statement);
+                collect_locals(*try_statement.try_block, locals, seen);
+                if (try_statement.catch_variable != nullptr && seen.insert(try_statement.catch_variable).second) {
+                    locals.push_back(try_statement.catch_variable);
+                }
+                collect_locals(*try_statement.catch_block, locals, seen);
+                break;
+            }
             case BoundStatementKind::Expression:
             case BoundStatementKind::Break:
             case BoundStatementKind::Continue:
             case BoundStatementKind::Return:
+            case BoundStatementKind::Throw:
                 break;
         }
     }
@@ -8373,6 +8528,50 @@ private:
                         indent(out, level);
                     }
                     out << "return;\n";
+                }
+                break;
+            }
+            case BoundStatementKind::Try: {
+                const auto& try_statement = static_cast<const BoundTryStatement&>(statement);
+                const int id = next_exception_handler_id_++;
+                emit_statement_location(out, statement, level);
+                indent(out, level);
+                out << "{\n";
+                indent(out, level + 1);
+                out << "jmp_buf hy__catch_" << id << ";\n";
+                indent(out, level + 1);
+                out << "jmp_buf* hy__prev_catch_" << id << " = hy_exception_target;\n";
+                indent(out, level + 1);
+                out << "hy_exception_target = &hy__catch_" << id << ";\n";
+                indent(out, level + 1);
+                out << "if (setjmp(hy__catch_" << id << ") == 0) {\n";
+                emit_statement(out, *try_statement.try_block, level + 2);
+                indent(out, level + 2);
+                out << "hy_exception_target = hy__prev_catch_" << id << ";\n";
+                indent(out, level + 1);
+                out << "} else {\n";
+                indent(out, level + 2);
+                out << "hy_exception_target = hy__prev_catch_" << id << ";\n";
+                if (try_statement.catch_variable != nullptr) {
+                    indent(out, level + 2);
+                    out << local_name(*try_statement.catch_variable)
+                        << " = hy_string_from_cstr(hy_exception_message == NULL ? \"throw\" : hy_exception_message);\n";
+                }
+                emit_statement(out, *try_statement.catch_block, level + 2);
+                indent(out, level + 1);
+                out << "}\n";
+                indent(out, level);
+                out << "}\n";
+                break;
+            }
+            case BoundStatementKind::Throw: {
+                const auto& throw_statement = static_cast<const BoundThrowStatement&>(statement);
+                emit_statement_location(out, statement, level);
+                indent(out, level);
+                if (throw_statement.expression != nullptr) {
+                    out << "hy_throw_string(" << emit_string_operand(*throw_statement.expression) << ");\n";
+                } else {
+                    out << "hy_throw_string(hy_string_literal(\"throw\"));\n";
                 }
                 break;
             }
@@ -9009,6 +9208,7 @@ private:
     bool current_function_has_roots_ = false;
     const TypeSymbol* current_function_return_type_ = nullptr;
     fs::path current_function_source_file_;
+    int next_exception_handler_id_ = 0;
 };
 
 struct ProjectManifest {
@@ -10079,6 +10279,22 @@ void collect_symbol_usage(const BoundStatement& statement,
             }
             return;
         }
+        case BoundStatementKind::Try: {
+            const auto& try_statement = static_cast<const BoundTryStatement&>(statement);
+            collect_symbol_usage(*try_statement.try_block, used_locals, used_parameters);
+            if (try_statement.catch_variable != nullptr) {
+                used_locals.insert(try_statement.catch_variable);
+            }
+            collect_symbol_usage(*try_statement.catch_block, used_locals, used_parameters);
+            return;
+        }
+        case BoundStatementKind::Throw: {
+            const auto& throw_statement = static_cast<const BoundThrowStatement&>(statement);
+            if (throw_statement.expression != nullptr) {
+                collect_symbol_usage(*throw_statement.expression, used_locals, used_parameters);
+            }
+            return;
+        }
         case BoundStatementKind::Break:
         case BoundStatementKind::Continue:
             return;
@@ -10145,6 +10361,19 @@ void collect_member_usage(const BoundStatement& statement,
             const auto& return_statement = static_cast<const BoundReturnStatement&>(statement);
             if (return_statement.expression != nullptr) {
                 collect_member_usage(*return_statement.expression, used_fields, used_methods);
+            }
+            return;
+        }
+        case BoundStatementKind::Try: {
+            const auto& try_statement = static_cast<const BoundTryStatement&>(statement);
+            collect_member_usage(*try_statement.try_block, used_fields, used_methods);
+            collect_member_usage(*try_statement.catch_block, used_fields, used_methods);
+            return;
+        }
+        case BoundStatementKind::Throw: {
+            const auto& throw_statement = static_cast<const BoundThrowStatement&>(statement);
+            if (throw_statement.expression != nullptr) {
+                collect_member_usage(*throw_statement.expression, used_fields, used_methods);
             }
             return;
         }
@@ -10249,6 +10478,7 @@ bool statement_terminates_flow(const BoundStatement& statement) {
         case BoundStatementKind::Return:
         case BoundStatementKind::Break:
         case BoundStatementKind::Continue:
+        case BoundStatementKind::Throw:
             return true;
         case BoundStatementKind::Block: {
             const auto& block = static_cast<const BoundBlockStatement&>(statement);
@@ -10260,6 +10490,13 @@ bool statement_terminates_flow(const BoundStatement& statement) {
                    if_statement.else_statement != nullptr &&
                    statement_terminates_flow(*if_statement.then_statement) &&
                    statement_terminates_flow(*if_statement.else_statement);
+        }
+        case BoundStatementKind::Try: {
+            const auto& try_statement = static_cast<const BoundTryStatement&>(statement);
+            return try_statement.try_block != nullptr &&
+                   try_statement.catch_block != nullptr &&
+                   statement_terminates_flow(*try_statement.try_block) &&
+                   statement_terminates_flow(*try_statement.catch_block);
         }
         default:
             return false;
@@ -10488,6 +10725,19 @@ void lint_statement(const BoundStatement& statement,
             const auto& return_statement = static_cast<const BoundReturnStatement&>(statement);
             if (return_statement.expression != nullptr) {
                 lint_expression(*return_statement.expression, freed_buffers, diagnostics, file);
+            }
+            return;
+        }
+        case BoundStatementKind::Try: {
+            const auto& try_statement = static_cast<const BoundTryStatement&>(statement);
+            lint_statement(*try_statement.try_block, freed_buffers, diagnostics, file);
+            lint_statement(*try_statement.catch_block, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundStatementKind::Throw: {
+            const auto& throw_statement = static_cast<const BoundThrowStatement&>(statement);
+            if (throw_statement.expression != nullptr) {
+                lint_expression(*throw_statement.expression, freed_buffers, diagnostics, file);
             }
             return;
         }

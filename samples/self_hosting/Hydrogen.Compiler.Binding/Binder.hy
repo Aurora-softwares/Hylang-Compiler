@@ -306,6 +306,29 @@ namespace Hydrogen.Compiler.Binding {
                 }
                 return;
             }
+            if (kind == StatementSyntax.KindTryStatement()) {
+                ValidateStatement(statement.Body(), returnType, ownerTypeName, symbols, usings, parameters, localNames, localTypes, localCount, diagnostics);
+                string catchName = statement.CatchName();
+                if (catchName != null && catchName != "") {
+                    TypeSymbol catchType = ResolveType(statement.CatchType(), symbols, usings, NamespaceOf(ownerTypeName), diagnostics);
+                    if (catchType != null && catchType.Name() != "string" && catchType.Name() != "unknown") {
+                        diagnostics.Report(1, 1, "catch variable must be string");
+                    }
+                    localNames = AppendLocalName(localNames, localCount, catchName);
+                    localTypes = AppendLocalType(localTypes, localCount, new TypeSymbol("string"));
+                    localCount = localCount + 1;
+                }
+                ValidateStatement(statement.CatchBlock(), returnType, ownerTypeName, symbols, usings, parameters, localNames, localTypes, localCount, diagnostics);
+                return;
+            }
+            if (kind == StatementSyntax.KindThrowStatement()) {
+                if (statement.Expression() == null) {
+                    diagnostics.Report(1, 1, "throw requires an expression");
+                } else {
+                    ValidateExpression(statement.Expression(), ownerTypeName, symbols, usings, parameters, localNames, localTypes, localCount, diagnostics);
+                }
+                return;
+            }
             if (kind == StatementSyntax.KindVariableDeclaration()) {
                 TypeSymbol declared = ResolveType(statement.Type(), symbols, usings, NamespaceOf(ownerTypeName), diagnostics);
                 localNames = AppendLocalName(localNames, localCount, statement.Name());
@@ -504,6 +527,9 @@ namespace Hydrogen.Compiler.Binding {
                 }
                 return operand;
             }
+			if (kind == ExpressionSyntax.KindSizeOf()) {
+				return new TypeSymbol("int");
+			}
 
             return new TypeSymbol("unknown");
         }
