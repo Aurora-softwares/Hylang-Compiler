@@ -224,6 +224,7 @@ namespace Hydrogen.Compiler.Syntax {
         public static int KindObjectCreation() { return 8; }
         public static int KindArrayCreation() { return 9; }
         public static int KindCast() { return 10; }
+        public static int KindUnary() { return 11; }
 
         private int kind;
         private string name;
@@ -242,6 +243,8 @@ namespace Hydrogen.Compiler.Syntax {
         private ExpressionSyntax size;
         private TypeSyntax castType;
         private ExpressionSyntax castExpression;
+        private SyntaxKind unaryOp;
+        private ExpressionSyntax unaryOperand;
 
         public ExpressionSyntax(int inputKind) {
             kind = inputKind;
@@ -264,6 +267,8 @@ namespace Hydrogen.Compiler.Syntax {
         public ExpressionSyntax Size() { return size; }
         public TypeSyntax CastType() { return castType; }
         public ExpressionSyntax CastExpression() { return castExpression; }
+        public SyntaxKind UnaryOperatorKind() { return unaryOp; }
+        public ExpressionSyntax UnaryOperand() { return unaryOperand; }
 
         public static ExpressionSyntax NameExpr(string inputName) {
             ExpressionSyntax node = new ExpressionSyntax(KindName());
@@ -331,6 +336,13 @@ namespace Hydrogen.Compiler.Syntax {
             ExpressionSyntax node = new ExpressionSyntax(KindCast());
             node.castType = inputType;
             node.castExpression = inputExpression;
+            return node;
+        }
+
+        public static ExpressionSyntax Unary(SyntaxKind inputOp, ExpressionSyntax inputOperand) {
+            ExpressionSyntax node = new ExpressionSyntax(KindUnary());
+            node.unaryOp = inputOp;
+            node.unaryOperand = inputOperand;
             return node;
         }
     }

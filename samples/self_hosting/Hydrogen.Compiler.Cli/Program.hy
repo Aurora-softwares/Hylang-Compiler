@@ -1,5 +1,6 @@
 using Hydrogen.Compiler.CodeGen.X64;
 using Hydrogen.Compiler.Core;
+using Hydrogen.Compiler.Diagnostics;
 using Hydrogen.Compiler.Syntax;
 using Hydrogen.Compiler.Text;
 
@@ -21,13 +22,27 @@ namespace Hydrogen.Compiler.Cli {
                 return 1;
             }
 
-            SyntaxTree tree = SyntaxTree.Parse(SourceText.FromFile(path));
             if (command == "tokens") {
-                System.Console.Write(tree.TokensText());
+                // Token dump should be lexer-only (no AST parser diagnostics), for stable golden output.
+                SourceText source = SourceText.FromFile(path);
+                DiagnosticBag diagnostics = new DiagnosticBag();
+                Lexer lexer = new Lexer(source, diagnostics);
+                SyntaxTokenList tokens = lexer.LexAll();
+                int ti = 0;
+                while (ti < tokens.Count()) {
+                    System.Console.WriteLine(tokens.Get(ti).ToLine());
+                    ti = ti + 1;
+                }
                 return 0;
             }
             if (command == "parse") {
-                System.Console.Write(tree.ParseText());
+                // Parse dump is the outline parser only (no AST parser diagnostics), for stable golden output.
+                SourceText source2 = SourceText.FromFile(path);
+                DiagnosticBag diagnostics2 = new DiagnosticBag();
+                Lexer lexer2 = new Lexer(source2, diagnostics2);
+                SyntaxTokenList tokens2 = lexer2.LexAll();
+                Parser parser2 = new Parser(tokens2, diagnostics2);
+                System.Console.Write(parser2.ParseCompilationUnit());
                 return 0;
             }
             if (command == "check") {
@@ -50,21 +65,33 @@ namespace Hydrogen.Compiler.Cli {
 
         private static int Check(string path, bool emitIr) {
             NativeCompiler compiler = new NativeCompiler();
-            NativeCompilerResult result = compiler.CheckFile(path);
             if (emitIr) {
-                result = compiler.CheckFileEmitIr(path);
+                NativeCompilerResult result = compiler.CheckFileEmitIr(path);
+                if (!result.Success()) {
+                    System.Console.Write(result.DiagnosticsText());
+                    return 1;
+                }
+                System.Console.WriteLine("check ok");
+                System.Console.WriteLine(result.DiagnosticsText());
+                return 0;
+            } else {
+                NativeCompilerResult result2 = compiler.CheckFile(path);
+                if (!result2.Success()) {
+                    System.Console.Write(result2.DiagnosticsText());
+                    return 1;
+                }
+                System.Console.WriteLine("check ok");
+                System.Console.WriteLine(result2.DiagnosticsText());
+                return 0;
             }
-            if (!result.Success()) {
-                System.Console.Write(result.DiagnosticsText());
-                return 1;
-            }
-            System.Console.WriteLine("check ok");
-            System.Console.WriteLine(result.DiagnosticsText());
-            return 0;
         }
 
         private static int Compile(string[] args) {
-            if (args.Length != 4 || args[2] != "-o") {
+            if (args.Length != 4) {
+                System.Console.WriteLine("usage: hydrogen-compiler compile <file.hy> -o <output>");
+                return 1;
+            }
+            if (args[2] != "-o") {
                 System.Console.WriteLine("usage: hydrogen-compiler compile <file.hy> -o <output>");
                 return 1;
             }
@@ -80,7 +107,11 @@ namespace Hydrogen.Compiler.Cli {
         }
 
         private static int Build(string[] args) {
-            if (args.Length != 4 || args[2] != "-o") {
+            if (args.Length != 4) {
+                System.Console.WriteLine("usage: hydrogen-compiler build <project.hyproj> -o <output>");
+                return 1;
+            }
+            if (args[2] != "-o") {
                 System.Console.WriteLine("usage: hydrogen-compiler build <project.hyproj> -o <output>");
                 return 1;
             }

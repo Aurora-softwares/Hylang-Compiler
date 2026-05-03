@@ -60,6 +60,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (diagnostics.HasErrors()) {
                 return new NativeCompilerResult(false, diagnostics.ToText());
             }
+            if (program.EntryOps().Length == 0) {
+                return new NativeCompilerResult(false, "error: no supported entry point for native compilation in this phase\n");
+            }
 
             Hydrogen.Compiler.IR.IrLowering lowering = new Hydrogen.Compiler.IR.IrLowering();
             Hydrogen.Compiler.IR.IrEntryPoint entryPoint = lowering.LowerEntryPoint(program);
@@ -87,6 +90,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             BoundProgram program = binder.Bind(tree.Root(), diagnostics);
             if (diagnostics.HasErrors()) {
                 return new NativeCompilerResult(false, diagnostics.ToText());
+            }
+            if (program.EntryOps().Length == 0) {
+                return new NativeCompilerResult(false, "error: no supported entry point for native compilation in this phase\n");
             }
 
             Hydrogen.Compiler.IR.IrLowering lowering = new Hydrogen.Compiler.IR.IrLowering();

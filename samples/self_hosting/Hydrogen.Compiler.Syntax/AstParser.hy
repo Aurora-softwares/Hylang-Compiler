@@ -263,7 +263,7 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private ExpressionSyntax ParseBinaryExpression(int parentPrecedence) {
-            ExpressionSyntax left = ParsePostfix();
+            ExpressionSyntax left = ParseUnary();
             while (true) {
                 int precedence = BinaryPrecedence(Current().Kind());
                 if (precedence == 0 || precedence <= parentPrecedence) {
@@ -274,6 +274,15 @@ namespace Hydrogen.Compiler.Syntax {
                 left = ExpressionSyntax.Binary(left, op, right);
             }
             return left;
+        }
+
+        private ExpressionSyntax ParseUnary() {
+            if (Check(SyntaxKind.BangToken) || Check(SyntaxKind.MinusToken)) {
+                SyntaxKind op = Advance().Kind();
+                ExpressionSyntax operand = ParseUnary();
+                return ExpressionSyntax.Unary(op, operand);
+            }
+            return ParsePostfix();
         }
 
         private ExpressionSyntax ParsePostfix() {
@@ -375,6 +384,8 @@ namespace Hydrogen.Compiler.Syntax {
             }
 
             diagnostics.Report(Current().Line(), Current().Column(), "Expected expression");
+            // Ensure we always make progress to avoid infinite loops on unexpected tokens.
+            Advance();
             return ExpressionSyntax.NameExpr("");
         }
 

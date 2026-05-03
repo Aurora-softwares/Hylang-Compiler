@@ -135,6 +135,7 @@ namespace Hydrogen.Compiler.Binding {
             int count = 0;
             int exitCode = 0;
             bool sawReturn = false;
+            bool supported = true;
 
             int i = 0;
             while (i < statements.Length) {
@@ -143,12 +144,20 @@ namespace Hydrogen.Compiler.Binding {
                     if (op != null) {
                         ops = AppendOp(ops, count, op);
                         count = count + 1;
+                    } else {
+                        supported = false;
                     }
                 } else if (statements[i].Kind() == StatementSyntax.KindReturnStatement()) {
                     sawReturn = true;
-                    exitCode = BindReturnExitCode(statements[i], diagnostics);
+                    int code = BindReturnExitCode(statements[i], diagnostics);
+                    if (code < 0) {
+                        supported = false;
+                        exitCode = 0;
+                    } else {
+                        exitCode = code;
+                    }
                 } else {
-                    diagnostics.Report(1, 1, "unsupported statement in entry point");
+                    supported = false;
                 }
                 i = i + 1;
             }
@@ -157,6 +166,9 @@ namespace Hydrogen.Compiler.Binding {
                 // default is 0
             }
 
+            if (!supported) {
+                return new BoundOp[0];
+            }
             ops = AppendOp(ops, count, new BoundOp(BoundOp.KindExit(), "", exitCode));
             return ops;
         }
@@ -165,27 +177,22 @@ namespace Hydrogen.Compiler.Binding {
             // Only support System.Console.WriteLine("literal");
             ExpressionSyntax expression = statement.Expression();
             if (expression.Kind() != ExpressionSyntax.KindInvocation()) {
-                diagnostics.Report(1, 1, "unsupported expression statement in entry point");
                 return null;
             }
 
             ExpressionSyntax target = expression.Target();
             if (!IsSystemConsoleWriteLine(target)) {
-                diagnostics.Report(1, 1, "only System.Console.WriteLine is supported in entry point");
                 return null;
             }
 
             ExpressionSyntax[] args = expression.Arguments();
             if (args.Length != 1) {
-                diagnostics.Report(1, 1, "WriteLine requires exactly one argument in this phase");
                 return null;
             }
             if (args[0].Kind() != ExpressionSyntax.KindLiteral()) {
-                diagnostics.Report(1, 1, "WriteLine argument must be a literal in this phase");
                 return null;
             }
             if (args[0].LiteralKind() != "string") {
-                diagnostics.Report(1, 1, "WriteLine argument must be a string literal in this phase");
                 return null;
             }
 
@@ -220,12 +227,10 @@ namespace Hydrogen.Compiler.Binding {
                 return 0;
             }
             if (statement.Expression().Kind() != ExpressionSyntax.KindLiteral()) {
-                diagnostics.Report(1, 1, "return expression must be a literal in this phase");
-                return 0;
+                return -1;
             }
             if (statement.Expression().LiteralKind() != "number") {
-                diagnostics.Report(1, 1, "return expression must be an integer literal in this phase");
-                return 0;
+                return -1;
             }
             return ParseInt(statement.Expression().LiteralText());
         }
@@ -433,6 +438,16 @@ namespace Hydrogen.Compiler.Binding {
             if (kind == ExpressionSyntax.KindCast()) {
                 ValidateExpression(expression.CastExpression(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
                 return new TypeSymbol(expression.CastType().DisplayName());
+            }
+            if (kind == ExpressionSyntax.KindUnary()) {
+                TypeSymbol operand = ValidateExpression(expression.UnaryOperand(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                if (expression.UnaryOperatorKind() == SyntaxKind.BangToken) {
+                    return new TypeSymbol("bool");
+                }
+                if (expression.UnaryOperatorKind() == SyntaxKind.MinusToken) {
+                    return new TypeSymbol("int");
+                }
+                return operand;
             }
 
             return new TypeSymbol("unknown");
