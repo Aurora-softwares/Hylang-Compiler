@@ -47,7 +47,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 SyntaxTree tree = SyntaxTree.ParseFast(source);
                 if (tree.Diagnostics().HasErrors()) {
-                    return new NativeCompilerResult(false, tree.Diagnostics().ToText());
+                    return new NativeCompilerResult(false, sources[i] + ":\n" + tree.Diagnostics().ToText());
                 }
                 trees[i] = tree;
                 i = i + 1;
@@ -82,7 +82,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             SyntaxTree tree = SyntaxTree.ParseFast(source);
             if (tree.Diagnostics().HasErrors()) {
-                return new NativeCompilerResult(false, tree.Diagnostics().ToText());
+                return new NativeCompilerResult(false, inputPath + ":\n" + tree.Diagnostics().ToText());
             }
 
             DiagnosticBag diagnostics = new DiagnosticBag();
@@ -121,7 +121,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             SyntaxTree tree = SyntaxTree.ParseFast(source);
             if (tree.Diagnostics().HasErrors()) {
-                return new NativeCompilerResult(false, tree.Diagnostics().ToText());
+                return new NativeCompilerResult(false, inputPath + ":\n" + tree.Diagnostics().ToText());
             }
 
             DiagnosticBag diagnostics = new DiagnosticBag();

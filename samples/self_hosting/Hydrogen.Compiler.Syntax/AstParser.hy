@@ -26,7 +26,7 @@ namespace Hydrogen.Compiler.Syntax {
                     namespaceCount = namespaceCount + 1;
                     continue;
                 }
-                if (Check(SyntaxKind.ClassKeyword)) {
+                if (Check(SyntaxKind.ClassKeyword) || Check(SyntaxKind.StructKeyword)) {
                     classes = AppendClass(classes, classCount, ParseClass());
                     classCount = classCount + 1;
                     continue;
@@ -59,7 +59,7 @@ namespace Hydrogen.Compiler.Syntax {
             int classCount = 0;
             while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
                 SkipModifiers();
-                if (Check(SyntaxKind.ClassKeyword)) {
+                if (Check(SyntaxKind.ClassKeyword) || Check(SyntaxKind.StructKeyword)) {
                     classes = AppendClass(classes, classCount, ParseClass());
                     classCount = classCount + 1;
                     continue;
@@ -72,7 +72,11 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private ClassDeclarationSyntax ParseClass() {
-            Consume(SyntaxKind.ClassKeyword, "Expected class");
+            if (Check(SyntaxKind.ClassKeyword)) {
+                Consume(SyntaxKind.ClassKeyword, "Expected class");
+            } else {
+                Consume(SyntaxKind.StructKeyword, "Expected struct");
+            }
             string name = ConsumeIdentifier("Expected class name");
             // Skip base list / type parameters in stage1 AST (subset avoids them).
             if (Check(SyntaxKind.LessToken)) {
@@ -456,9 +460,10 @@ namespace Hydrogen.Compiler.Syntax {
                 name = ParseQualifiedNameText();
             }
 
-            if (Check(SyntaxKind.OpenBracketToken)) {
+            // Array type suffix: only consume empty brackets `[]` (not `[...]` which is array creation).
+            while (Check(SyntaxKind.OpenBracketToken) && Peek(1).Kind() == SyntaxKind.CloseBracketToken) {
                 Advance();
-                Consume(SyntaxKind.CloseBracketToken, "Expected ']'");
+                Advance();
                 name = name + "[]";
             }
             return new TypeSyntax(name);
