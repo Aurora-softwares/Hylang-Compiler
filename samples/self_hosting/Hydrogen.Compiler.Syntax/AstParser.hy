@@ -103,13 +103,25 @@ namespace Hydrogen.Compiler.Syntax {
                 }
 
                 TypeSyntax returnType = ParseType();
-                string name = ConsumeIdentifier("Expected member name");
-                if (Check(SyntaxKind.OpenParenToken)) {
-                    ParameterSyntax[] parameters = ParseParameterList();
-                    StatementSyntax body = ParseBlock();
-                    methods = AppendMethod(methods, count, new MethodDeclarationSyntax(name, isStatic, returnType, parameters, body));
+                string name = "";
+                if (Check(SyntaxKind.IdentifierToken)) {
+                    name = ConsumeIdentifier("Expected member name");
+                    if (Check(SyntaxKind.OpenParenToken)) {
+                        ParameterSyntax[] parameters = ParseParameterList();
+                        StatementSyntax body = ParseBlock();
+                        methods = AppendMethod(methods, count, new MethodDeclarationSyntax(name, isStatic, returnType, parameters, body));
+                        count = count + 1;
+                        continue;
+                    }
+                } else if (Check(SyntaxKind.OpenParenToken)) {
+                    // Constructor: no explicit return type. Treat as void-returning method named after the type.
+                    ParameterSyntax[] parameters2 = ParseParameterList();
+                    StatementSyntax body2 = ParseBlock();
+                    methods = AppendMethod(methods, count, new MethodDeclarationSyntax(returnType.DisplayName(), false, new TypeSyntax("void"), parameters2, body2));
                     count = count + 1;
                     continue;
+                } else {
+                    Consume(SyntaxKind.IdentifierToken, "Expected member name");
                 }
 
                 // Field: skip until semicolon.
@@ -375,8 +387,8 @@ namespace Hydrogen.Compiler.Syntax {
                     Consume(SyntaxKind.CloseBracketToken, "Expected ']'");
                     return ExpressionSyntax.ArrayCreation(type, size);
                 }
-                Consume(SyntaxKind.OpenParenToken, "Expected '(' after new");
-                Consume(SyntaxKind.CloseParenToken, "Expected ')'");
+                // Allow constructor arguments (Stage1B parser support). Binder/codegen may still restrict semantics.
+                ExpressionSyntax[] ctorArgs = ParseArgumentList();
                 return ExpressionSyntax.ObjectCreation(type);
             }
             if (Current().Kind() == SyntaxKind.IdentifierToken) {

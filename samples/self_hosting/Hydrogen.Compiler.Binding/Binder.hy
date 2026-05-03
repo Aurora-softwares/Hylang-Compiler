@@ -4,11 +4,7 @@ using Hydrogen.Compiler.Syntax;
 namespace Hydrogen.Compiler.Binding {
     public class Binder {
         public BoundProgram Bind(CompilationUnitSyntax root, DiagnosticBag diagnostics) {
-            // Stage1B: build a deterministic symbol table for methods so we can type-check
-            // the compiler sources (still a subset; no overload resolution yet).
-            string[] methodOwnerTypes = new string[0];
-            MethodDeclarationSyntax[] methodDecls = new MethodDeclarationSyntax[0];
-            int methodDeclCount = 0;
+            GlobalSymbolTable symbols = GlobalSymbolTable.Build(root, diagnostics);
 
             MethodSymbol[] methods = new MethodSymbol[0];
             int methodCount = 0;
@@ -18,15 +14,6 @@ namespace Hydrogen.Compiler.Binding {
             ClassDeclarationSyntax[] topClasses = root.Classes();
             int i = 0;
             while (i < topClasses.Length) {
-                MethodDeclarationSyntax[] decls0 = topClasses[i].Methods();
-                int d0 = 0;
-                while (d0 < decls0.Length) {
-                    methodOwnerTypes = AppendString(methodOwnerTypes, methodDeclCount, topClasses[i].Name());
-                    methodDecls = AppendMethodDecl(methodDecls, methodDeclCount, decls0[d0]);
-                    methodDeclCount = methodDeclCount + 1;
-                    d0 = d0 + 1;
-                }
-
                 BoundOp[] ops = TryBindEntryPointOps(topClasses[i], diagnostics);
                 if (ops.Length != 0) {
                     entryOps = ops;
@@ -43,15 +30,6 @@ namespace Hydrogen.Compiler.Binding {
                 ClassDeclarationSyntax[] classes = namespaces[n].Classes();
                 int c = 0;
                 while (c < classes.Length) {
-                    MethodDeclarationSyntax[] decls1 = classes[c].Methods();
-                    int d1 = 0;
-                    while (d1 < decls1.Length) {
-                        methodOwnerTypes = AppendString(methodOwnerTypes, methodDeclCount, classes[c].Name());
-                        methodDecls = AppendMethodDecl(methodDecls, methodDeclCount, decls1[d1]);
-                        methodDeclCount = methodDeclCount + 1;
-                        d1 = d1 + 1;
-                    }
-
                     BoundOp[] ops = TryBindEntryPointOps(classes[c], diagnostics);
                     if (ops.Length != 0) {
                         entryOps = ops;
@@ -66,13 +44,42 @@ namespace Hydrogen.Compiler.Binding {
             // Stage1B binder should be able to bind non-entrypoint code (compiler libraries).
             // Missing/unsupported entrypoint becomes an error only when lowering to native output.
 
-            // Second pass: validate method bodies using the method symbol table.
-            int v = 0;
-            while (v < methodDeclCount) {
-                ValidateMethodBody(methodDecls[v], methodOwnerTypes[v], methodOwnerTypes, methodDecls, methodDeclCount, diagnostics);
-                v = v + 1;
+            // Second pass: validate method bodies using the global symbol table.
+            TypeInfo[] types = symbols.Types();
+            int t = 0;
+            while (t < types.Length) {
+                string ownerTypeName = types[t].Name();
+                MethodDeclarationSyntax[] decls = FindClassDecls(root, ownerTypeName);
+                int d = 0;
+                while (d < decls.Length) {
+                    ValidateMethodBody(decls[d], ownerTypeName, symbols, diagnostics);
+                    d = d + 1;
+                }
+                t = t + 1;
             }
             return new BoundProgram(methods, entryOps);
+        }
+
+        private MethodDeclarationSyntax[] FindClassDecls(CompilationUnitSyntax root, string typeName) {
+            // Find a class by simple name (namespace ignored in this bootstrap table).
+            ClassDeclarationSyntax[] top = root.Classes();
+            int i = 0;
+            while (i < top.Length) {
+                if (top[i].Name() == typeName) { return top[i].Methods(); }
+                i = i + 1;
+            }
+            NamespaceDeclarationSyntax[] namespaces = root.Namespaces();
+            int n = 0;
+            while (n < namespaces.Length) {
+                ClassDeclarationSyntax[] classes = namespaces[n].Classes();
+                int c = 0;
+                while (c < classes.Length) {
+                    if (classes[c].Name() == typeName) { return classes[c].Methods(); }
+                    c = c + 1;
+                }
+                n = n + 1;
+            }
+            return new MethodDeclarationSyntax[0];
         }
 
         private MethodSymbol[] BindClass(ClassDeclarationSyntax cl, DiagnosticBag diagnostics) {
@@ -235,15 +242,15 @@ namespace Hydrogen.Compiler.Binding {
             return ParseInt(statement.Expression().LiteralText());
         }
 
-        private void ValidateMethodBody(MethodDeclarationSyntax method, string ownerTypeName, string[] methodOwnerTypes, MethodDeclarationSyntax[] methodDecls, int methodDeclCount, DiagnosticBag diagnostics) {
+        private void ValidateMethodBody(MethodDeclarationSyntax method, string ownerTypeName, GlobalSymbolTable symbols, DiagnosticBag diagnostics) {
             ParameterSyntax[] parameters = method.Parameters();
             string[] localNames = new string[0];
             TypeSymbol[] localTypes = new TypeSymbol[0];
             int localCount = 0;
-            ValidateStatement(method.Body(), method.ReturnType(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+            ValidateStatement(method.Body(), method.ReturnType(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
         }
 
-        private void ValidateStatement(StatementSyntax statement, TypeSyntax returnType, string ownerTypeName, string[] methodOwnerTypes, MethodDeclarationSyntax[] methodDecls, int methodDeclCount, ParameterSyntax[] parameters, string[] localNames, TypeSymbol[] localTypes, int localCount, DiagnosticBag diagnostics) {
+        private void ValidateStatement(StatementSyntax statement, TypeSyntax returnType, string ownerTypeName, GlobalSymbolTable symbols, ParameterSyntax[] parameters, string[] localNames, TypeSymbol[] localTypes, int localCount, DiagnosticBag diagnostics) {
             if (statement == null) { return; }
 
             int kind = statement.Kind();
@@ -251,28 +258,28 @@ namespace Hydrogen.Compiler.Binding {
                 StatementSyntax[] items = statement.Statements();
                 int i = 0;
                 while (i < items.Length) {
-                    ValidateStatement(items[i], returnType, ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                    ValidateStatement(items[i], returnType, ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                     i = i + 1;
                 }
                 return;
             }
             if (kind == StatementSyntax.KindIfStatement()) {
-                TypeSymbol conditionType = ValidateExpression(statement.Condition(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                TypeSymbol conditionType = ValidateExpression(statement.Condition(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 if (conditionType != null && conditionType.Name() != "bool" && conditionType.Name() != "unknown") {
                     diagnostics.Report(1, 1, "if condition must be bool");
                 }
-                ValidateStatement(statement.ThenStatement(), returnType, ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                ValidateStatement(statement.ThenStatement(), returnType, ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 if (statement.ElseStatement() != null) {
-                    ValidateStatement(statement.ElseStatement(), returnType, ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                    ValidateStatement(statement.ElseStatement(), returnType, ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 }
                 return;
             }
             if (kind == StatementSyntax.KindWhileStatement()) {
-                TypeSymbol whileConditionType = ValidateExpression(statement.Condition(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                TypeSymbol whileConditionType = ValidateExpression(statement.Condition(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 if (whileConditionType != null && whileConditionType.Name() != "bool" && whileConditionType.Name() != "unknown") {
                     diagnostics.Report(1, 1, "while condition must be bool");
                 }
-                ValidateStatement(statement.Body(), returnType, ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                ValidateStatement(statement.Body(), returnType, ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 return;
             }
             if (kind == StatementSyntax.KindReturnStatement()) {
@@ -282,7 +289,7 @@ namespace Hydrogen.Compiler.Binding {
                     }
                     return;
                 }
-                TypeSymbol valueType = ValidateExpression(statement.Expression(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                TypeSymbol valueType = ValidateExpression(statement.Expression(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 if (valueType != null && valueType.Name() != "unknown") {
                     TypeSymbol expected = ResolveType(returnType, diagnostics);
                     if (!TypesEqual(valueType, expected) && !(expected.Name() != "void" && valueType.Name() == "null")) {
@@ -297,7 +304,7 @@ namespace Hydrogen.Compiler.Binding {
                 localTypes = AppendLocalType(localTypes, localCount, declared);
                 localCount = localCount + 1;
                 if (statement.Initializer() != null) {
-                    TypeSymbol initType = ValidateExpression(statement.Initializer(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                    TypeSymbol initType = ValidateExpression(statement.Initializer(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                     if (initType != null && initType.Name() != "unknown" && !TypesEqual(initType, declared)) {
                         diagnostics.Report(1, 1, "cannot assign '" + initType.Name() + "' to '" + declared.Name() + "'");
                     }
@@ -305,12 +312,12 @@ namespace Hydrogen.Compiler.Binding {
                 return;
             }
             if (kind == StatementSyntax.KindExpressionStatement()) {
-                ValidateExpression(statement.Expression(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                ValidateExpression(statement.Expression(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 return;
             }
         }
 
-        private TypeSymbol ValidateExpression(ExpressionSyntax expression, string ownerTypeName, string[] methodOwnerTypes, MethodDeclarationSyntax[] methodDecls, int methodDeclCount, ParameterSyntax[] parameters, string[] localNames, TypeSymbol[] localTypes, int localCount, DiagnosticBag diagnostics) {
+        private TypeSymbol ValidateExpression(ExpressionSyntax expression, string ownerTypeName, GlobalSymbolTable symbols, ParameterSyntax[] parameters, string[] localNames, TypeSymbol[] localTypes, int localCount, DiagnosticBag diagnostics) {
             if (expression == null) { return null; }
 
             int kind = expression.Kind();
@@ -327,7 +334,7 @@ namespace Hydrogen.Compiler.Binding {
                 return new TypeSymbol("unknown");
             }
             if (kind == ExpressionSyntax.KindMemberAccess()) {
-                TypeSymbol receiverType = ValidateExpression(expression.Receiver(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                TypeSymbol receiverType = ValidateExpression(expression.Receiver(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 if (expression.MemberName() == "Length" && receiverType != null) {
                     if (receiverType.Name() == "string" || IsArrayType(receiverType)) {
                         return new TypeSymbol("int");
@@ -336,8 +343,8 @@ namespace Hydrogen.Compiler.Binding {
                 return new TypeSymbol("unknown");
             }
             if (kind == ExpressionSyntax.KindIndex()) {
-                TypeSymbol receiverType2 = ValidateExpression(expression.Receiver(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
-                TypeSymbol indexType = ValidateExpression(expression.Index(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                TypeSymbol receiverType2 = ValidateExpression(expression.Receiver(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
+                TypeSymbol indexType = ValidateExpression(expression.Index(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 if (indexType != null && indexType.Name() != "int" && indexType.Name() != "unknown") {
                     diagnostics.Report(1, 1, "index must be int");
                 }
@@ -351,31 +358,30 @@ namespace Hydrogen.Compiler.Binding {
                 ExpressionSyntax[] args = expression.Arguments();
                 int a = 0;
                 while (a < args.Length) {
-                    ValidateExpression(args[a], ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                    ValidateExpression(args[a], ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                     a = a + 1;
                 }
 
                 // User-defined calls (no overloads yet):
-                MethodDeclarationSyntax callee = ResolveCallee(expression.Target(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount);
-                if (callee != null) {
-                    // Validate argument count/types where known.
-                    ParameterSyntax[] ps = callee.Parameters();
+                MethodSignature calleeSig = ResolveCallee(expression.Target(), ownerTypeName, symbols);
+                if (calleeSig != null) {
+                    TypeSymbol[] ps = calleeSig.ParameterTypes();
                     if (ps.Length != args.Length) {
-                        diagnostics.Report(1, 1, "wrong argument count calling '" + callee.Name() + "'");
-                        return ResolveType(callee.ReturnType(), diagnostics);
+                        diagnostics.Report(1, 1, "wrong argument count calling '" + calleeSig.Name() + "'");
+                        return calleeSig.ReturnType();
                     }
                     int pi = 0;
                     while (pi < ps.Length) {
-                        TypeSymbol expected = ResolveType(ps[pi].Type(), diagnostics);
-                        TypeSymbol actual = ValidateExpression(args[pi], ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                        TypeSymbol expected = ps[pi];
+                        TypeSymbol actual = ValidateExpression(args[pi], ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                         if (actual != null && actual.Name() != "unknown" && expected != null && expected.Name() != "unknown") {
                             if (!TypesEqual(actual, expected)) {
-                                diagnostics.Report(1, 1, "argument type mismatch calling '" + callee.Name() + "'");
+                                diagnostics.Report(1, 1, "argument type mismatch calling '" + calleeSig.Name() + "'");
                             }
                         }
                         pi = pi + 1;
                     }
-                    return ResolveType(callee.ReturnType(), diagnostics);
+                    return calleeSig.ReturnType();
                 }
 
                 if (IsSystemConsoleMethod(expression.Target(), "Write") || IsSystemConsoleMethod(expression.Target(), "WriteLine")) {
@@ -392,8 +398,8 @@ namespace Hydrogen.Compiler.Binding {
                 return new TypeSymbol("unknown");
             }
             if (kind == ExpressionSyntax.KindAssignment()) {
-                TypeSymbol right = ValidateExpression(expression.Value(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
-                TypeSymbol left = ValidateExpression(expression.Target(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                TypeSymbol right = ValidateExpression(expression.Value(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
+                TypeSymbol left = ValidateExpression(expression.Target(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 if (left != null && right != null && left.Name() != "unknown" && right.Name() != "unknown") {
                     if (!TypesEqual(left, right)) {
                         diagnostics.Report(1, 1, "cannot assign '" + right.Name() + "' to '" + left.Name() + "'");
@@ -402,8 +408,8 @@ namespace Hydrogen.Compiler.Binding {
                 return right;
             }
             if (kind == ExpressionSyntax.KindBinary()) {
-                TypeSymbol leftT = ValidateExpression(expression.Left(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
-                TypeSymbol rightT = ValidateExpression(expression.Right(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                TypeSymbol leftT = ValidateExpression(expression.Left(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
+                TypeSymbol rightT = ValidateExpression(expression.Right(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 SyntaxKind op = expression.OperatorKind();
 
                 if (op == SyntaxKind.PlusToken) {
@@ -429,18 +435,18 @@ namespace Hydrogen.Compiler.Binding {
                 return new TypeSymbol(expression.Type().DisplayName());
             }
             if (kind == ExpressionSyntax.KindArrayCreation()) {
-                TypeSymbol sizeType = ValidateExpression(expression.Size(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                TypeSymbol sizeType = ValidateExpression(expression.Size(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 if (sizeType != null && sizeType.Name() != "int" && sizeType.Name() != "unknown") {
                     diagnostics.Report(1, 1, "array size must be int");
                 }
                 return new TypeSymbol(expression.Type().DisplayName() + "[]");
             }
             if (kind == ExpressionSyntax.KindCast()) {
-                ValidateExpression(expression.CastExpression(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                ValidateExpression(expression.CastExpression(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 return new TypeSymbol(expression.CastType().DisplayName());
             }
             if (kind == ExpressionSyntax.KindUnary()) {
-                TypeSymbol operand = ValidateExpression(expression.UnaryOperand(), ownerTypeName, methodOwnerTypes, methodDecls, methodDeclCount, parameters, localNames, localTypes, localCount, diagnostics);
+                TypeSymbol operand = ValidateExpression(expression.UnaryOperand(), ownerTypeName, symbols, parameters, localNames, localTypes, localCount, diagnostics);
                 if (expression.UnaryOperatorKind() == SyntaxKind.BangToken) {
                     return new TypeSymbol("bool");
                 }
@@ -471,40 +477,18 @@ namespace Hydrogen.Compiler.Binding {
             return null;
         }
 
-        private MethodDeclarationSyntax ResolveCallee(ExpressionSyntax target, string ownerTypeName, string[] methodOwnerTypes, MethodDeclarationSyntax[] methodDecls, int methodDeclCount) {
+        private MethodSignature ResolveCallee(ExpressionSyntax target, string ownerTypeName, GlobalSymbolTable symbols) {
             if (target == null) { return null; }
             // Unqualified call: prefer same type, then any match.
             if (target.Kind() == ExpressionSyntax.KindName()) {
-                MethodDeclarationSyntax inOwner = FindMethodInType(ownerTypeName, target.Name(), methodOwnerTypes, methodDecls, methodDeclCount);
+                MethodSignature inOwner = symbols.TryGetMethodInType(ownerTypeName, target.Name());
                 if (inOwner != null) { return inOwner; }
-                return FindFirstMethodByName(target.Name(), methodDecls, methodDeclCount);
+                return symbols.TryFindFirstMethodByName(target.Name());
             }
             // Static call: TypeName.Method(...)
             if (target.Kind() == ExpressionSyntax.KindMemberAccess() && target.Receiver().Kind() == ExpressionSyntax.KindName()) {
                 string typeName = target.Receiver().Name();
-                return FindMethodInType(typeName, target.MemberName(), methodOwnerTypes, methodDecls, methodDeclCount);
-            }
-            return null;
-        }
-
-        private MethodDeclarationSyntax FindMethodInType(string typeName, string methodName, string[] methodOwnerTypes, MethodDeclarationSyntax[] methodDecls, int methodDeclCount) {
-            int i = 0;
-            while (i < methodDeclCount) {
-                if (methodOwnerTypes[i] == typeName && methodDecls[i].Name() == methodName) {
-                    return methodDecls[i];
-                }
-                i = i + 1;
-            }
-            return null;
-        }
-
-        private MethodDeclarationSyntax FindFirstMethodByName(string methodName, MethodDeclarationSyntax[] methodDecls, int methodDeclCount) {
-            int i = 0;
-            while (i < methodDeclCount) {
-                if (methodDecls[i].Name() == methodName) {
-                    return methodDecls[i];
-                }
-                i = i + 1;
+                return symbols.TryGetMethodInType(typeName, target.MemberName());
             }
             return null;
         }
@@ -565,27 +549,7 @@ namespace Hydrogen.Compiler.Binding {
             return next;
         }
 
-        private string[] AppendString(string[] items, int count, string item) {
-            string[] next = new string[count + 1];
-            int i = 0;
-            while (i < count) {
-                next[i] = items[i];
-                i = i + 1;
-            }
-            next[count] = item;
-            return next;
-        }
-
-        private MethodDeclarationSyntax[] AppendMethodDecl(MethodDeclarationSyntax[] items, int count, MethodDeclarationSyntax item) {
-            MethodDeclarationSyntax[] next = new MethodDeclarationSyntax[count + 1];
-            int i = 0;
-            while (i < count) {
-                next[i] = items[i];
-                i = i + 1;
-            }
-            next[count] = item;
-            return next;
-        }
+        // No binder-local symbol arrays now; use GlobalSymbolTable instead.
 
         private bool IsSystemConsoleMethod(ExpressionSyntax target, string methodName) {
             if (target.Kind() != ExpressionSyntax.KindMemberAccess()) { return false; }
