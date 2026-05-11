@@ -1,6 +1,6 @@
 using Hydrogen.Compiler.Binding;
-using Hydrogen.Compiler.Diagnostics;
 using Hydrogen.Compiler.Core;
+using Hydrogen.Compiler.Diagnostics;
 using Hydrogen.Compiler.Syntax;
 using Hydrogen.Compiler.Text;
 
@@ -83,15 +83,21 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (diagnostics.HasErrors()) {
                 return new NativeCompilerResult(false, diagnostics.ToText());
             }
-            if (program.EntryOps().Length == 0) {
-                return new NativeCompilerResult(false, "error: no supported entry point for native compilation in this phase\n");
-            }
 
             Hydrogen.Compiler.IR.IrLowering lowering = new Hydrogen.Compiler.IR.IrLowering();
-            Hydrogen.Compiler.IR.IrEntryPoint entryPoint = lowering.LowerEntryPoint(program);
-
             ElfImageBuilder builder = new ElfImageBuilder();
-            byte[] image = builder.BuildEntryPoint(entryPoint);
+            byte[] image = new byte[0];
+
+            if (program.EntryOps().Length != 0) {
+                Hydrogen.Compiler.IR.IrEntryPoint entryPoint = lowering.LowerEntryPoint(program);
+                image = builder.BuildEntryPoint(entryPoint);
+            } else {
+                // Phase 6B/6C bridge: we can still emit a native artifact that reports the lowered module
+                // signature surface, even though full codegen for compiler-shaped programs isn't ready yet.
+                Hydrogen.Compiler.IR.IrModule module = lowering.Lower(program);
+                image = builder.BuildIrModuleDebug(module);
+            }
+
             System.IO.File.WriteAllBytes(outputPath, image);
             return new NativeCompilerResult(true, "");
         }
@@ -114,15 +120,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (diagnostics.HasErrors()) {
                 return new NativeCompilerResult(false, diagnostics.ToText());
             }
-            if (program.EntryOps().Length == 0) {
-                return new NativeCompilerResult(false, "error: no supported entry point for native compilation in this phase\n");
-            }
 
             Hydrogen.Compiler.IR.IrLowering lowering = new Hydrogen.Compiler.IR.IrLowering();
-            Hydrogen.Compiler.IR.IrEntryPoint entryPoint = lowering.LowerEntryPoint(program);
-
             ElfImageBuilder builder = new ElfImageBuilder();
-            byte[] image = builder.BuildEntryPoint(entryPoint);
+            byte[] image = new byte[0];
+            if (program.EntryOps().Length != 0) {
+                Hydrogen.Compiler.IR.IrEntryPoint entryPoint = lowering.LowerEntryPoint(program);
+                image = builder.BuildEntryPoint(entryPoint);
+            } else {
+                Hydrogen.Compiler.IR.IrModule module = lowering.Lower(program);
+                image = builder.BuildIrModuleDebug(module);
+            }
             System.IO.File.WriteAllBytes(outputPath, image);
             return new NativeCompilerResult(true, "");
         }

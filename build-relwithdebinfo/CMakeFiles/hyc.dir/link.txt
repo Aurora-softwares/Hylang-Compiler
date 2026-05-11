@@ -1,0 +1,1 @@
+/usr/bin/c++ -O2 -g -DNDEBUG CMakeFiles/hyc.dir/src/hyc_main.cpp.o -o hyc  libhylang.a 

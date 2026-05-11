@@ -5738,6 +5738,25 @@ private:
 };
 
 bool locate_entry_point(BoundProgram& program, DiagnosticBag& diagnostics) {
+    // Prefer the args-based entry point when both exist. This matters for projects that keep a
+    // parameterless bootstrap `Main()` around while the runtime still evolves.
+    for (const auto& class_holder : program.semantic_model.classes) {
+        for (const auto& method : class_holder->methods) {
+            if (method->name != "Main" || !method->is_static) {
+                continue;
+            }
+            if (method->return_type != &program.semantic_model.void_type &&
+                method->return_type != &program.semantic_model.int_type) {
+                continue;
+            }
+            if (method->parameters.size() == 1 &&
+                method->parameters[0].type == program.semantic_model.get_array_type(&program.semantic_model.string_type)) {
+                program.entry_point = method.get();
+                return true;
+            }
+        }
+    }
+
     for (const auto& class_holder : program.semantic_model.classes) {
         for (const auto& method : class_holder->methods) {
             if (method->name != "Main" || !method->is_static) {
@@ -5748,11 +5767,6 @@ bool locate_entry_point(BoundProgram& program, DiagnosticBag& diagnostics) {
                 continue;
             }
             if (method->parameters.empty()) {
-                program.entry_point = method.get();
-                return true;
-            }
-            if (method->parameters.size() == 1 &&
-                method->parameters[0].type == program.semantic_model.get_array_type(&program.semantic_model.string_type)) {
                 program.entry_point = method.get();
                 return true;
             }
@@ -9807,28 +9821,34 @@ namespace System.Runtime {
         }
     }
 
-    public class BinaryPrimitives {
-        public static int ReadUInt16LE(byte[] data, int offset) {
-            return data[offset] + data[offset + 1] * 256;
-        }
+	    public class BinaryPrimitives {
+	        private static int U8(byte b) {
+	            int v = b;
+	            if (v < 0) { v = v + 256; }
+	            return v;
+	        }
 
-        public static int ReadUInt16BE(byte[] data, int offset) {
-            return data[offset] * 256 + data[offset + 1];
-        }
+	        public static int ReadUInt16LE(byte[] data, int offset) {
+	            return U8(data[offset]) + U8(data[offset + 1]) * 256;
+	        }
 
-        public static int ReadUInt32LE(byte[] data, int offset) {
-            return data[offset] +
-                   data[offset + 1] * 256 +
-                   data[offset + 2] * 65536 +
-                   data[offset + 3] * 16777216;
-        }
+	        public static int ReadUInt16BE(byte[] data, int offset) {
+	            return U8(data[offset]) * 256 + U8(data[offset + 1]);
+	        }
 
-        public static int ReadUInt32BE(byte[] data, int offset) {
-            return data[offset] * 16777216 +
-                   data[offset + 1] * 65536 +
-                   data[offset + 2] * 256 +
-                   data[offset + 3];
-        }
+	        public static int ReadUInt32LE(byte[] data, int offset) {
+	            return U8(data[offset]) +
+	                   U8(data[offset + 1]) * 256 +
+	                   U8(data[offset + 2]) * 65536 +
+	                   U8(data[offset + 3]) * 16777216;
+	        }
+
+	        public static int ReadUInt32BE(byte[] data, int offset) {
+	            return U8(data[offset]) * 16777216 +
+	                   U8(data[offset + 1]) * 65536 +
+	                   U8(data[offset + 2]) * 256 +
+	                   U8(data[offset + 3]);
+	        }
 
         public static int ReadInt16LE(byte[] data, int offset) {
             return ReadUInt16LE(data, offset);
@@ -9846,17 +9866,44 @@ namespace System.Runtime {
             return ReadUInt32BE(data, offset);
         }
 
-        public static long ReadUInt64LE(byte[] data, int offset) {
-            long low = ReadUInt32LE(data, offset);
-            long high = ReadUInt32LE(data, offset + 4);
-            return low + high * 4294967296;
-        }
+	        public static long ReadUInt64LE(byte[] data, int offset) {
+	            // Avoid going through `int` (which cannot represent unsigned 32-bit values).
+	            long b0 = U8(data[offset]);
+	            long b1 = U8(data[offset + 1]);
+	            long b2 = U8(data[offset + 2]);
+	            long b3 = U8(data[offset + 3]);
+	            long b4 = U8(data[offset + 4]);
+	            long b5 = U8(data[offset + 5]);
+	            long b6 = U8(data[offset + 6]);
+	            long b7 = U8(data[offset + 7]);
+	            return b0 +
+	                   b1 * (long)256 +
+	                   b2 * (long)65536 +
+	                   b3 * (long)16777216 +
+	                   b4 * (long)4294967296 +
+	                   b5 * (long)1099511627776 +
+	                   b6 * (long)281474976710656 +
+	                   b7 * (long)72057594037927936;
+	        }
 
-        public static long ReadUInt64BE(byte[] data, int offset) {
-            long high = ReadUInt32BE(data, offset);
-            long low = ReadUInt32BE(data, offset + 4);
-            return high * 4294967296 + low;
-        }
+	        public static long ReadUInt64BE(byte[] data, int offset) {
+	            long b0 = U8(data[offset]);
+	            long b1 = U8(data[offset + 1]);
+	            long b2 = U8(data[offset + 2]);
+	            long b3 = U8(data[offset + 3]);
+	            long b4 = U8(data[offset + 4]);
+	            long b5 = U8(data[offset + 5]);
+	            long b6 = U8(data[offset + 6]);
+	            long b7 = U8(data[offset + 7]);
+	            return b0 * (long)72057594037927936 +
+	                   b1 * (long)281474976710656 +
+	                   b2 * (long)1099511627776 +
+	                   b3 * (long)4294967296 +
+	                   b4 * (long)16777216 +
+	                   b5 * (long)65536 +
+	                   b6 * (long)256 +
+	                   b7;
+	        }
 
         public static long ReadInt64LE(byte[] data, int offset) {
             return ReadUInt64LE(data, offset);
@@ -9912,15 +9959,33 @@ namespace System.Runtime {
             data[offset + 7] = value % 256;
         }
 
-        public static void WriteInt64LE(byte[] data, int offset, long value) {
-            WriteUInt64LE(data, offset, value);
-        }
+	        public static void WriteInt64LE(byte[] data, int offset, long value) {
+	            // Extract bytes in a way that works for negative numbers too (no shifts required).
+	            // This computes the two's-complement byte pattern by using an adjusted remainder.
+	            long v = value;
+	            int i = 0;
+	            while (i < 8) {
+	                int b = (int)(v % 256);
+	                if (b < 0) { b = b + 256; }
+	                data[offset + i] = b;
+	                v = (v - b) / 256;
+	                i = i + 1;
+	            }
+	        }
 
-        public static void WriteInt64BE(byte[] data, int offset, long value) {
-            WriteUInt64BE(data, offset, value);
-        }
-    }
-}
+	        public static void WriteInt64BE(byte[] data, int offset, long value) {
+	            long v = value;
+	            int i = 7;
+	            while (i >= 0) {
+	                int b = (int)(v % 256);
+	                if (b < 0) { b = b + 256; }
+	                data[offset + i] = b;
+	                v = (v - b) / 256;
+	                i = i - 1;
+	            }
+	        }
+	    }
+	}
 )";
 
 CompilationUnitSyntax parse_stdlib_unit(DiagnosticBag& diagnostics) {

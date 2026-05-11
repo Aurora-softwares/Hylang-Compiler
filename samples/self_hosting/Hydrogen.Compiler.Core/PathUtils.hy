@@ -45,6 +45,10 @@ namespace Hydrogen.Compiler.Core {
                 } else if (part == "..") {
                     if (count > 0) {
                         count = count - 1;
+                    } else {
+                        // Preserve leading ".." segments in relative paths.
+                        stack = Append(stack, count, "..");
+                        count = count + 1;
                     }
                 } else {
                     stack = Append(stack, count, part);

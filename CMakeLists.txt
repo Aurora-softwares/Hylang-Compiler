@@ -1145,6 +1145,17 @@ add_test(
 )
 
 add_test(
+    NAME hy_self_hosting_compile_native_locals_if_ir_dump
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/native_locals_if.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/native_locals_if
+        "-DEXPECTED_OUTPUT=IrModule\n  func Main(string[]) : int\n"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake
+)
+
+add_test(
     NAME hy_self_hosting_tokens_golden
     COMMAND ${CMAKE_COMMAND}
         -DHY_BINARY=$<TARGET_FILE:hy>

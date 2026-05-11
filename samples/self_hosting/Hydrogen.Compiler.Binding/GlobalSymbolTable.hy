@@ -240,12 +240,20 @@ namespace Hydrogen.Compiler.Binding {
             string found = "";
             int i = 0;
             while (i < usings.Length) {
-                string cand = usings[i].Name() + "." + typeName;
-                if (TryGetTypeByFullName(cand) != null) {
-                    if (found == "") {
-                        found = cand;
-                    } else {
-                        return null;
+                // Defensive: parser should never produce null using entries, but don't let a null
+                // propagate into an interpreter crash during self-host validation.
+                if (usings[i] != null) {
+                    string cand = usings[i].Name() + "." + typeName;
+                    if (TryGetTypeByFullName(cand) != null) {
+                        if (found == "") {
+                            found = cand;
+                        } else {
+                            // Duplicate `using` lines can repeat the same candidate; only treat it as
+                            // ambiguous if it resolves to a different type.
+                            if (found != cand) {
+                                return null;
+                            }
+                        }
                     }
                 }
                 i = i + 1;

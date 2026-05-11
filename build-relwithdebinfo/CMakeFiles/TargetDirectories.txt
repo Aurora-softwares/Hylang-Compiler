@@ -1,0 +1,7 @@
+/mnt/local/Projects/Aurora-Softwares/Hylang-Compiler/build-relwithdebinfo/CMakeFiles/hylang.dir
+/mnt/local/Projects/Aurora-Softwares/Hylang-Compiler/build-relwithdebinfo/CMakeFiles/hyrun.dir
+/mnt/local/Projects/Aurora-Softwares/Hylang-Compiler/build-relwithdebinfo/CMakeFiles/hyc.dir
+/mnt/local/Projects/Aurora-Softwares/Hylang-Compiler/build-relwithdebinfo/CMakeFiles/hy.dir
+/mnt/local/Projects/Aurora-Softwares/Hylang-Compiler/build-relwithdebinfo/CMakeFiles/test.dir
+/mnt/local/Projects/Aurora-Softwares/Hylang-Compiler/build-relwithdebinfo/CMakeFiles/edit_cache.dir
+/mnt/local/Projects/Aurora-Softwares/Hylang-Compiler/build-relwithdebinfo/CMakeFiles/rebuild_cache.dir

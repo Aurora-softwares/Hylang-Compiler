@@ -10,6 +10,25 @@ using System.Testing;
 
 namespace Hydrogen.Compiler.Tests {
     public class Program {
+        private static string FindRepoPath(string relativePath) {
+            if (System.IO.File.Exists(relativePath)) {
+                return relativePath;
+            }
+
+            string prefix = "../";
+            int i = 0;
+            while (i < 8) {
+                string candidate = prefix + relativePath;
+                if (System.IO.File.Exists(candidate)) {
+                    return candidate;
+                }
+                prefix = prefix + "../";
+                i = i + 1;
+            }
+
+            return relativePath;
+        }
+
         private static bool Contains(string text, string needle) {
             int i = 0;
             while (i <= text.Length - needle.Length) {
@@ -68,17 +87,17 @@ namespace Hydrogen.Compiler.Tests {
             Assert.Equal("linux-x64-elf phase6b-stage1-skeleton", runtime.Describe(), "runtime model should name the native target");
 
             NativeCompiler nativeCompiler = new NativeCompiler();
-            NativeCompilerResult helloCheck = nativeCompiler.CheckFileEmitIr("tests/phase6/native_hello.hy");
+            NativeCompilerResult helloCheck = nativeCompiler.CheckFileEmitIr(FindRepoPath("tests/phase6/native_hello.hy"));
             Assert.True(helloCheck.Success(), "native_hello should check");
             Assert.True(Contains(helloCheck.DiagnosticsText(), "WriteLineLiteral(\"Hydrogen native hello\")"), "native_hello should lower WriteLineLiteral");
 
-            NativeCompilerResult returnCheck = nativeCompiler.CheckFileEmitIr("tests/phase6/native_return.hy");
+            NativeCompilerResult returnCheck = nativeCompiler.CheckFileEmitIr(FindRepoPath("tests/phase6/native_return.hy"));
             Assert.True(returnCheck.Success(), "native_return should check");
             Assert.True(Contains(returnCheck.DiagnosticsText(), "WriteLineLiteral(\"First native line\")"), "native_return should lower first WriteLineLiteral");
             Assert.True(Contains(returnCheck.DiagnosticsText(), "WriteLineLiteral(\"Second native line\")"), "native_return should lower second WriteLineLiteral");
             Assert.True(Contains(returnCheck.DiagnosticsText(), "Exit(7)"), "native_return should lower Exit(7)");
 
-            ProjectClosure cliClosure = ProjectClosure.Collect("samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj");
+            ProjectClosure cliClosure = ProjectClosure.Collect(FindRepoPath("samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj"));
             string[] projects = cliClosure.Projects();
             Assert.True(projects.Length == 7, "CLI closure should contain 7 projects");
             Assert.True(Contains(projects[0], "Hydrogen.Compiler.Core.hyproj"), "closure[0] should be Core");
@@ -92,12 +111,16 @@ namespace Hydrogen.Compiler.Tests {
             string[] closureSources = cliClosure.Sources();
             int cs = 0;
             while (cs < closureSources.Length) {
-                SyntaxTree parsed = SyntaxTree.Parse(SourceText.FromFile(closureSources[cs]));
-                Assert.True(parsed.Diagnostics().Count() == 0, "CLI closure source should parse without diagnostics: " + closureSources[cs]);
+                SyntaxTree parsed = SyntaxTree.Parse(SourceText.FromFile(FindRepoPath(closureSources[cs])));
+                if (parsed.Diagnostics().Count() != 0) {
+                    System.Console.WriteLine("CLI closure source should parse without diagnostics: " + closureSources[cs]);
+                    System.Console.Write(parsed.Diagnostics().ToText());
+                    return 1;
+                }
                 cs = cs + 1;
             }
 
-            ProjectClosure cycle = ProjectClosure.Collect("tests/phase6/cycle_a.hyproj");
+            ProjectClosure cycle = ProjectClosure.Collect(FindRepoPath("tests/phase6/cycle_a.hyproj"));
             Assert.True(Contains(cycle.Projects()[0], "<cycle:"), "cycle detection should produce a cycle marker");
 
             System.Console.WriteLine("phase6-self-hosting-foundation-ok");

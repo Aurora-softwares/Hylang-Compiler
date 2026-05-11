@@ -1,0 +1,1 @@
+/usr/bin/c++ -O2 -g -DNDEBUG CMakeFiles/hyrun.dir/src/hyrun_main.cpp.o -o hyrun  libhylang.a 

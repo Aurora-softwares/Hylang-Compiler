@@ -29,6 +29,9 @@ namespace Hydrogen.Compiler.Syntax {
             }
             EmitToken(Consume(SyntaxKind.EndOfFileToken, "Expected end of file"));
             Pop();
+            if (diagnostics.HasErrors()) {
+                output = output + diagnostics.ToText();
+            }
             return output;
         }
 
@@ -429,6 +432,16 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private void ParsePrimaryExpression() {
+            if (Check(SyntaxKind.OpenParenToken) && LooksLikeCastExpression()) {
+                Emit("CastExpression");
+                Push();
+                EmitToken(Advance());
+                ParseTypeSyntax();
+                EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')' after cast type"));
+                ParsePrimaryExpression();
+                Pop();
+                return;
+            }
             if (Check(SyntaxKind.OpenParenToken)) {
                 ParseParenthesizedExpression();
                 return;
@@ -506,12 +519,16 @@ namespace Hydrogen.Compiler.Syntax {
                 EmitToken(Advance());
             } else {
                 EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected type name"));
+                while (Check(SyntaxKind.DotToken) && Peek(1).Kind() == SyntaxKind.IdentifierToken) {
+                    EmitToken(Advance());
+                    EmitToken(Advance());
+                }
             }
             ParseOptionalTypeParameters();
             while (Check(SyntaxKind.StarToken)) {
                 EmitToken(Advance());
             }
-            while (Check(SyntaxKind.OpenBracketToken)) {
+            while (Check(SyntaxKind.OpenBracketToken) && Peek(1).Kind() == SyntaxKind.CloseBracketToken) {
                 EmitToken(Advance());
                 EmitToken(Consume(SyntaxKind.CloseBracketToken, "Expected ']' in array type"));
             }
@@ -554,6 +571,20 @@ namespace Hydrogen.Compiler.Syntax {
             Pop();
         }
 
+        private bool LooksLikeCastExpression() {
+            if (Peek(0).Kind() != SyntaxKind.OpenParenToken) { return false; }
+            if (!IsTypeToken(Peek(1).Kind()) && Peek(1).Kind() != SyntaxKind.IdentifierToken) { return false; }
+
+            int offset = 2;
+            while (Peek(offset).Kind() == SyntaxKind.DotToken && Peek(offset + 1).Kind() == SyntaxKind.IdentifierToken) {
+                offset = offset + 2;
+            }
+            while (Peek(offset).Kind() == SyntaxKind.OpenBracketToken && Peek(offset + 1).Kind() == SyntaxKind.CloseBracketToken) {
+                offset = offset + 2;
+            }
+            return Peek(offset).Kind() == SyntaxKind.CloseParenToken;
+        }
+
         private void ParseQualifiedName() {
             Emit("QualifiedName");
             Push();
@@ -576,7 +607,16 @@ namespace Hydrogen.Compiler.Syntax {
                 return true;
             }
             if (Current().Kind() == SyntaxKind.IdentifierToken) {
-                return Peek(1).Kind() == SyntaxKind.IdentifierToken;
+                int offset = 1;
+                while (Peek(offset).Kind() == SyntaxKind.DotToken && Peek(offset + 1).Kind() == SyntaxKind.IdentifierToken) {
+                    offset = offset + 2;
+                }
+                if (Peek(offset).Kind() == SyntaxKind.IdentifierToken) {
+                    return true;
+                }
+                return Peek(offset).Kind() == SyntaxKind.OpenBracketToken &&
+                       Peek(offset + 1).Kind() == SyntaxKind.CloseBracketToken &&
+                       Peek(offset + 2).Kind() == SyntaxKind.IdentifierToken;
             }
             if (!IsTypeToken(Current().Kind())) {
                 return false;

@@ -1,7 +1,7 @@
-namespace Hydrogen.Compiler.Text {
-    public struct TextSpan {
-        private int start;
-        private int length;
+	namespace Hydrogen.Compiler.Text {
+	    public class TextSpan {
+	        private int start;
+	        private int length;
 
         public TextSpan(int inputStart, int inputLength) {
             start = inputStart;
@@ -20,14 +20,14 @@ namespace Hydrogen.Compiler.Text {
             return start + length;
         }
 
-        public string ToDisplayString() {
-            return start + ":" + length;
-        }
-    }
+	        public string ToDisplayString() {
+	            return start + ":" + length;
+	        }
+	    }
 
-    public struct TextLocation {
-        private int line;
-        private int column;
+	    public class TextLocation {
+	        private int line;
+	        private int column;
 
         public TextLocation(int inputLine, int inputColumn) {
             line = inputLine;
@@ -42,10 +42,10 @@ namespace Hydrogen.Compiler.Text {
             return column;
         }
 
-        public string ToDisplayString() {
-            return line + ":" + column;
-        }
-    }
+	        public string ToDisplayString() {
+	            return line + ":" + column;
+	        }
+	    }
 
     public class SourceText {
         private string content;

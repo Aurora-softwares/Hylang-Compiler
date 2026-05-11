@@ -14,10 +14,12 @@ namespace Hydrogen.Compiler.Core {
         public string[] Sources() { return sources; }
 
         public static ProjectClosure Collect(string projectPath) {
-            return CollectProject(projectPath, new string[0], new string[0], new string[0]);
+            // Normalize upfront so cycle detection and de-duping work even when callers pass paths with "../".
+            return CollectProject(PathUtils.Normalize(projectPath), new string[0], new string[0], new string[0]);
         }
 
         private static ProjectClosure CollectProject(string projectPath, string[] stack, string[] projects, string[] sources) {
+            projectPath = PathUtils.Normalize(projectPath);
             if (Contains(projects, projectPath)) {
                 return new ProjectClosure(projects, sources);
             }
