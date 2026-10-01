@@ -13,6 +13,9 @@ endif()
 if(NOT DEFINED EXPECTED_OUTPUT)
     message(FATAL_ERROR "EXPECTED_OUTPUT is required")
 endif()
+if(NOT DEFINED EXPECTED_EXIT_CODE)
+    set(EXPECTED_EXIT_CODE 0)
+endif()
 
 get_filename_component(output_dir "${OUTPUT_FILE}" DIRECTORY)
 file(MAKE_DIRECTORY "${output_dir}")
@@ -39,8 +42,8 @@ execute_process(
     OUTPUT_VARIABLE run_stdout
     ERROR_VARIABLE run_stderr
 )
-if(NOT run_result EQUAL 0)
-    message(FATAL_ERROR "native executable failed (${run_result})\nstdout:\n${run_stdout}\nstderr:\n${run_stderr}")
+if(NOT run_result EQUAL EXPECTED_EXIT_CODE)
+    message(FATAL_ERROR "native executable returned ${run_result}; expected ${EXPECTED_EXIT_CODE}\nstdout:\n${run_stdout}\nstderr:\n${run_stderr}")
 endif()
 if(NOT run_stdout STREQUAL EXPECTED_OUTPUT)
     message(FATAL_ERROR "native executable output mismatch\nexpected:\n${EXPECTED_OUTPUT}\nactual:\n${run_stdout}")

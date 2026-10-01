@@ -5,7 +5,7 @@ namespace Hydrogen.Compiler.RuntimeModel {
         }
 
         public string ObjectModelVersion() {
-            return "phase6b-stage1-skeleton";
+            return "phase6c-direct-entrypoint";
         }
 
         public string Describe() {

@@ -188,332 +188,332 @@ struct Token {
 };
 
 class Lexer {
-public:
-    Lexer(fs::path file, string source, DiagnosticBag& diagnostics)
-        : file_(std::move(file)), source_(std::move(source)), diagnostics_(diagnostics) {}
+	public:
+		Lexer(fs::path file, string source, DiagnosticBag& diagnostics)
+			: file_(std::move(file)), source_(std::move(source)), diagnostics_(diagnostics) {}
 
-    vector<Token> lex() {
-        vector<Token> tokens;
-        while (true) {
-            skip_whitespace_and_comments();
-            if (is_at_end()) {
-                tokens.push_back(make_token(TokenKind::EndOfFile, ""));
-                break;
-            }
+		vector<Token> lex() {
+			vector<Token> tokens;
+			while (true) {
+				skip_whitespace_and_comments();
+				if (is_at_end()) {
+					tokens.push_back(make_token(TokenKind::EndOfFile, ""));
+					break;
+				}
 
-            const char current = peek();
-            if (std::isalpha(static_cast<unsigned char>(current)) || current == '_') {
-                tokens.push_back(lex_identifier_or_keyword());
-                continue;
-            }
+				const char current = peek();
+				if (std::isalpha(static_cast<unsigned char>(current)) || current == '_') {
+					tokens.push_back(lex_identifier_or_keyword());
+					continue;
+				}
 
-            if (std::isdigit(static_cast<unsigned char>(current))) {
-                tokens.push_back(lex_number());
-                continue;
-            }
+				if (std::isdigit(static_cast<unsigned char>(current))) {
+					tokens.push_back(lex_number());
+					continue;
+				}
 
-            if (current == '"') {
-                tokens.push_back(lex_string());
-                continue;
-            }
+				if (current == '"') {
+					tokens.push_back(lex_string());
+					continue;
+				}
 
-            const int line = line_;
-            const int column = column_;
-            advance();
-            switch (current) {
-                case '(':
-                    tokens.push_back(Token{TokenKind::OpenParen, "(", line, column});
-                    break;
-                case ')':
-                    tokens.push_back(Token{TokenKind::CloseParen, ")", line, column});
-                    break;
-                case '{':
-                    tokens.push_back(Token{TokenKind::OpenBrace, "{", line, column});
-                    break;
-                case '}':
-                    tokens.push_back(Token{TokenKind::CloseBrace, "}", line, column});
-                    break;
-                case '[':
-                    tokens.push_back(Token{TokenKind::OpenBracket, "[", line, column});
-                    break;
-                case ']':
-                    tokens.push_back(Token{TokenKind::CloseBracket, "]", line, column});
-                    break;
-                case ';':
-                    tokens.push_back(Token{TokenKind::Semicolon, ";", line, column});
-                    break;
-                case ',':
-                    tokens.push_back(Token{TokenKind::Comma, ",", line, column});
-                    break;
-                case '.':
-                    tokens.push_back(Token{TokenKind::Dot, ".", line, column});
-                    break;
-                case ':':
-                    tokens.push_back(Token{TokenKind::Colon, ":", line, column});
-                    break;
-                case '+':
-                    tokens.push_back(Token{TokenKind::Plus, "+", line, column});
-                    break;
-                case '-':
-                    tokens.push_back(Token{TokenKind::Minus, "-", line, column});
-                    break;
-                case '*':
-                    tokens.push_back(Token{TokenKind::Star, "*", line, column});
-                    break;
-                case '/':
-                    tokens.push_back(Token{TokenKind::Slash, "/", line, column});
-                    break;
-                case '%':
-                    tokens.push_back(Token{TokenKind::Percent, "%", line, column});
-                    break;
-                case '!':
-                    if (match('=')) {
-                        tokens.push_back(Token{TokenKind::BangEquals, "!=", line, column});
-                    } else {
-                        tokens.push_back(Token{TokenKind::Bang, "!", line, column});
-                    }
-                    break;
-                case '=':
-                    if (match('=')) {
-                        tokens.push_back(Token{TokenKind::EqualsEquals, "==", line, column});
-                    } else {
-                        tokens.push_back(Token{TokenKind::Equals, "=", line, column});
-                    }
-                    break;
-                case '<':
-                    if (match('=')) {
-                        tokens.push_back(Token{TokenKind::LessEquals, "<=", line, column});
-                    } else {
-                        tokens.push_back(Token{TokenKind::Less, "<", line, column});
-                    }
-                    break;
-                case '>':
-                    if (match('=')) {
-                        tokens.push_back(Token{TokenKind::GreaterEquals, ">=", line, column});
-                    } else {
-                        tokens.push_back(Token{TokenKind::Greater, ">", line, column});
-                    }
-                    break;
-                case '&':
-                    if (match('&')) {
-                        tokens.push_back(Token{TokenKind::AmpAmp, "&&", line, column});
-                    } else {
-                        tokens.push_back(Token{TokenKind::Ampersand, "&", line, column});
-                    }
-                    break;
-                case '|':
-                    if (match('|')) {
-                        tokens.push_back(Token{TokenKind::PipePipe, "||", line, column});
-                    } else {
-                        diagnostics_.add(file_, line, column, "Unexpected '|'. Did you mean '||'?");
-                    }
-                    break;
-                default:
-                    diagnostics_.add(file_, line, column, "Unexpected character '" + string(1, current) + "'");
-                    break;
-            }
-        }
+				const int line = line_;
+				const int column = column_;
+				advance();
+				switch (current) {
+					case '(':
+						tokens.push_back(Token{TokenKind::OpenParen, "(", line, column});
+						break;
+					case ')':
+						tokens.push_back(Token{TokenKind::CloseParen, ")", line, column});
+						break;
+					case '{':
+						tokens.push_back(Token{TokenKind::OpenBrace, "{", line, column});
+						break;
+					case '}':
+						tokens.push_back(Token{TokenKind::CloseBrace, "}", line, column});
+						break;
+					case '[':
+						tokens.push_back(Token{TokenKind::OpenBracket, "[", line, column});
+						break;
+					case ']':
+						tokens.push_back(Token{TokenKind::CloseBracket, "]", line, column});
+						break;
+					case ';':
+						tokens.push_back(Token{TokenKind::Semicolon, ";", line, column});
+						break;
+					case ',':
+						tokens.push_back(Token{TokenKind::Comma, ",", line, column});
+						break;
+					case '.':
+						tokens.push_back(Token{TokenKind::Dot, ".", line, column});
+						break;
+					case ':':
+						tokens.push_back(Token{TokenKind::Colon, ":", line, column});
+						break;
+					case '+':
+						tokens.push_back(Token{TokenKind::Plus, "+", line, column});
+						break;
+					case '-':
+						tokens.push_back(Token{TokenKind::Minus, "-", line, column});
+						break;
+					case '*':
+						tokens.push_back(Token{TokenKind::Star, "*", line, column});
+						break;
+					case '/':
+						tokens.push_back(Token{TokenKind::Slash, "/", line, column});
+						break;
+					case '%':
+						tokens.push_back(Token{TokenKind::Percent, "%", line, column});
+						break;
+					case '!':
+						if (match('=')) {
+							tokens.push_back(Token{TokenKind::BangEquals, "!=", line, column});
+						} else {
+							tokens.push_back(Token{TokenKind::Bang, "!", line, column});
+						}
+						break;
+					case '=':
+						if (match('=')) {
+							tokens.push_back(Token{TokenKind::EqualsEquals, "==", line, column});
+						} else {
+							tokens.push_back(Token{TokenKind::Equals, "=", line, column});
+						}
+						break;
+					case '<':
+						if (match('=')) {
+							tokens.push_back(Token{TokenKind::LessEquals, "<=", line, column});
+						} else {
+							tokens.push_back(Token{TokenKind::Less, "<", line, column});
+						}
+						break;
+					case '>':
+						if (match('=')) {
+							tokens.push_back(Token{TokenKind::GreaterEquals, ">=", line, column});
+						} else {
+							tokens.push_back(Token{TokenKind::Greater, ">", line, column});
+						}
+						break;
+					case '&':
+						if (match('&')) {
+							tokens.push_back(Token{TokenKind::AmpAmp, "&&", line, column});
+						} else {
+							tokens.push_back(Token{TokenKind::Ampersand, "&", line, column});
+						}
+						break;
+					case '|':
+						if (match('|')) {
+							tokens.push_back(Token{TokenKind::PipePipe, "||", line, column});
+						} else {
+							diagnostics_.add(file_, line, column, "Unexpected '|'. Did you mean '||'?");
+						}
+						break;
+					default:
+						diagnostics_.add(file_, line, column, "Unexpected character '" + string(1, current) + "'");
+						break;
+				}
+			}
 
-        return tokens;
-    }
+			return tokens;
+		}
 
-private:
-    Token make_token(TokenKind kind, string text, int line = -1, int column = -1) const {
-        return Token{kind, std::move(text), line == -1 ? line_ : line, column == -1 ? column_ : column};
-    }
+	private:
+		Token make_token(TokenKind kind, string text, int line = -1, int column = -1) const {
+			return Token{kind, std::move(text), line == -1 ? line_ : line, column == -1 ? column_ : column};
+		}
 
-    bool is_at_end() const {
-        return index_ >= source_.size();
-    }
+		bool is_at_end() const {
+			return index_ >= source_.size();
+		}
 
-    char peek() const {
-        return is_at_end() ? '\0' : source_[index_];
-    }
+		char peek() const {
+			return is_at_end() ? '\0' : source_[index_];
+		}
 
-    char peek_next() const {
-        return index_ + 1 >= source_.size() ? '\0' : source_[index_ + 1];
-    }
+		char peek_next() const {
+			return index_ + 1 >= source_.size() ? '\0' : source_[index_ + 1];
+		}
 
-    char advance() {
-        if (is_at_end()) {
-            return '\0';
-        }
-        const char ch = source_[index_++];
-        if (ch == '\n') {
-            ++line_;
-            column_ = 1;
-        } else {
-            ++column_;
-        }
-        return ch;
-    }
+		char advance() {
+			if (is_at_end()) {
+				return '\0';
+			}
+			const char ch = source_[index_++];
+			if (ch == '\n') {
+				++line_;
+				column_ = 1;
+			} else {
+				++column_;
+			}
+			return ch;
+		}
 
-    bool match(char expected) {
-        if (is_at_end() || source_[index_] != expected) {
-            return false;
-        }
-        advance();
-        return true;
-    }
+		bool match(char expected) {
+			if (is_at_end() || source_[index_] != expected) {
+				return false;
+			}
+			advance();
+			return true;
+		}
 
-    void skip_whitespace_and_comments() {
-        while (!is_at_end()) {
-            const char ch = peek();
-            if (std::isspace(static_cast<unsigned char>(ch))) {
-                advance();
-                continue;
-            }
-            if (ch == '/' && peek_next() == '/') {
-                while (!is_at_end() && peek() != '\n') {
-                    advance();
-                }
-                continue;
-            }
-            break;
-        }
-    }
+		void skip_whitespace_and_comments() {
+			while (!is_at_end()) {
+				const char ch = peek();
+				if (std::isspace(static_cast<unsigned char>(ch))) {
+					advance();
+					continue;
+				}
+				if (ch == '/' && peek_next() == '/') {
+					while (!is_at_end() && peek() != '\n') {
+						advance();
+					}
+					continue;
+				}
+				break;
+			}
+		}
 
-    Token lex_identifier_or_keyword() {
-        const int line = line_;
-        const int column = column_;
-        string text;
-        while (!is_at_end()) {
-            const char ch = peek();
-            if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_') {
-                text.push_back(advance());
-            } else {
-                break;
-            }
-        }
+		Token lex_identifier_or_keyword() {
+			const int line = line_;
+			const int column = column_;
+			string text;
+			while (!is_at_end()) {
+				const char ch = peek();
+				if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_') {
+					text.push_back(advance());
+				} else {
+					break;
+				}
+			}
 
-        static const std::unordered_map<string, TokenKind> keywords = {
-            {"using", TokenKind::Using},
-            {"namespace", TokenKind::Namespace},
-            {"class", TokenKind::Class},
-            {"struct", TokenKind::Struct},
-            {"interface", TokenKind::Interface},
-            {"enum", TokenKind::Enum},
-            {"public", TokenKind::Public},
-            {"private", TokenKind::Private},
-            {"protected", TokenKind::Protected},
-            {"internal", TokenKind::Internal},
-            {"static", TokenKind::Static},
-            {"virtual", TokenKind::Virtual},
-            {"override", TokenKind::Override},
-            {"void", TokenKind::Void},
-            {"byte", TokenKind::Byte},
-            {"sbyte", TokenKind::SByte},
-            {"short", TokenKind::Short},
-            {"ushort", TokenKind::UShort},
-            {"int", TokenKind::Int},
-            {"uint", TokenKind::UInt},
-            {"long", TokenKind::Long},
-            {"ulong", TokenKind::ULong},
-            {"nint", TokenKind::NInt},
-            {"nuint", TokenKind::NUInt},
-            {"string", TokenKind::StringKeyword},
-            {"bool", TokenKind::Bool},
-            {"var", TokenKind::Var},
-            {"true", TokenKind::True},
-            {"false", TokenKind::False},
-            {"null", TokenKind::Null},
-            {"if", TokenKind::If},
-            {"else", TokenKind::Else},
-            {"while", TokenKind::While},
-            {"for", TokenKind::For},
-            {"break", TokenKind::Break},
-            {"continue", TokenKind::Continue},
-            {"return", TokenKind::Return},
-            {"try", TokenKind::Try},
-            {"catch", TokenKind::Catch},
-            {"throw", TokenKind::Throw},
-            {"new", TokenKind::New},
-            {"this", TokenKind::This},
-            {"base", TokenKind::Base},
-            {"unsafe", TokenKind::Unsafe},
-            {"sizeof", TokenKind::SizeOf},
-            {"stackalloc", TokenKind::Stackalloc},
-        };
+			static const std::unordered_map<string, TokenKind> keywords = {
+				{"using", TokenKind::Using},
+				{"namespace", TokenKind::Namespace},
+				{"class", TokenKind::Class},
+				{"struct", TokenKind::Struct},
+				{"interface", TokenKind::Interface},
+				{"enum", TokenKind::Enum},
+				{"public", TokenKind::Public},
+				{"private", TokenKind::Private},
+				{"protected", TokenKind::Protected},
+				{"internal", TokenKind::Internal},
+				{"static", TokenKind::Static},
+				{"virtual", TokenKind::Virtual},
+				{"override", TokenKind::Override},
+				{"void", TokenKind::Void},
+				{"byte", TokenKind::Byte},
+				{"sbyte", TokenKind::SByte},
+				{"short", TokenKind::Short},
+				{"ushort", TokenKind::UShort},
+				{"int", TokenKind::Int},
+				{"uint", TokenKind::UInt},
+				{"long", TokenKind::Long},
+				{"ulong", TokenKind::ULong},
+				{"nint", TokenKind::NInt},
+				{"nuint", TokenKind::NUInt},
+				{"string", TokenKind::StringKeyword},
+				{"bool", TokenKind::Bool},
+				{"var", TokenKind::Var},
+				{"true", TokenKind::True},
+				{"false", TokenKind::False},
+				{"null", TokenKind::Null},
+				{"if", TokenKind::If},
+				{"else", TokenKind::Else},
+				{"while", TokenKind::While},
+				{"for", TokenKind::For},
+				{"break", TokenKind::Break},
+				{"continue", TokenKind::Continue},
+				{"return", TokenKind::Return},
+				{"try", TokenKind::Try},
+				{"catch", TokenKind::Catch},
+				{"throw", TokenKind::Throw},
+				{"new", TokenKind::New},
+				{"this", TokenKind::This},
+				{"base", TokenKind::Base},
+				{"unsafe", TokenKind::Unsafe},
+				{"sizeof", TokenKind::SizeOf},
+				{"stackalloc", TokenKind::Stackalloc},
+			};
 
-        const auto found = keywords.find(text);
-        if (found != keywords.end()) {
-            return Token{found->second, text, line, column};
-        }
-        return Token{TokenKind::Identifier, text, line, column};
-    }
+			const auto found = keywords.find(text);
+			if (found != keywords.end()) {
+				return Token{found->second, text, line, column};
+			}
+			return Token{TokenKind::Identifier, text, line, column};
+		}
 
-    Token lex_number() {
-        const int line = line_;
-        const int column = column_;
-        string text;
-        if (peek() == '0' && (peek_next() == 'x' || peek_next() == 'X')) {
-            text.push_back(advance());
-            text.push_back(advance());
-            while (!is_at_end() && std::isxdigit(static_cast<unsigned char>(peek()))) {
-                text.push_back(advance());
-            }
-            return Token{TokenKind::Number, text, line, column};
-        }
-        while (!is_at_end() && std::isdigit(static_cast<unsigned char>(peek()))) {
-            text.push_back(advance());
-        }
-        return Token{TokenKind::Number, text, line, column};
-    }
+		Token lex_number() {
+			const int line = line_;
+			const int column = column_;
+			string text;
+			if (peek() == '0' && (peek_next() == 'x' || peek_next() == 'X')) {
+				text.push_back(advance());
+				text.push_back(advance());
+				while (!is_at_end() && std::isxdigit(static_cast<unsigned char>(peek()))) {
+					text.push_back(advance());
+				}
+				return Token{TokenKind::Number, text, line, column};
+			}
+			while (!is_at_end() && std::isdigit(static_cast<unsigned char>(peek()))) {
+				text.push_back(advance());
+			}
+			return Token{TokenKind::Number, text, line, column};
+		}
 
-    Token lex_string() {
-        const int line = line_;
-        const int column = column_;
-        advance();
-        string value;
-        while (!is_at_end() && peek() != '"') {
-            const char ch = advance();
-            if (ch == '\\') {
-                if (is_at_end()) {
-                    diagnostics_.add(file_, line, column, "Unterminated string literal");
-                    return Token{TokenKind::StringLiteral, value, line, column};
-                }
-                const char escaped = advance();
-                switch (escaped) {
-                    case 'n':
-                        value.push_back('\n');
-                        break;
-                    case 'r':
-                        value.push_back('\r');
-                        break;
-                    case 't':
-                        value.push_back('\t');
-                        break;
-                    case '"':
-                        value.push_back('"');
-                        break;
-                    case '\\':
-                        value.push_back('\\');
-                        break;
-                    default:
-                        diagnostics_.add(file_, line, column, "Unsupported escape sequence");
-                        value.push_back(escaped);
-                        break;
-                }
-                continue;
-            }
-            value.push_back(ch);
-        }
+		Token lex_string() {
+			const int line = line_;
+			const int column = column_;
+			advance();
+			string value;
+			while (!is_at_end() && peek() != '"') {
+				const char ch = advance();
+				if (ch == '\\') {
+					if (is_at_end()) {
+						diagnostics_.add(file_, line, column, "Unterminated string literal");
+						return Token{TokenKind::StringLiteral, value, line, column};
+					}
+					const char escaped = advance();
+					switch (escaped) {
+						case 'n':
+							value.push_back('\n');
+							break;
+						case 'r':
+							value.push_back('\r');
+							break;
+						case 't':
+							value.push_back('\t');
+							break;
+						case '"':
+							value.push_back('"');
+							break;
+						case '\\':
+							value.push_back('\\');
+							break;
+						default:
+							diagnostics_.add(file_, line, column, "Unsupported escape sequence");
+							value.push_back(escaped);
+							break;
+					}
+					continue;
+				}
+				value.push_back(ch);
+			}
 
-        if (is_at_end()) {
-            diagnostics_.add(file_, line, column, "Unterminated string literal");
-            return Token{TokenKind::StringLiteral, value, line, column};
-        }
+			if (is_at_end()) {
+				diagnostics_.add(file_, line, column, "Unterminated string literal");
+				return Token{TokenKind::StringLiteral, value, line, column};
+			}
 
-        advance();
-        return Token{TokenKind::StringLiteral, value, line, column};
-    }
+			advance();
+			return Token{TokenKind::StringLiteral, value, line, column};
+		}
 
-    fs::path file_;
-    string source_;
-    DiagnosticBag& diagnostics_;
-    std::size_t index_ = 0;
-    int line_ = 1;
-    int column_ = 1;
+		fs::path file_;
+		string source_;
+		DiagnosticBag& diagnostics_;
+		std::size_t index_ = 0;
+		int line_ = 1;
+		int column_ = 1;
 };
 
 struct TypeSyntax {

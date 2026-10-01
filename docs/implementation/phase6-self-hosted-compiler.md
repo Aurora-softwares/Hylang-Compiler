@@ -12,7 +12,7 @@ The Phase 6 foundation lives in `samples/self_hosting`:
 - `Hydrogen.Compiler.CodeGen.X64`: direct Linux x64 ELF byte writer
 - `Hydrogen.Compiler.Cli`: adds `check`, `compile`, and a reserved `stage-compare` interface
 
-The current native backend is intentionally tiny. It recognizes a `System.Console.WriteLine("...")` proof program, lowers it to a small IR object, and writes a Linux x64 ELF executable directly from Hydrogen code. This path does not emit C and does not call a C compiler, assembler, or linker.
+The current native backend has an executable entrypoint subset: integer/bool locals, assignment, arithmetic/comparisons, `if`, `while`, literal `System.Console.WriteLine`, and integer returns. It writes a Linux x64 ELF executable directly from Hydrogen code. This path does not emit C and does not call a C compiler, assembler, or linker. Programs outside that subset still use the temporary IR-debug ELF bridge.
 
 ## Commands
 

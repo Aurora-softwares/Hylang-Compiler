@@ -57,6 +57,18 @@ namespace Hydrogen.Compiler.Tests {
             SyntaxTree generic = SyntaxTree.Parse(new SourceText("public class Box<T> { private T value; public T Value() { return value; } }"));
             Assert.True(generic.Diagnostics().Count() != 0, "generic class should report diagnostics in self-host subset");
 
+            SyntaxTree stateful = SyntaxTree.ParseFast(new SourceText("public class State { private int counter = 3; private string name; public State(string input) { name = input; } }"));
+            Assert.True(stateful.Diagnostics().Count() == 0, "stateful class should parse without diagnostics");
+            ClassDeclarationSyntax statefulClass = stateful.Root().Classes()[0];
+            Assert.True(statefulClass.Fields().Length == 2, "self-host AST must preserve fields");
+            Assert.Equal("counter", statefulClass.Fields()[0].Name(), "first field name should be retained");
+            Assert.True(statefulClass.Fields()[0].Initializer() != null, "field initializer should be retained");
+            Assert.True(statefulClass.Methods().Length == 1, "constructor should be retained as a method");
+			SyntaxTree construction = SyntaxTree.ParseFast(new SourceText("public class Program { public static void Main(string[] args) { State value = new State(42); } }"));
+			StatementSyntax constructionStatement = construction.Root().Classes()[0].Methods()[0].Body().Statements()[0];
+			ExpressionSyntax constructionExpression = constructionStatement.Initializer();
+			Assert.True(constructionExpression.Arguments().Length == 1, "object creation arguments should be retained");
+
             SyntaxTree unsafeTree = SyntaxTree.Parse(new SourceText("public class P { public static void Main(string[] args) { unsafe { byte* ptr = stackalloc byte[4]; ptr[0] = 1; } } }"));
             Assert.True(unsafeTree.ParseText().Length > 0, "unsafe tree should produce parse text");
 
@@ -84,7 +96,7 @@ namespace Hydrogen.Compiler.Tests {
             Assert.True(image[3] == (byte)0x46, "ELF magic byte 3 should be valid");
 
             NativeRuntimeContract runtime = new NativeRuntimeContract();
-            Assert.Equal("linux-x64-elf phase6b-stage1-skeleton", runtime.Describe(), "runtime model should name the native target");
+            Assert.Equal("linux-x64-elf phase6c-direct-entrypoint", runtime.Describe(), "runtime model should name the native target");
 
             NativeCompiler nativeCompiler = new NativeCompiler();
             NativeCompilerResult helloCheck = nativeCompiler.CheckFileEmitIr(FindRepoPath("tests/phase6/native_hello.hy"));
@@ -96,6 +108,12 @@ namespace Hydrogen.Compiler.Tests {
             Assert.True(Contains(returnCheck.DiagnosticsText(), "WriteLineLiteral(\"First native line\")"), "native_return should lower first WriteLineLiteral");
             Assert.True(Contains(returnCheck.DiagnosticsText(), "WriteLineLiteral(\"Second native line\")"), "native_return should lower second WriteLineLiteral");
             Assert.True(Contains(returnCheck.DiagnosticsText(), "Exit(7)"), "native_return should lower Exit(7)");
+
+            DirectMainCompiler directMain = new DirectMainCompiler();
+            SyntaxTree directTree = SyntaxTree.ParseFast(new SourceText("public class Program { public static int Main(string[] args) { int x = 1; if (x == 1) { System.Console.WriteLine(\"x was 1\"); return 7; } System.Console.WriteLine(\"x was not 1\"); return 3; } }"));
+            DirectImageResult directImage = directMain.Compile(directTree.Root());
+            Assert.True(directImage.Success(), "direct backend should lower locals, comparison, if, WriteLine, and return");
+            Assert.True(directImage.Image().Length > 200, "direct backend image should include generated code and rodata");
 
             ProjectClosure cliClosure = ProjectClosure.Collect(FindRepoPath("samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj"));
             string[] projects = cliClosure.Projects();

@@ -88,7 +88,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             ElfImageBuilder builder = new ElfImageBuilder();
             byte[] image = new byte[0];
 
-            if (program.EntryOps().Length != 0) {
+            DirectMainCompiler direct = new DirectMainCompiler();
+            DirectImageResult directResult = direct.Compile(merged);
+            if (directResult.Success()) {
+                image = directResult.Image();
+            } else if (program.EntryOps().Length != 0) {
                 Hydrogen.Compiler.IR.IrEntryPoint entryPoint = lowering.LowerEntryPoint(program);
                 image = builder.BuildEntryPoint(entryPoint);
             } else {
@@ -124,7 +128,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             Hydrogen.Compiler.IR.IrLowering lowering = new Hydrogen.Compiler.IR.IrLowering();
             ElfImageBuilder builder = new ElfImageBuilder();
             byte[] image = new byte[0];
-            if (program.EntryOps().Length != 0) {
+            DirectMainCompiler direct = new DirectMainCompiler();
+            DirectImageResult directResult = direct.Compile(tree.Root());
+            if (directResult.Success()) {
+                image = directResult.Image();
+            } else if (program.EntryOps().Length != 0) {
                 Hydrogen.Compiler.IR.IrEntryPoint entryPoint = lowering.LowerEntryPoint(program);
                 image = builder.BuildEntryPoint(entryPoint);
             } else {

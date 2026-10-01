@@ -120,15 +120,60 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return image;
         }
 
+        // Generic program image builder used by the growing direct backend.  Patch
+        // offsets point at the disp32 of RIP-relative payload references in code.
+        public byte[] BuildCodeAndData(byte[] codeBytes, string[] payloads, int[] patchOffsets, int[] payloadIndexes) {
+            int headerSize = 64 + 56;
+            int codeOffset = headerSize;
+            int rodataOffset = codeOffset + codeBytes.Length;
+            int[] payloadOffsets = new int[payloads.Length];
+            int cursor = rodataOffset;
+            int i = 0;
+            while (i < payloads.Length) {
+                payloadOffsets[i] = cursor;
+                cursor = cursor + payloads[i].Length;
+                i = i + 1;
+            }
+
+            int p = 0;
+            while (p < patchOffsets.Length) {
+                int target = payloadOffsets[payloadIndexes[p]];
+                int nextIp = codeOffset + patchOffsets[p] + 4;
+                WriteDisp32(codeBytes, patchOffsets[p], target - nextIp);
+                p = p + 1;
+            }
+
+            byte[] image = new byte[cursor];
+            WriteElfHeader(image, codeOffset);
+            WriteProgramHeader(image, cursor);
+
+            int ci = 0;
+            while (ci < codeBytes.Length) {
+                image[codeOffset + ci] = codeBytes[ci];
+                ci = ci + 1;
+            }
+
+            int pi = 0;
+            while (pi < payloads.Length) {
+                string payload = payloads[pi];
+                int k = 0;
+                while (k < payload.Length) {
+                    image[payloadOffsets[pi] + k] = (byte)AsciiCode(payload[k]);
+                    k = k + 1;
+                }
+                pi = pi + 1;
+            }
+            return image;
+        }
+
         private void WriteDisp32(byte[] bytes, int offset, int value) {
             int temp = value;
-            bytes[offset + 0] = (byte)Mod256(temp);
-            temp = temp / 256;
-            bytes[offset + 1] = (byte)Mod256(temp);
-            temp = temp / 256;
-            bytes[offset + 2] = (byte)Mod256(temp);
-            temp = temp / 256;
-            bytes[offset + 3] = (byte)Mod256(temp);
+            int i = 0;
+            while (i < 4) {
+                bytes[offset + i] = (byte)Mod256(temp);
+                temp = DivideSignedByte(temp);
+                i = i + 1;
+            }
         }
 
         private int Mod256(int value) {
@@ -137,6 +182,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 result = result + 256;
             }
             return result;
+        }
+
+        private int DivideSignedByte(int value) {
+            if (value < 0) {
+                return (value - 255) / 256;
+            }
+            return value / 256;
         }
 
         private byte[] BuildSysWriteExit(string text, int exitCode) {

@@ -20,13 +20,22 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
         public void Emit32(int value) {
             int temp = value;
-            EmitByte(Mod256(temp));
-            temp = temp / 256;
-            EmitByte(Mod256(temp));
-            temp = temp / 256;
-            EmitByte(Mod256(temp));
-            temp = temp / 256;
-            EmitByte(Mod256(temp));
+            int i = 0;
+            while (i < 4) {
+                EmitByte(Mod256(temp));
+                temp = DivideSignedByte(temp);
+                i = i + 1;
+            }
+        }
+
+        public void Patch32(int offset, int value) {
+            int temp = value;
+            int i = 0;
+            while (i < 4) {
+                buffer[offset + i] = (byte)Mod256(temp);
+                temp = DivideSignedByte(temp);
+                i = i + 1;
+            }
         }
 
         public void Emit64(long value) {
@@ -72,6 +81,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 result = result + 256;
             }
             return result;
+        }
+
+        private int DivideSignedByte(int value) {
+            if (value < 0) {
+                return (value - 255) / 256;
+            }
+            return value / 256;
         }
     }
 }

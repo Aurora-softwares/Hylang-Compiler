@@ -77,15 +77,54 @@ namespace Hydrogen.Compiler.Syntax {
 
 	public class ClassDeclarationSyntax {
 		private string name;
+		private FieldDeclarationSyntax[] fields;
 		private MethodDeclarationSyntax[] methods;
 
-		public ClassDeclarationSyntax(string inputName, MethodDeclarationSyntax[] inputMethods) {
+		public ClassDeclarationSyntax(string inputName, FieldDeclarationSyntax[] inputFields, MethodDeclarationSyntax[] inputMethods) {
 			name = inputName;
+			fields = inputFields;
 			methods = inputMethods;
 		}
 
 		public string Name() { return name; }
 
+		public FieldDeclarationSyntax[] Fields() { return fields; }
+
+		public MethodDeclarationSyntax[] Methods() { return methods; }
+	}
+
+	// Keep fields in the self-hosted syntax tree even before the native backend
+	// materialises an object layout.  Dropping them made it impossible for later
+	// phases to compile the compiler's own stateful classes faithfully.
+	public class FieldDeclarationSyntax {
+		private TypeSyntax type;
+		private string name;
+		private bool isStatic;
+		private ExpressionSyntax initializer;
+
+		public FieldDeclarationSyntax(TypeSyntax inputType, string inputName, bool inputIsStatic, ExpressionSyntax inputInitializer) {
+			type = inputType;
+			name = inputName;
+			isStatic = inputIsStatic;
+			initializer = inputInitializer;
+		}
+
+		public TypeSyntax Type() { return type; }
+		public string Name() { return name; }
+		public bool IsStatic() { return isStatic; }
+		public ExpressionSyntax Initializer() { return initializer; }
+	}
+
+	public class ClassMemberListSyntax {
+		private FieldDeclarationSyntax[] fields;
+		private MethodDeclarationSyntax[] methods;
+
+		public ClassMemberListSyntax(FieldDeclarationSyntax[] inputFields, MethodDeclarationSyntax[] inputMethods) {
+			fields = inputFields;
+			methods = inputMethods;
+		}
+
+		public FieldDeclarationSyntax[] Fields() { return fields; }
 		public MethodDeclarationSyntax[] Methods() { return methods; }
 	}
 
@@ -384,9 +423,10 @@ namespace Hydrogen.Compiler.Syntax {
 			return node;
 		}
 
-		public static ExpressionSyntax ObjectCreation(TypeSyntax inputType) {
+		public static ExpressionSyntax ObjectCreation(TypeSyntax inputType, ExpressionSyntax[] inputArguments) {
 			ExpressionSyntax node = new ExpressionSyntax(KindObjectCreation());
 			node.type = inputType;
+			node.arguments = inputArguments;
 			return node;
 		}
 

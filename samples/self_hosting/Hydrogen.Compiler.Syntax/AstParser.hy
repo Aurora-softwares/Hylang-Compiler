@@ -119,14 +119,16 @@ namespace Hydrogen.Compiler.Syntax {
                 ParseQualifiedNameText();
             }
             Consume(SyntaxKind.OpenBraceToken, "Expected '{' after class");
-            MethodDeclarationSyntax[] methods = ParseClassMembers();
+            ClassMemberListSyntax members = ParseClassMembers();
             Consume(SyntaxKind.CloseBraceToken, "Expected '}' after class");
-            return new ClassDeclarationSyntax(name, methods);
+            return new ClassDeclarationSyntax(name, members.Fields(), members.Methods());
         }
 
-        private MethodDeclarationSyntax[] ParseClassMembers() {
+        private ClassMemberListSyntax ParseClassMembers() {
+            FieldDeclarationSyntax[] fields = new FieldDeclarationSyntax[0];
+            int fieldCount = 0;
             MethodDeclarationSyntax[] methods = new MethodDeclarationSyntax[0];
-            int count = 0;
+            int methodCount = 0;
             while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
                 bool isStatic = false;
 				bool isVirtual = false;
@@ -151,28 +153,31 @@ namespace Hydrogen.Compiler.Syntax {
                     if (Check(SyntaxKind.OpenParenToken)) {
                         ParameterSyntax[] parameters = ParseParameterList();
                         StatementSyntax body = ParseBlock();
-                        methods = AppendMethod(methods, count, new MethodDeclarationSyntax(name, isStatic, isVirtual, isOverride, returnType, parameters, body));
-                        count = count + 1;
+                        methods = AppendMethod(methods, methodCount, new MethodDeclarationSyntax(name, isStatic, isVirtual, isOverride, returnType, parameters, body));
+                        methodCount = methodCount + 1;
                         continue;
                     }
                 } else if (Check(SyntaxKind.OpenParenToken)) {
                     // Constructor: no explicit return type. Treat as void-returning method named after the type.
                     ParameterSyntax[] parameters2 = ParseParameterList();
                     StatementSyntax body2 = ParseBlock();
-                    methods = AppendMethod(methods, count, new MethodDeclarationSyntax(returnType.DisplayName(), false, false, false, new TypeSyntax("void"), parameters2, body2));
-                    count = count + 1;
+                    methods = AppendMethod(methods, methodCount, new MethodDeclarationSyntax(returnType.DisplayName(), false, false, false, new TypeSyntax("void"), parameters2, body2));
+                    methodCount = methodCount + 1;
                     continue;
                 } else {
                     Consume(SyntaxKind.IdentifierToken, "Expected member name");
                 }
 
-                // Field: skip until semicolon.
-                while (!Check(SyntaxKind.SemicolonToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                ExpressionSyntax initializer = null;
+                if (Check(SyntaxKind.EqualsToken)) {
                     Advance();
+                    initializer = ParseExpression();
                 }
                 Consume(SyntaxKind.SemicolonToken, "Expected ';' after field");
+				fields = AppendField(fields, fieldCount, new FieldDeclarationSyntax(returnType, name, isStatic, initializer));
+				fieldCount = fieldCount + 1;
             }
-            return methods;
+            return new ClassMemberListSyntax(fields, methods);
         }
 
 		private EnumDeclarationSyntax ParseEnum() {
@@ -558,7 +563,7 @@ namespace Hydrogen.Compiler.Syntax {
                 }
                 // Allow constructor arguments (Stage1B parser support). Binder/codegen may still restrict semantics.
                 ExpressionSyntax[] ctorArgs = ParseArgumentList();
-                return ExpressionSyntax.ObjectCreation(type);
+                return ExpressionSyntax.ObjectCreation(type, ctorArgs);
             }
 			if (Check(SyntaxKind.SizeOfKeyword)) {
 				Advance();
@@ -795,6 +800,17 @@ namespace Hydrogen.Compiler.Syntax {
             next[count] = item;
             return next;
         }
+
+		private FieldDeclarationSyntax[] AppendField(FieldDeclarationSyntax[] items, int count, FieldDeclarationSyntax item) {
+			FieldDeclarationSyntax[] next = new FieldDeclarationSyntax[count + 1];
+			int i = 0;
+			while (i < count) {
+				next[i] = items[i];
+				i = i + 1;
+			}
+			next[count] = item;
+			return next;
+		}
 
 		private EnumDeclarationSyntax[] AppendEnum(EnumDeclarationSyntax[] items, int count, EnumDeclarationSyntax item) {
 			EnumDeclarationSyntax[] next = new EnumDeclarationSyntax[count + 1];

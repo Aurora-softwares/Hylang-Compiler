@@ -13,7 +13,7 @@ chmod +x build/native_hello
 ./build/native_hello
 ```
 
-Current status: the workspace has reusable core/syntax libraries from Phase 5 plus Phase 6 foundation projects for binding, IR, runtime model, and Linux x64 code generation. The native compiler path intentionally supports only a tiny `System.Console.WriteLine("...")` proof subset today; full self-hosting still needs the managed runtime clone, broad binding/type checking, and repeatable stage comparison.
+Current status: the workspace has reusable core/syntax libraries from Phase 5 plus Phase 6 foundation projects for binding, IR, runtime model, and Linux x64 code generation. The direct Linux x64 path now emits executable entrypoints with integer/bool locals, assignment, arithmetic/comparisons, `if`, `while`, literal `System.Console.WriteLine`, and integer returns. Full self-hosting still needs classes/fields at runtime, calls and dispatch, strings and arrays, file I/O, broad binding/type checking, and repeatable stage comparison.
 
 ## Stage 1 Skeleton (Phase 6B)
 
@@ -23,7 +23,7 @@ The Hydrogen CLI `check` command can now emit a bound + IR debug dump:
 ./build/hy run samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- check samples/self_hosting/Hydrogen.Compiler.Cli/Program.hy --emit-ir
 ```
 
-The Hydrogen CLI `compile` command currently emits a native ELF that prints the lowered IR debug text (end-to-end parse → bind → IR → ELF proof):
+For source outside that executable subset, the Hydrogen CLI still emits the existing IR-debug ELF bridge while the backend grows. The eventual stage1 compiler must use the direct path for the full compiler workspace.
 
 ```bash
 ./build/hy run samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- compile samples/self_hosting/Hydrogen.Compiler.Cli/Program.hy -o build/hydrogen_stage1_skeleton
