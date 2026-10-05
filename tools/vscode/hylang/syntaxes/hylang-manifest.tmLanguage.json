@@ -1,0 +1,32 @@
+{
+  "scopeName": "source.hylang.manifest",
+  "name": "Hylang Manifest",
+  "patterns": [
+    {
+      "name": "comment.line.number-sign.hylang-manifest",
+      "match": "#.*$"
+    },
+    {
+      "name": "comment.line.double-slash.hylang-manifest",
+      "match": "//.*$"
+    },
+    {
+      "name": "string.quoted.double.hylang-manifest",
+      "begin": "\"",
+      "end": "\""
+    },
+    {
+      "name": "keyword.control.section.hylang-manifest",
+      "match": "^\\s*\\[[A-Za-z0-9_.-]+\\]\\s*$"
+    },
+    {
+      "name": "entity.other.attribute-name.hylang-manifest",
+      "match": "^\\s*[A-Za-z_][A-Za-z0-9_]*\\s*(?==)"
+    },
+    {
+      "name": "constant.numeric.hylang-manifest",
+      "match": "\\b[0-9]+\\b"
+    }
+  ],
+  "uuid": "0f9e4cf8-a120-448d-a913-18a4d8a6c823"
+}

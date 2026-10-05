@@ -1,0 +1,4 @@
+format = 2
+name = "Beta"
+type = "lib"
+sources = ["B.hy"]

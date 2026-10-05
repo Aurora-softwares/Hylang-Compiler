@@ -1,0 +1,3 @@
+name = "SymbolModel"
+type = "exe"
+sources = ["Program.hy", "Symbol.hy", "NamedSymbol.hy", "TypeSymbol.hy", "MethodSymbol.hy"]

@@ -1,0 +1,758 @@
+using Hydrogen.Compiler.Diagnostics;
+using Hydrogen.Compiler.Text;
+
+namespace Hydrogen.Compiler.Syntax {
+    public class Parser {
+        private SyntaxTokenList tokens;
+        private DiagnosticBag diagnostics;
+        private int index;
+        private string[] outputLines;
+        private int outputCount;
+        private int indent;
+
+        public Parser(SyntaxTokenList inputTokens, DiagnosticBag inputDiagnostics) {
+            tokens = inputTokens;
+            diagnostics = inputDiagnostics;
+            index = 0;
+            outputLines = new string[64];
+            outputCount = 0;
+            indent = 0;
+        }
+
+        public string ParseCompilationUnit() {
+            Emit("CompilationUnit");
+            Push();
+            while (!Check(SyntaxKind.EndOfFileToken)) {
+                if (Check(SyntaxKind.UsingKeyword)) {
+                    ParseUsingDirective();
+                } else {
+                    ParseNamespaceMember();
+                }
+            }
+            EmitToken(Consume(SyntaxKind.EndOfFileToken, "Expected end of file"));
+            Pop();
+            string output = JoinOutput(0, outputCount);
+            if (diagnostics.HasErrors()) { output = output + diagnostics.ToText(); }
+            return output;
+        }
+
+        private void ParseUsingDirective() {
+            Emit("UsingDirective");
+            Push();
+            EmitToken(Consume(SyntaxKind.UsingKeyword, "Expected using keyword"));
+            ParseQualifiedName();
+            EmitToken(Consume(SyntaxKind.SemicolonToken, "Expected ';' after using directive"));
+            Pop();
+        }
+
+        private void ParseNamespaceMember() {
+            SkipModifiers();
+            if (Check(SyntaxKind.NamespaceKeyword)) {
+                ParseNamespaceDeclaration();
+                return;
+            }
+            if (SyntaxFacts.IsTypeDeclarationStart(Current().Kind())) {
+                ParseTypeDeclaration();
+                return;
+            }
+            diagnostics.Report(Current().Line(), Current().Column(), "Expected namespace or type declaration");
+            EmitToken(Advance());
+        }
+
+        private void ParseNamespaceDeclaration() {
+            Emit("NamespaceDeclaration");
+            Push();
+            EmitToken(Consume(SyntaxKind.NamespaceKeyword, "Expected namespace keyword"));
+            ParseQualifiedName();
+            EmitToken(Consume(SyntaxKind.OpenBraceToken, "Expected '{' after namespace name"));
+            while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                int startIndex = index;
+                ParseNamespaceMember();
+                EnsureProgress(startIndex);
+            }
+            EmitToken(Consume(SyntaxKind.CloseBraceToken, "Expected '}' after namespace"));
+            Pop();
+        }
+
+        private void ParseTypeDeclaration() {
+            SyntaxKind kind = Current().Kind();
+            if (kind == SyntaxKind.EnumKeyword) {
+                ParseEnumDeclaration();
+                return;
+            }
+            string name = SyntaxFacts.KindName(kind) + "Declaration";
+            Emit(name);
+            Push();
+            EmitToken(Advance());
+            EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected type name"));
+            ParseOptionalTypeParameters();
+            if (Match(SyntaxKind.ColonToken)) {
+                Emit("BaseList");
+                Push();
+                ParseTypeSyntax();
+                while (Match(SyntaxKind.CommaToken)) {
+                    ParseTypeSyntax();
+                }
+                Pop();
+            }
+            EmitToken(Consume(SyntaxKind.OpenBraceToken, "Expected '{' in type declaration"));
+            while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                int startIndex = index;
+                ParseMemberDeclaration();
+                EnsureProgress(startIndex);
+            }
+            EmitToken(Consume(SyntaxKind.CloseBraceToken, "Expected '}' in type declaration"));
+            Pop();
+        }
+
+        private void ParseEnumDeclaration() {
+            Emit("EnumDeclaration");
+            Push();
+            EmitToken(Consume(SyntaxKind.EnumKeyword, "Expected enum keyword"));
+            EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected enum name"));
+            EmitToken(Consume(SyntaxKind.OpenBraceToken, "Expected '{' in enum declaration"));
+            while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                int startIndex = index;
+                Emit("EnumMember");
+                Push();
+                EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected enum member name"));
+                if (Check(SyntaxKind.CommaToken)) {
+                    EmitToken(Advance());
+                }
+                Pop();
+                EnsureProgress(startIndex);
+            }
+            EmitToken(Consume(SyntaxKind.CloseBraceToken, "Expected '}' in enum declaration"));
+            Pop();
+        }
+
+        private void ParseMemberDeclaration() {
+            SkipModifiers();
+            if (Check(SyntaxKind.IdentifierToken) && Peek(1).Kind() == SyntaxKind.OpenParenToken) {
+                ParseConstructorDeclaration();
+                return;
+            }
+            Emit("MemberDeclaration");
+            Push();
+            ParseTypeSyntax();
+            EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected member name"));
+            ParseOptionalTypeParameters();
+            if (Check(SyntaxKind.OpenParenToken)) {
+                ParseParameterList();
+                if (Match(SyntaxKind.ColonToken)) {
+                    Emit("ConstructorInitializer");
+                    Push();
+                    ParseExpression();
+                    Pop();
+                }
+                ParseBlockOrSemicolon();
+            } else {
+                if (Match(SyntaxKind.EqualsToken)) {
+                    ParseExpression();
+                }
+                EmitToken(Consume(SyntaxKind.SemicolonToken, "Expected ';' after field declaration"));
+            }
+            Pop();
+        }
+
+        private void ParseConstructorDeclaration() {
+            Emit("ConstructorDeclaration");
+            Push();
+            EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected constructor name"));
+            ParseParameterList();
+            if (Match(SyntaxKind.ColonToken)) {
+                Emit("ConstructorInitializer");
+                Push();
+                ParseExpression();
+                Pop();
+            }
+            ParseBlockOrSemicolon();
+            Pop();
+        }
+
+        private void ParseParameterList() {
+            Emit("ParameterList");
+            Push();
+            EmitToken(Consume(SyntaxKind.OpenParenToken, "Expected '('"));
+            while (!Check(SyntaxKind.CloseParenToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                Emit("Parameter");
+                Push();
+                ParseTypeSyntax();
+                EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected parameter name"));
+                Pop();
+                if (!Match(SyntaxKind.CommaToken)) {
+                    break;
+                }
+            }
+            EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')'"));
+            Pop();
+        }
+
+        private void ParseBlockOrSemicolon() {
+            if (Check(SyntaxKind.SemicolonToken)) {
+                EmitToken(Advance());
+                return;
+            }
+            ParseBlock();
+        }
+
+        private void ParseBlock() {
+            Emit("BlockStatement");
+            Push();
+            EmitToken(Consume(SyntaxKind.OpenBraceToken, "Expected '{'"));
+            while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                int startIndex = index;
+                ParseStatement();
+                EnsureProgress(startIndex);
+            }
+            EmitToken(Consume(SyntaxKind.CloseBraceToken, "Expected '}'"));
+            Pop();
+        }
+
+        private void ParseStatement() {
+            if (Check(SyntaxKind.OpenBraceToken)) {
+                ParseBlock();
+                return;
+            }
+            if (Check(SyntaxKind.IfKeyword)) {
+                ParseIfStatement();
+                return;
+            }
+            if (Check(SyntaxKind.WhileKeyword)) {
+                ParseWhileStatement();
+                return;
+            }
+            if (Check(SyntaxKind.ForKeyword)) {
+                ParseForStatement();
+                return;
+            }
+            if (Check(SyntaxKind.BreakKeyword) || Check(SyntaxKind.ContinueKeyword)) {
+                Emit("JumpStatement");
+                Push();
+                EmitToken(Advance());
+                EmitToken(Consume(SyntaxKind.SemicolonToken, "Expected ';' after jump statement"));
+                Pop();
+                return;
+            }
+            if (Check(SyntaxKind.ReturnKeyword)) {
+                ParseReturnStatement();
+                return;
+            }
+            if (Check(SyntaxKind.TryKeyword)) {
+                ParseTryStatement();
+                return;
+            }
+            if (Check(SyntaxKind.ThrowKeyword)) {
+                ParseThrowStatement();
+                return;
+            }
+            if (Check(SyntaxKind.UnsafeKeyword)) {
+                ParseUnsafeStatement();
+                return;
+            }
+            if (LooksLikeLocalDeclaration()) {
+                ParseLocalDeclaration();
+                return;
+            }
+            ParseExpressionStatement();
+        }
+
+        private void ParseIfStatement() {
+            Emit("IfStatement");
+            Push();
+            EmitToken(Consume(SyntaxKind.IfKeyword, "Expected if"));
+            ParseParenthesizedExpression();
+            ParseStatement();
+            if (Check(SyntaxKind.ElseKeyword)) {
+                EmitToken(Advance());
+                ParseStatement();
+            }
+            Pop();
+        }
+
+        private void ParseWhileStatement() {
+            Emit("WhileStatement");
+            Push();
+            EmitToken(Consume(SyntaxKind.WhileKeyword, "Expected while"));
+            ParseParenthesizedExpression();
+            ParseStatement();
+            Pop();
+        }
+
+        private void ParseForStatement() {
+            Emit("ForStatement");
+            Push();
+            EmitToken(Consume(SyntaxKind.ForKeyword, "Expected for"));
+            EmitToken(Consume(SyntaxKind.OpenParenToken, "Expected '(' after for"));
+            if (!Check(SyntaxKind.SemicolonToken)) {
+                if (LooksLikeLocalDeclaration()) {
+                    ParseLocalDeclaration();
+                } else {
+                    ParseExpression();
+                    EmitToken(Consume(SyntaxKind.SemicolonToken, "Expected ';' after for initializer"));
+                }
+            } else {
+                EmitToken(Advance());
+            }
+            if (!Check(SyntaxKind.SemicolonToken)) {
+                ParseExpression();
+            }
+            EmitToken(Consume(SyntaxKind.SemicolonToken, "Expected ';' after for condition"));
+            if (!Check(SyntaxKind.CloseParenToken)) {
+                ParseExpression();
+            }
+            EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')' after for clauses"));
+            ParseStatement();
+            Pop();
+        }
+
+        private void ParseReturnStatement() {
+            Emit("ReturnStatement");
+            Push();
+            EmitToken(Consume(SyntaxKind.ReturnKeyword, "Expected return"));
+            if (!Check(SyntaxKind.SemicolonToken)) {
+                ParseExpression();
+            }
+            EmitToken(Consume(SyntaxKind.SemicolonToken, "Expected ';' after return"));
+            Pop();
+        }
+
+        private void ParseTryStatement() {
+            Emit("TryStatement");
+            Push();
+            EmitToken(Consume(SyntaxKind.TryKeyword, "Expected try"));
+            ParseBlock();
+            EmitToken(Consume(SyntaxKind.CatchKeyword, "Expected catch after try block"));
+            if (Check(SyntaxKind.OpenParenToken)) {
+                EmitToken(Advance());
+                ParseTypeSyntax();
+                EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected catch variable name"));
+                EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')' after catch clause"));
+            }
+            ParseBlock();
+            Pop();
+        }
+
+        private void ParseThrowStatement() {
+            Emit("ThrowStatement");
+            Push();
+            EmitToken(Consume(SyntaxKind.ThrowKeyword, "Expected throw"));
+            if (!Check(SyntaxKind.SemicolonToken)) {
+                ParseExpression();
+            }
+            EmitToken(Consume(SyntaxKind.SemicolonToken, "Expected ';' after throw"));
+            Pop();
+        }
+
+        private void ParseUnsafeStatement() {
+            Emit("UnsafeStatement");
+            Push();
+            EmitToken(Consume(SyntaxKind.UnsafeKeyword, "Expected unsafe"));
+            ParseBlock();
+            Pop();
+        }
+
+        private void ParseLocalDeclaration() {
+            Emit("LocalDeclaration");
+            Push();
+            ParseTypeSyntax();
+            EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected local name"));
+            if (Match(SyntaxKind.EqualsToken)) {
+                ParseExpression();
+            }
+            EmitToken(Consume(SyntaxKind.SemicolonToken, "Expected ';' after local declaration"));
+            Pop();
+        }
+
+        private void ParseExpressionStatement() {
+            Emit("ExpressionStatement");
+            Push();
+            ParseExpression();
+            EmitToken(Consume(SyntaxKind.SemicolonToken, "Expected ';' after expression"));
+            Pop();
+        }
+
+        private void ParseExpression() {
+            ParseAssignmentExpression();
+        }
+
+        private void ParseAssignmentExpression() {
+            Emit("Expression");
+            Push();
+            ParseBinaryExpression(0);
+            if (Match(SyntaxKind.EqualsToken)) {
+                Emit("AssignmentTail");
+                Push();
+                ParseAssignmentExpression();
+                Pop();
+            }
+            Pop();
+        }
+
+        private void ParseBinaryExpression(int parentPrecedence) {
+            int unaryPrecedence = UnaryPrecedence(Current().Kind());
+            if (unaryPrecedence != 0 && unaryPrecedence >= parentPrecedence) {
+                Emit("UnaryExpression " + SyntaxFacts.KindName(Current().Kind()));
+                Push();
+                EmitToken(Advance());
+                ParseBinaryExpression(unaryPrecedence);
+                Pop();
+            } else {
+                ParsePostfixExpression();
+            }
+
+            while (true) {
+                int precedence = BinaryPrecedence(Current().Kind());
+                if (precedence == 0 || precedence <= parentPrecedence) {
+                    return;
+                }
+                Emit("BinaryOperator " + SyntaxFacts.KindName(Current().Kind()));
+                Push();
+                EmitToken(Advance());
+                ParseBinaryExpression(precedence);
+                Pop();
+            }
+        }
+
+        private void ParsePostfixExpression() {
+            ParsePrimaryExpression();
+            while (true) {
+                if (Match(SyntaxKind.DotToken)) {
+                    Emit("MemberAccessExpression");
+                    Push();
+                    EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected member name"));
+                    Pop();
+                    continue;
+                }
+                if (Check(SyntaxKind.OpenParenToken)) {
+                    ParseArgumentList();
+                    continue;
+                }
+                if (Match(SyntaxKind.OpenBracketToken)) {
+                    Emit("ElementAccessExpression");
+                    Push();
+                    ParseExpression();
+                    EmitToken(Consume(SyntaxKind.CloseBracketToken, "Expected ']'"));
+                    Pop();
+                    continue;
+                }
+                return;
+            }
+        }
+
+        private void ParsePrimaryExpression() {
+            if (Check(SyntaxKind.OpenParenToken) && LooksLikeCastExpression()) {
+                Emit("CastExpression");
+                Push();
+                EmitToken(Advance());
+                ParseTypeSyntax();
+                EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')' after cast type"));
+                ParsePrimaryExpression();
+                Pop();
+                return;
+            }
+            if (Check(SyntaxKind.OpenParenToken)) {
+                ParseParenthesizedExpression();
+                return;
+            }
+            if (Check(SyntaxKind.NewKeyword)) {
+                Emit("ObjectOrArrayCreationExpression");
+                Push();
+                EmitToken(Advance());
+                ParseTypeSyntax();
+                if (Check(SyntaxKind.OpenParenToken)) {
+                    ParseArgumentList();
+                }
+                if (Check(SyntaxKind.OpenBracketToken)) {
+                    EmitToken(Advance());
+                    ParseExpression();
+                    EmitToken(Consume(SyntaxKind.CloseBracketToken, "Expected ']'"));
+                }
+                Pop();
+                return;
+            }
+            if (Check(SyntaxKind.SizeOfKeyword)) {
+                Emit("SizeOfExpression");
+                Push();
+                EmitToken(Advance());
+                EmitToken(Consume(SyntaxKind.OpenParenToken, "Expected '(' after sizeof"));
+                ParseTypeSyntax();
+                EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')' after sizeof"));
+                Pop();
+                return;
+            }
+            if (Check(SyntaxKind.StackAllocKeyword)) {
+                Emit("StackAllocExpression");
+                Push();
+                EmitToken(Advance());
+                ParseStackAllocTypeSyntax();
+                EmitToken(Consume(SyntaxKind.OpenBracketToken, "Expected '[' after stackalloc type"));
+                ParseExpression();
+                EmitToken(Consume(SyntaxKind.CloseBracketToken, "Expected ']'"));
+                Pop();
+                return;
+            }
+            Emit("PrimaryExpression");
+            Push();
+            EmitToken(Advance());
+            Pop();
+        }
+
+        private void ParseParenthesizedExpression() {
+            Emit("ParenthesizedExpression");
+            Push();
+            EmitToken(Consume(SyntaxKind.OpenParenToken, "Expected '('"));
+            ParseExpression();
+            EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')'"));
+            Pop();
+        }
+
+        private void ParseArgumentList() {
+            Emit("ArgumentList");
+            Push();
+            EmitToken(Consume(SyntaxKind.OpenParenToken, "Expected '('"));
+            while (!Check(SyntaxKind.CloseParenToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                ParseExpression();
+                if (!Match(SyntaxKind.CommaToken)) {
+                    break;
+                }
+            }
+            EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')'"));
+            Pop();
+        }
+
+        private void ParseTypeSyntax() {
+            Emit("TypeSyntax");
+            Push();
+            if (IsTypeToken(Current().Kind())) {
+                EmitToken(Advance());
+            } else {
+                EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected type name"));
+                while (Check(SyntaxKind.DotToken) && Peek(1).Kind() == SyntaxKind.IdentifierToken) {
+                    EmitToken(Advance());
+                    EmitToken(Advance());
+                }
+            }
+            ParseOptionalTypeParameters();
+            while (Check(SyntaxKind.StarToken)) {
+                EmitToken(Advance());
+            }
+            while (Check(SyntaxKind.OpenBracketToken) && Peek(1).Kind() == SyntaxKind.CloseBracketToken) {
+                EmitToken(Advance());
+                EmitToken(Consume(SyntaxKind.CloseBracketToken, "Expected ']' in array type"));
+            }
+            Pop();
+        }
+
+        private void ParseStackAllocTypeSyntax() {
+            Emit("TypeSyntax");
+            Push();
+            if (IsTypeToken(Current().Kind())) {
+                EmitToken(Advance());
+            } else {
+                EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected type name"));
+            }
+            ParseOptionalTypeParameters();
+            while (Check(SyntaxKind.StarToken)) {
+                EmitToken(Advance());
+            }
+            Pop();
+        }
+
+        private void ParseOptionalTypeParameters() {
+            if (!Check(SyntaxKind.LessToken)) {
+                return;
+            }
+            Emit("TypeArgumentOrParameterList");
+            Push();
+            EmitToken(Advance());
+            while (!Check(SyntaxKind.GreaterToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                if (Current().Kind() == SyntaxKind.IdentifierToken || IsTypeToken(Current().Kind())) {
+                    EmitToken(Advance());
+                } else if (Check(SyntaxKind.CommaToken)) {
+                    EmitToken(Advance());
+                } else {
+                    diagnostics.Report(Current().Line(), Current().Column(), "Expected type argument or parameter");
+                    EmitToken(Advance());
+                }
+            }
+            EmitToken(Consume(SyntaxKind.GreaterToken, "Expected '>'"));
+            Pop();
+        }
+
+        private bool LooksLikeCastExpression() {
+            if (Peek(0).Kind() != SyntaxKind.OpenParenToken) { return false; }
+            if (!IsTypeToken(Peek(1).Kind()) && Peek(1).Kind() != SyntaxKind.IdentifierToken) { return false; }
+
+            int offset = 2;
+            while (Peek(offset).Kind() == SyntaxKind.DotToken && Peek(offset + 1).Kind() == SyntaxKind.IdentifierToken) {
+                offset = offset + 2;
+            }
+            while (Peek(offset).Kind() == SyntaxKind.OpenBracketToken && Peek(offset + 1).Kind() == SyntaxKind.CloseBracketToken) {
+                offset = offset + 2;
+            }
+            return Peek(offset).Kind() == SyntaxKind.CloseParenToken;
+        }
+
+        private void ParseQualifiedName() {
+            Emit("QualifiedName");
+            Push();
+            EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected identifier"));
+            while (Match(SyntaxKind.DotToken)) {
+                EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected identifier after '.'"));
+            }
+            Pop();
+        }
+
+        private void SkipModifiers() {
+            while (SyntaxFacts.IsModifier(Current().Kind())) {
+                Emit("Modifier " + SyntaxFacts.KindName(Current().Kind()));
+                EmitToken(Advance());
+            }
+        }
+
+        private bool LooksLikeLocalDeclaration() {
+            if (Current().Kind() == SyntaxKind.VarKeyword) {
+                return true;
+            }
+            if (Current().Kind() == SyntaxKind.IdentifierToken) {
+                int offset = 1;
+                while (Peek(offset).Kind() == SyntaxKind.DotToken && Peek(offset + 1).Kind() == SyntaxKind.IdentifierToken) {
+                    offset = offset + 2;
+                }
+                if (Peek(offset).Kind() == SyntaxKind.IdentifierToken) {
+                    return true;
+                }
+                return Peek(offset).Kind() == SyntaxKind.OpenBracketToken &&
+                       Peek(offset + 1).Kind() == SyntaxKind.CloseBracketToken &&
+                       Peek(offset + 2).Kind() == SyntaxKind.IdentifierToken;
+            }
+            if (!IsTypeToken(Current().Kind())) {
+                return false;
+            }
+            return Peek(1).Kind() == SyntaxKind.IdentifierToken ||
+                   Peek(1).Kind() == SyntaxKind.StarToken ||
+                   Peek(1).Kind() == SyntaxKind.OpenBracketToken;
+        }
+
+        private bool IsTypeToken(SyntaxKind kind) {
+            return kind == SyntaxKind.VoidKeyword ||
+                   kind == SyntaxKind.BoolKeyword ||
+                   kind == SyntaxKind.ByteKeyword ||
+                   kind == SyntaxKind.SByteKeyword ||
+                   kind == SyntaxKind.ShortKeyword ||
+                   kind == SyntaxKind.UShortKeyword ||
+                   kind == SyntaxKind.IntKeyword ||
+                   kind == SyntaxKind.UIntKeyword ||
+                   kind == SyntaxKind.LongKeyword ||
+                   kind == SyntaxKind.ULongKeyword ||
+                   kind == SyntaxKind.NIntKeyword ||
+                   kind == SyntaxKind.NUIntKeyword ||
+                   kind == SyntaxKind.StringKeyword ||
+                   kind == SyntaxKind.VarKeyword;
+        }
+
+        private int UnaryPrecedence(SyntaxKind kind) {
+            if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken || kind == SyntaxKind.BangToken ||
+                kind == SyntaxKind.AmpersandToken || kind == SyntaxKind.StarToken) {
+                return 7;
+            }
+            return 0;
+        }
+
+        private int BinaryPrecedence(SyntaxKind kind) {
+            if (kind == SyntaxKind.StarToken || kind == SyntaxKind.SlashToken || kind == SyntaxKind.PercentToken) { return 6; }
+            if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken) { return 5; }
+            if (kind == SyntaxKind.LessToken || kind == SyntaxKind.LessEqualsToken ||
+                kind == SyntaxKind.GreaterToken || kind == SyntaxKind.GreaterEqualsToken) { return 4; }
+            if (kind == SyntaxKind.EqualsEqualsToken || kind == SyntaxKind.BangEqualsToken) { return 3; }
+            if (kind == SyntaxKind.AmpersandAmpersandToken) { return 2; }
+            if (kind == SyntaxKind.PipePipeToken) { return 1; }
+            return 0;
+        }
+
+        private SyntaxToken Current() {
+            return Peek(0);
+        }
+
+        private SyntaxToken Peek(int offset) {
+            int target = index + offset;
+            if (target >= tokens.Count()) {
+                return tokens.Get(tokens.Count() - 1);
+            }
+            return tokens.Get(target);
+        }
+
+        private bool Check(SyntaxKind kind) {
+            return Current().Kind() == kind;
+        }
+
+        private bool Match(SyntaxKind kind) {
+            if (!Check(kind)) {
+                return false;
+            }
+            EmitToken(Advance());
+            return true;
+        }
+
+        private SyntaxToken Advance() {
+            SyntaxToken token = Current();
+            if (!Check(SyntaxKind.EndOfFileToken)) {
+                index = index + 1;
+            }
+            return token;
+        }
+
+        private void EnsureProgress(int startIndex) {
+            if (index == startIndex && !Check(SyntaxKind.EndOfFileToken)) {
+                diagnostics.Report(Current().Line(), Current().Column(), "Unexpected token during parser recovery");
+                EmitToken(Advance());
+            }
+        }
+
+        private SyntaxToken Consume(SyntaxKind kind, string message) {
+            if (Check(kind)) {
+                return Advance();
+            }
+            diagnostics.Report(Current().Line(), Current().Column(), message);
+            return new SyntaxToken(kind, "", Current().Line(), Current().Column(), Current().Position());
+        }
+
+        private void EmitToken(SyntaxToken token) {
+            Emit("Token " + SyntaxFacts.KindName(token.Kind()) + " " + token.Text());
+        }
+
+        // Keep individual lines until parsing completes. Repeatedly copying the
+        // entire outline for every indentation space made large files quadratic.
+        private void Emit(string text) {
+            string line = "";
+            int i = 0;
+            while (i < indent) { line = line + "  "; i = i + 1; }
+            if (outputCount == outputLines.Length) {
+                string[] next = new string[outputLines.Length * 2];
+                i = 0;
+                while (i < outputCount) { next[i] = outputLines[i]; i = i + 1; }
+                outputLines = next;
+            }
+            outputLines[outputCount] = line + text + "\n";
+            outputCount = outputCount + 1;
+        }
+
+        private string JoinOutput(int start, int length) {
+            if (length == 0) { return ""; }
+            if (length == 1) { return outputLines[start]; }
+            int middle = length / 2;
+            string left = JoinOutput(start, middle);
+            string right = JoinOutput(start + middle, length - middle);
+            return left + right;
+        }
+
+        private void Push() {
+            indent = indent + 1;
+        }
+
+        private void Pop() {
+            indent = indent - 1;
+        }
+    }
+}

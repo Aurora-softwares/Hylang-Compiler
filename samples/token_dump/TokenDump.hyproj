@@ -1,0 +1,4 @@
+name = "token_dump"
+type = "exe"
+sources = ["Program.hy", "Scanner.hy", "Token.hy", "TokenKind.hy"]
+references = []

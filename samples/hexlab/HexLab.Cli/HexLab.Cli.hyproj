@@ -1,0 +1,12 @@
+format = 2
+name = "HexLab.Cli"
+version = "0.1.0"
+type = "exe"
+sources = ["Program.hy"]
+project_references = ["../HexLab.Core/HexLab.Core.hyproj"]
+
+[package]
+id = "HexLab.Cli"
+description = "HexLab command line tool"
+authors = []
+license = ""

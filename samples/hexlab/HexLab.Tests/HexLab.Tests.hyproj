@@ -1,0 +1,12 @@
+format = 2
+name = "HexLab.Tests"
+version = "0.1.0"
+type = "test"
+sources = ["Program.hy"]
+project_references = ["../HexLab.Core/HexLab.Core.hyproj"]
+
+[package]
+id = "HexLab.Tests"
+description = "HexLab showcase tests"
+authors = []
+license = ""

@@ -1,0 +1,72 @@
+{
+  "name": "hylang-tools",
+  "displayName": "Hylang Tools",
+  "description": "Lightweight VS Code support for the Hylang bootstrap compiler.",
+  "version": "0.1.0",
+  "publisher": "aurora-softwares",
+  "main": "./extension.js",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "onLanguage:hylang",
+    "onLanguage:hylang-manifest"
+  ],
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Snippets"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "hylang",
+        "aliases": [
+          "Hylang",
+          "Hydrogen"
+        ],
+        "extensions": [
+          ".hy"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "hylang-manifest",
+        "aliases": [
+          "Hylang Manifest"
+        ],
+        "extensions": [
+          ".hyproj"
+        ]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "hylang",
+        "scopeName": "source.hylang",
+        "path": "./syntaxes/hylang.tmLanguage.json"
+      },
+      {
+        "language": "hylang-manifest",
+        "scopeName": "source.hylang.manifest",
+        "path": "./syntaxes/hylang-manifest.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "hylang",
+        "path": "./snippets/hylang.json"
+      }
+    ],
+    "configuration": {
+      "title": "Hylang",
+      "properties": {
+        "hylang.hyPath": {
+          "type": "string",
+          "default": "hy",
+          "description": "Path to the hy executable used for the language server and tasks."
+        }
+      }
+    }
+  }
+}

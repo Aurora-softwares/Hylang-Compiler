@@ -1,0 +1,76 @@
+foreach(required HY_BINARY PROJECT_TARGET SOURCE_DIR TEMP_DIR)
+    if(NOT DEFINED ${required})
+        message(FATAL_ERROR "${required} is required")
+    endif()
+endforeach()
+file(MAKE_DIRECTORY "${TEMP_DIR}")
+set(compiler_command "${HY_BINARY}" run "${PROJECT_TARGET}" --)
+if(COMPILE_CLI)
+    set(NATIVE_BINARY "${TEMP_DIR}/hydrogen-compiler")
+    execute_process(
+        COMMAND "${HY_BINARY}" build "${PROJECT_TARGET}" -o "${NATIVE_BINARY}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 60
+    )
+    if(NOT result STREQUAL "0")
+        message(FATAL_ERROR "Could not build Hydrogen CLI: ${result}\n${stdout}\n${stderr}")
+    endif()
+    set(compiler_command "${NATIVE_BINARY}")
+elseif(DEFINED NATIVE_BINARY)
+    set(compiler_command "${NATIVE_BINARY}")
+endif()
+
+set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_runtime.hy")
+set(OUTPUT_FILE "${TEMP_DIR}/runtime")
+set(RUN_ARGS hello)
+set(EXPECTED_OUTPUT "node:10\ntail:9\n1\nhello\nnode:11\n")
+set(EXPECTED_EXIT_CODE 42)
+include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
+
+set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_runtime_files.hy")
+set(OUTPUT_FILE "${TEMP_DIR}/files")
+set(RUN_ARGS "${TEMP_DIR}/roundtrip.bin")
+set(EXPECTED_OUTPUT "files and GC ok\n")
+include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
+
+set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_runtime_gc.hy")
+set(OUTPUT_FILE "${TEMP_DIR}/gc")
+set(RUN_ARGS)
+set(EXPECTED_OUTPUT "heap graphs and cycles ok\n")
+include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
+
+set(body_array_index "int[] values = new int[1]; return values[1];")
+set(body_array_store "int[] values = new int[1]; values[-1] = 2; return 0;")
+set(body_string_index "string value = \"x\"; System.Console.WriteLine(value[1]); return 0;")
+set(body_null "string value = null; return value.Length;")
+set(body_negative_size "int[] values = new int[-1]; return 0;")
+set(body_file "System.IO.File.ReadAllText(args[0]); return 0;")
+set(body_conversion "return System.Convert.ToInt32(\"invalid\");")
+set(reason_array_index "index out of range")
+set(reason_array_store "index out of range")
+set(reason_string_index "index out of range")
+set(reason_null "null reference")
+set(reason_negative_size "invalid allocation size")
+set(reason_file "file I/O failed")
+set(reason_conversion "invalid integer string")
+foreach(case array_index array_store string_index null negative_size file conversion)
+    set(input "${TEMP_DIR}/${case}.hy")
+    set(output "${TEMP_DIR}/${case}")
+    file(WRITE "${input}" "public class Program { public static int Main(string[] args) { ${body_${case}} } }\n")
+    execute_process(
+        COMMAND ${compiler_command} compile "${input}" -o "${output}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 30
+    )
+    if(NOT result STREQUAL "0")
+        message(FATAL_ERROR "${case}: compilation failed: ${result}\n${stdout}\n${stderr}")
+    endif()
+    file(CHMOD "${output}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)
+    file(REMOVE "${TEMP_DIR}/missing-file")
+    execute_process(
+        COMMAND "${output}" "${TEMP_DIR}/missing-file"
+        RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 10
+    )
+    if(NOT result STREQUAL "1" OR NOT stdout STREQUAL "" OR
+       NOT stderr STREQUAL "runtime error: ${reason_${case}}\n")
+        message(FATAL_ERROR "${case}: expected clean runtime failure, got ${result}\nstdout:\n${stdout}\nstderr:\n${stderr}")
+    endif()
+endforeach()

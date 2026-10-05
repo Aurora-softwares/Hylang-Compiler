@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Hylang: Run target",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "hy run ${input:hyTarget}"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "hyTarget",
+      "type": "promptString",
+      "description": "Path to the .hy or .hyproj file to run",
+      "default": "${workspaceFolder}/App.hyproj"
+    }
+  ]
+}

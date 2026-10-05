@@ -1,0 +1,3 @@
+name = "MiniFrontendModel"
+type = "exe"
+sources = ["Program.hy", "TextSpan.hy", "SyntaxNodes.hy", "Visitors.hy"]

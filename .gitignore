@@ -36,6 +36,14 @@
 *.exe
 *.out
 *.app
+build/
+.hylang/
+cmake-build*/
 
 # debug information files
 *.dwo
+
+PLAN.md
+.claude/
+st
+de_modules

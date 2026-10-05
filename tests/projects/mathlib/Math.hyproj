@@ -1,0 +1,4 @@
+name = "MathLib"
+type = "lib"
+sources = ["Math.hy"]
+references = []

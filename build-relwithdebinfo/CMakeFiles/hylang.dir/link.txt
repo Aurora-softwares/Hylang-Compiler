@@ -1,0 +1,2 @@
+/usr/bin/ar qc libhylang.a CMakeFiles/hylang.dir/src/hylang.cpp.o
+/usr/bin/ranlib libhylang.a

@@ -1,0 +1,31 @@
+CompilationUnit
+  Modifier Public
+  Token Public public
+  ClassDeclaration
+    Token Class class
+    Token Identifier Broken
+    Token OpenBrace {
+    Modifier Public
+    Token Public public
+    MemberDeclaration
+      TypeSyntax
+        Token Void void
+      Token Identifier M
+      ParameterList
+        Token OpenParen (
+        Parameter
+          TypeSyntax
+            Token Identifier 
+          Token Identifier 
+        Token CloseParen 
+      BlockStatement
+        Token OpenBrace {
+        ReturnStatement
+          Token Return return
+          Token Semicolon ;
+        Token CloseBrace }
+    Token CloseBrace }
+  Token EndOfFile <eof>
+2:20 error Expected type name
+2:20 error Expected parameter name
+2:20 error Expected ')'

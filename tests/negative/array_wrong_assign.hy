@@ -1,0 +1,6 @@
+public class Program {
+    public static void Main() {
+        int[] values = new int[1];
+        values[0] = "nope";
+    }
+}

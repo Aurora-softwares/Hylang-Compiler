@@ -1,0 +1,4 @@
+format = 2
+name = "Alpha"
+type = "lib"
+sources = ["A.hy"]

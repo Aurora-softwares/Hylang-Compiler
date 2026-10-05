@@ -1,0 +1,4 @@
+name = "text_report"
+type = "exe"
+sources = ["Program.hy", "Reporter.hy", "ReportFormatter.hy"]
+references = []

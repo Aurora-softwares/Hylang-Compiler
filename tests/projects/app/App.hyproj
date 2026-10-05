@@ -1,0 +1,4 @@
+name = "DemoApp"
+type = "exe"
+sources = ["Program.hy"]
+references = ["../mathlib/Math.hyproj"]

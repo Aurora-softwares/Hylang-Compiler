@@ -1,0 +1,7 @@
+format = 2
+name = "CycleA"
+version = "0.1.0"
+type = "exe"
+sources = ["native_hello.hy"]
+project_references = ["cycle_b.hyproj"]
+
