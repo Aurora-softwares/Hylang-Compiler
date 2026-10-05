@@ -1,6 +1,6 @@
 # SDK Demo
 
-`samples/sdk_demo` is the Phase 4 tooling ecosystem proof workspace. It demonstrates build, test, format, check, package, local registry publish/search/install, and a consumer executable.
+This SDK workspace demonstrates project build/test/check/format commands and local registry publish/search/install with a consumer executable. Run from the compiler repository root after building `build/hy`. These workspace/package commands require the C++ SDK; they are not native compiler commands.
 
 ```bash
 ./build/hy build samples/sdk_demo/SdkDemo.hyproj

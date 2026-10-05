@@ -179,16 +179,24 @@ namespace Hydrogen.Compiler.Cli {
                 return 1;
             }
 
-            System.Console.WriteLine("stage-compare is not implemented yet in Hydrogen (Phase 6E work item).");
-            System.Console.WriteLine("inputs:");
-            System.Console.WriteLine("  project: " + projectPath);
-            System.Console.WriteLine("  stage1:   " + stage1Path);
-            System.Console.WriteLine("  stage2:   " + stage2Path);
-            System.Console.WriteLine("planned corpus (compiler-only):");
-            System.Console.WriteLine("  - samples/self_hosting/Hydrogen.Compiler.Cli/Program.hy");
-            System.Console.WriteLine("  - tests/phase6/native_hello.hy");
-            System.Console.WriteLine("  - tests/phase6/native_return.hy");
-            return 1;
+            // Artifact comparison is one part of the bootstrap proof. The
+            // proof driver separately rebuilds the compiler and runs its corpus.
+            byte[] first = System.IO.File.ReadAllBytes(stage1Path);
+            byte[] second = System.IO.File.ReadAllBytes(stage2Path);
+            if (first.Length != second.Length) {
+                System.Console.WriteLine("stage artifacts differ in length: " + first.Length + " vs " + second.Length);
+                return 1;
+            }
+            int i = 0;
+            while (i < first.Length) {
+                if (first[i] != second[i]) {
+                    System.Console.WriteLine("stage artifacts differ at byte " + i);
+                    return 1;
+                }
+                i = i + 1;
+            }
+            System.Console.WriteLine("stage artifacts match (" + first.Length + " bytes)");
+            return 0;
         }
 
         private static void PrintUsage() {

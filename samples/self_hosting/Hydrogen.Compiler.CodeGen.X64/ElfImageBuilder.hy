@@ -330,8 +330,19 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             Write32(image, offset + 4, 0);
         }
 
+        public bool SupportsPayload(string text) {
+            int i = 0;
+            while (i < text.Length) {
+                if (AsciiCode(text[i]) == 63 && text[i] != "?") { return false; }
+                i = i + 1;
+            }
+            return true;
+        }
+
         private int AsciiCode(string ch) {
             if (ch == "\n") { return 10; }
+            if (ch == "\t") { return 9; }
+            if (ch == "\r") { return 13; }
             if (ch == " ") { return 32; }
             if (ch == "!") { return 33; }
             if (ch == "\"") { return 34; }

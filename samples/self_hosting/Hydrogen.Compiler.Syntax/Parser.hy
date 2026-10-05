@@ -6,14 +6,16 @@ namespace Hydrogen.Compiler.Syntax {
         private SyntaxTokenList tokens;
         private DiagnosticBag diagnostics;
         private int index;
-        private string output;
+        private string[] outputLines;
+        private int outputCount;
         private int indent;
 
         public Parser(SyntaxTokenList inputTokens, DiagnosticBag inputDiagnostics) {
             tokens = inputTokens;
             diagnostics = inputDiagnostics;
             index = 0;
-            output = "";
+            outputLines = new string[64];
+            outputCount = 0;
             indent = 0;
         }
 
@@ -29,9 +31,8 @@ namespace Hydrogen.Compiler.Syntax {
             }
             EmitToken(Consume(SyntaxKind.EndOfFileToken, "Expected end of file"));
             Pop();
-            if (diagnostics.HasErrors()) {
-                output = output + diagnostics.ToText();
-            }
+            string output = JoinOutput(0, outputCount);
+            if (diagnostics.HasErrors()) { output = output + diagnostics.ToText(); }
             return output;
         }
 
@@ -65,7 +66,9 @@ namespace Hydrogen.Compiler.Syntax {
             ParseQualifiedName();
             EmitToken(Consume(SyntaxKind.OpenBraceToken, "Expected '{' after namespace name"));
             while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                int startIndex = index;
                 ParseNamespaceMember();
+                EnsureProgress(startIndex);
             }
             EmitToken(Consume(SyntaxKind.CloseBraceToken, "Expected '}' after namespace"));
             Pop();
@@ -94,7 +97,9 @@ namespace Hydrogen.Compiler.Syntax {
             }
             EmitToken(Consume(SyntaxKind.OpenBraceToken, "Expected '{' in type declaration"));
             while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                int startIndex = index;
                 ParseMemberDeclaration();
+                EnsureProgress(startIndex);
             }
             EmitToken(Consume(SyntaxKind.CloseBraceToken, "Expected '}' in type declaration"));
             Pop();
@@ -107,6 +112,7 @@ namespace Hydrogen.Compiler.Syntax {
             EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected enum name"));
             EmitToken(Consume(SyntaxKind.OpenBraceToken, "Expected '{' in enum declaration"));
             while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                int startIndex = index;
                 Emit("EnumMember");
                 Push();
                 EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected enum member name"));
@@ -114,6 +120,7 @@ namespace Hydrogen.Compiler.Syntax {
                     EmitToken(Advance());
                 }
                 Pop();
+                EnsureProgress(startIndex);
             }
             EmitToken(Consume(SyntaxKind.CloseBraceToken, "Expected '}' in enum declaration"));
             Pop();
@@ -194,7 +201,9 @@ namespace Hydrogen.Compiler.Syntax {
             Push();
             EmitToken(Consume(SyntaxKind.OpenBraceToken, "Expected '{'"));
             while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                int startIndex = index;
                 ParseStatement();
+                EnsureProgress(startIndex);
             }
             EmitToken(Consume(SyntaxKind.CloseBraceToken, "Expected '}'"));
             Pop();
@@ -694,6 +703,13 @@ namespace Hydrogen.Compiler.Syntax {
             return token;
         }
 
+        private void EnsureProgress(int startIndex) {
+            if (index == startIndex && !Check(SyntaxKind.EndOfFileToken)) {
+                diagnostics.Report(Current().Line(), Current().Column(), "Unexpected token during parser recovery");
+                EmitToken(Advance());
+            }
+        }
+
         private SyntaxToken Consume(SyntaxKind kind, string message) {
             if (Check(kind)) {
                 return Advance();
@@ -706,13 +722,29 @@ namespace Hydrogen.Compiler.Syntax {
             Emit("Token " + SyntaxFacts.KindName(token.Kind()) + " " + token.Text());
         }
 
+        // Keep individual lines until parsing completes. Repeatedly copying the
+        // entire outline for every indentation space made large files quadratic.
         private void Emit(string text) {
+            string line = "";
             int i = 0;
-            while (i < indent) {
-                output = output + "  ";
-                i = i + 1;
+            while (i < indent) { line = line + "  "; i = i + 1; }
+            if (outputCount == outputLines.Length) {
+                string[] next = new string[outputLines.Length * 2];
+                i = 0;
+                while (i < outputCount) { next[i] = outputLines[i]; i = i + 1; }
+                outputLines = next;
             }
-            output = output + text + "\n";
+            outputLines[outputCount] = line + text + "\n";
+            outputCount = outputCount + 1;
+        }
+
+        private string JoinOutput(int start, int length) {
+            if (length == 0) { return ""; }
+            if (length == 1) { return outputLines[start]; }
+            int middle = length / 2;
+            string left = JoinOutput(start, middle);
+            string right = JoinOutput(start + middle, length - middle);
+            return left + right;
         }
 
         private void Push() {

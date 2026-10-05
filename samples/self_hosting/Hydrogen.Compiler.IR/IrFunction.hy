@@ -1,5 +1,15 @@
 namespace Hydrogen.Compiler.IR {
     public class IrFunction {
+        private IrMethod declaration;
+        public void SetDeclaration(IrMethod value) { declaration = value; }
+        private IrStatement body;
+        public void SetBody(IrStatement value) {
+            if (declaration != null) { declaration.SetBody(value); } else { body = value; }
+        }
+        public IrStatement Body() {
+            if (declaration != null) { return declaration.Body(); }
+            return body;
+        }
         private string name;
         private string returnType;
         private string[] parameterTypes;
@@ -33,6 +43,7 @@ namespace Hydrogen.Compiler.IR {
                 i = i + 1;
             }
             text = text + ") : " + returnType + "\n";
+            if (Body() != null) { IrBodyPrinter printer = new IrBodyPrinter(); text = text + printer.Statement(Body(), "    "); }
             return text;
         }
     }

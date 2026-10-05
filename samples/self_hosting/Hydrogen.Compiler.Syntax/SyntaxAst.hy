@@ -100,6 +100,7 @@ namespace Hydrogen.Compiler.Syntax {
 		private TypeSyntax type;
 		private string name;
 		private bool isStatic;
+        private bool isPrivate;
 		private ExpressionSyntax initializer;
 
 		public FieldDeclarationSyntax(TypeSyntax inputType, string inputName, bool inputIsStatic, ExpressionSyntax inputInitializer) {
@@ -112,6 +113,8 @@ namespace Hydrogen.Compiler.Syntax {
 		public TypeSyntax Type() { return type; }
 		public string Name() { return name; }
 		public bool IsStatic() { return isStatic; }
+        public bool IsPrivate() { return isPrivate; }
+        public void SetPrivate(bool value) { isPrivate = value; }
 		public ExpressionSyntax Initializer() { return initializer; }
 	}
 
@@ -131,6 +134,7 @@ namespace Hydrogen.Compiler.Syntax {
 	public class MethodDeclarationSyntax {
 		private string name;
 		private bool isStatic;
+        private bool isPrivate;
 		private bool isVirtual;
 		private bool isOverride;
 		private TypeSyntax returnType;
@@ -151,6 +155,8 @@ namespace Hydrogen.Compiler.Syntax {
 		public string Name() { return name; }
 
 		public bool IsStatic() { return isStatic; }
+        public bool IsPrivate() { return isPrivate; }
+        public void SetPrivate(bool value) { isPrivate = value; }
 
 		public bool IsVirtual() { return isVirtual; }
 

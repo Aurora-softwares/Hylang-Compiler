@@ -7233,6 +7233,7 @@ private:
         out << "typedef struct {\n";
         out << "    int32_t type_id;\n";
         out << "    uint32_t gc_mark;\n";
+        out << "    size_t gc_size;\n";
         out << "} HyObjectHeader;\n\n";
 
         // --- Managed string ---
@@ -7430,6 +7431,8 @@ private:
         out << "static size_t hy_gc_bytes_allocated = 0;\n";
         out << "static size_t hy_gc_threshold = (1u << 20);\n";
         out << "static int hy_gc_stress = 0;\n";
+        out << "static int hy_gc_adaptive = 1;\n";
+        out << "static size_t hy_gc_next_threshold = (1u << 20);\n";
         out << "static void* hy_gc_stack_base = NULL;\n";
         out << "typedef struct HyRootFrame {\n";
         out << "    struct HyRootFrame* prev;\n";
@@ -7462,6 +7465,7 @@ private:
         out << "        hy_gc_heap = next;\n";
         out << "        hy_gc_heap_capacity = next_cap;\n";
         out << "    }\n";
+        out << "    ((HyObjectHeader*)memory)->gc_size = size;\n";
         out << "    hy_gc_heap[hy_gc_heap_count++] = memory;\n";
         out << "    hy_gc_bytes_allocated += size;\n";
         out << "    return memory;\n";
@@ -7480,15 +7484,40 @@ private:
         out << "    }\n";
         out << "}\n\n";
 
+        // Build a sorted membership index once per collection. Typed roots and
+        // generic fields can contain non-heap values; membership must remain
+        // checked without scanning the entire heap for every graph edge.
+        out << "static void** hy_gc_lookup = NULL;\n";
+        out << "static size_t hy_gc_lookup_capacity = 0;\n";
+        out << "static int hy_gc_compare_pointer(const void* left, const void* right) {\n";
+        out << "    uintptr_t a = (uintptr_t)*(void* const*)left;\n";
+        out << "    uintptr_t b = (uintptr_t)*(void* const*)right;\n";
+        out << "    return (a > b) - (a < b);\n";
+        out << "}\n";
+        out << "static void hy_gc_index_heap(void) {\n";
+        out << "    if (hy_gc_heap_count > hy_gc_lookup_capacity) {\n";
+        out << "        void** next = (void**)realloc(hy_gc_lookup, hy_gc_heap_count * sizeof(void*));\n";
+        out << "        if (next == NULL) hy_runtime_fail(\"GC index allocation failed\");\n";
+        out << "        hy_gc_lookup = next;\n";
+        out << "        hy_gc_lookup_capacity = hy_gc_heap_count;\n";
+        out << "    }\n";
+        out << "    if (hy_gc_heap_count > 0) {\n";
+        out << "        memcpy(hy_gc_lookup, hy_gc_heap, hy_gc_heap_count * sizeof(void*));\n";
+        out << "        qsort(hy_gc_lookup, hy_gc_heap_count, sizeof(void*), hy_gc_compare_pointer);\n";
+        out << "    }\n";
+        out << "}\n\n";
+
         // --- GC mark helpers ---
         out << "static void hy_gc_mark_object(void* obj);\n\n";
         out << "static void hy_gc_try_mark(void* candidate) {\n";
         out << "    if (candidate == NULL) return;\n";
-        out << "    for (size_t i = 0; i < hy_gc_heap_count; i++) {\n";
-        out << "        if (hy_gc_heap[i] == candidate) {\n";
-        out << "            hy_gc_mark_object(candidate);\n";
-        out << "            break;\n";
-        out << "        }\n";
+        out << "    size_t low = 0, high = hy_gc_heap_count;\n";
+        out << "    uintptr_t address = (uintptr_t)candidate;\n";
+        out << "    while (low < high) {\n";
+        out << "        size_t middle = low + (high - low) / 2;\n";
+        out << "        uintptr_t item = (uintptr_t)hy_gc_lookup[middle];\n";
+        out << "        if (item == address) { hy_gc_mark_object(candidate); return; }\n";
+        out << "        if (item < address) low = middle + 1; else high = middle;\n";
         out << "    }\n";
         out << "}\n\n";
 
@@ -7531,16 +7560,22 @@ private:
 
         // --- GC collect ---
         out << "static void hy_gc_collect(void) {\n";
+        out << "    hy_gc_index_heap();\n";
         out << "    for (size_t i = 0; i < hy_gc_heap_count; i++) {\n";
         out << "        ((HyObjectHeader*)hy_gc_heap[i])->gc_mark = 0;\n";
         out << "    }\n";
         out << "    hy_gc_mark_statics();\n";
         out << "    hy_gc_mark_roots();\n";
         out << "    size_t live = 0;\n";
+        out << "    size_t live_bytes = 0;\n";
         out << "    for (size_t i = 0; i < hy_gc_heap_count; i++) {\n";
         out << "        HyObjectHeader* hdr = (HyObjectHeader*)hy_gc_heap[i];\n";
         out << "        if (hdr->gc_mark) {\n";
         out << "            hy_gc_heap[live++] = hy_gc_heap[i];\n";
+        out << "            size_t bytes = hdr->gc_size;\n";
+        out << "            if (hdr->type_id == HY_TYPE_ID_STRING) bytes += (size_t)((HyString*)hdr)->length + 1;\n";
+        out << "            else if (hdr->type_id == HY_TYPE_ID_ARRAY) bytes += (size_t)((HyArray*)hdr)->length * sizeof(int64_t);\n";
+        out << "            live_bytes = bytes > SIZE_MAX - live_bytes ? SIZE_MAX : live_bytes + bytes;\n";
         out << "        } else {\n";
         out << "            if (hdr->type_id == HY_TYPE_ID_STRING) {\n";
         out << "                free(((HyString*)hdr)->bytes);\n";
@@ -7552,10 +7587,14 @@ private:
         out << "    }\n";
         out << "    hy_gc_heap_count = live;\n";
         out << "    hy_gc_bytes_allocated = 0;\n";
+        out << "    if (hy_gc_adaptive) {\n";
+        out << "        size_t budget = live_bytes > SIZE_MAX / 2 ? SIZE_MAX : live_bytes * 2;\n";
+        out << "        hy_gc_next_threshold = budget > hy_gc_threshold ? budget : hy_gc_threshold;\n";
+        out << "    }\n";
         out << "}\n\n";
 
         out << "static void hy_gc_safe_point(void) {\n";
-        out << "    if (hy_gc_stress || hy_gc_bytes_allocated >= hy_gc_threshold) {\n";
+        out << "    if (hy_gc_stress || hy_gc_bytes_allocated >= hy_gc_next_threshold) {\n";
         out << "        hy_gc_collect();\n";
         out << "    }\n";
         out << "}\n\n";
@@ -7568,8 +7607,9 @@ private:
         out << "    const char* threshold = getenv(\"HYLANG_GC_THRESHOLD\");\n";
         out << "    if (threshold != NULL && threshold[0] != '\\0') {\n";
         out << "        size_t t = (size_t)atol(threshold);\n";
-        out << "        if (t > 0) hy_gc_threshold = t;\n";
+        out << "        if (t > 0) { hy_gc_threshold = t; hy_gc_adaptive = 0; }\n";
         out << "    }\n";
+        out << "    hy_gc_next_threshold = hy_gc_threshold;\n";
         out << "}\n\n";
 
         // --- GC shutdown ---
@@ -7580,6 +7620,9 @@ private:
         out << "        else if (hdr->type_id == HY_TYPE_ID_ARRAY) free(((HyArray*)hdr)->elements);\n";
         out << "        free(hy_gc_heap[i]);\n";
         out << "    }\n";
+        out << "    free(hy_gc_lookup);\n";
+        out << "    hy_gc_lookup = NULL;\n";
+        out << "    hy_gc_lookup_capacity = 0;\n";
         out << "    free(hy_gc_heap);\n";
         out << "    hy_gc_heap = NULL;\n";
         out << "    hy_gc_heap_count = 0;\n";
@@ -7610,6 +7653,13 @@ private:
         out << "    hy_runtime_fail(hy_exception_message);\n";
         out << "}\n\n";
 
+        // Account for managed backing buffers as well as object headers. Collection
+        // remains at emitted safe points, after complete expressions are rooted.
+        out << "static void hy_gc_account_payload(size_t bytes) {\n";
+        out << "    if (bytes > SIZE_MAX - hy_gc_bytes_allocated) hy_gc_bytes_allocated = SIZE_MAX;\n";
+        out << "    else hy_gc_bytes_allocated += bytes;\n";
+        out << "}\n\n";
+
         // --- Array element pointer helper ---
         out << "static void* hy_array_ptr(HyArray* arr, int64_t idx) {\n";
         out << "    if (arr == NULL || idx < 0 || idx >= arr->length) {\n";
@@ -7628,6 +7678,7 @@ private:
         out << "    if (count > 0) {\n";
         out << "        arr->elements = calloc((size_t)count, sizeof(int64_t));\n";
         out << "        if (!arr->elements) hy_runtime_fail(\"Array element allocation failed\");\n";
+        out << "        hy_gc_account_payload((size_t)count * sizeof(int64_t));\n";
         out << "    }\n";
         out << "    return arr;\n";
         out << "}\n\n";
@@ -7646,6 +7697,7 @@ private:
         out << "        s->bytes = (char*)malloc(1);\n";
         out << "        if (s->bytes) s->bytes[0] = '\\0';\n";
         out << "    }\n";
+        out << "    hy_gc_account_payload(length > 0 ? (size_t)length + 1 : 1);\n";
         out << "    return s;\n";
         out << "}\n\n";
         out << "static HyString* hy_string_literal(const char* cstr) {\n";
@@ -7689,6 +7741,7 @@ private:
         out << "    if (ll > 0) memcpy(result->bytes, left->bytes, (size_t)ll);\n";
         out << "    if (rl > 0) memcpy(result->bytes + ll, right->bytes, (size_t)rl);\n";
         out << "    result->bytes[ll + rl] = '\\0';\n";
+        out << "    hy_gc_account_payload((size_t)(ll + rl) + 1);\n";
         out << "    return result;\n";
         out << "}\n";
         out << "static bool hy_string_equals(HyString* left, HyString* right) {\n";
@@ -7744,6 +7797,7 @@ private:
         out << "    result->__header.type_id = HY_TYPE_ID_STRING;\n";
         out << "    result->length = (int64_t)read_count;\n";
         out << "    result->bytes = buf;\n";
+        out << "    hy_gc_account_payload((size_t)size + 1);\n";
         out << "    return result;\n";
         out << "}\n";
         out << "static void hy_file_write_all_text(HyString* path, HyString* content) {\n";

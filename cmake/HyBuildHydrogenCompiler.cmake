@@ -1,0 +1,56 @@
+foreach(required HY_BINARY SOURCE_DIR OUTPUT_DIR)
+    if(NOT DEFINED ${required})
+        message(FATAL_ERROR "${required} is required")
+    endif()
+endforeach()
+set(PROJECT_TARGET "${SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj")
+file(MAKE_DIRECTORY "${OUTPUT_DIR}")
+set(bootstrap "${OUTPUT_DIR}/hydrogen-bootstrap")
+set(pending "${OUTPUT_DIR}/hydrogen-stage1.pending")
+set(native "${OUTPUT_DIR}/hydrogen-stage1")
+
+# Stage 0 uses its C backend only to seed a running Hydrogen compiler.
+message(STATUS "Building the bootstrap-hosted Hydrogen CLI")
+execute_process(COMMAND "${HY_BINARY}" build "${PROJECT_TARGET}" -o "${bootstrap}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 90)
+if(NOT result STREQUAL "0")
+    message(FATAL_ERROR "Bootstrap CLI build failed (${result})\n${stdout}\n${stderr}")
+endif()
+
+# Everything after the seed build executes Hydrogen's own compiler/backend.
+# Hide external toolchains, and publish the native artifact only after it works.
+set(ENV{PATH} "")
+file(REMOVE "${pending}")
+message(STATUS "Compiling the CLI project closure with Hydrogen's native backend")
+execute_process(COMMAND "${bootstrap}" build "${PROJECT_TARGET}" -o "${pending}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 120)
+if(NOT result STREQUAL "0")
+    message(FATAL_ERROR "Native compiler build failed (${result})\n${stdout}\n${stderr}")
+endif()
+file(READ "${pending}" magic HEX OFFSET 0 LIMIT 4)
+if(NOT magic STREQUAL "7f454c46")
+    message(FATAL_ERROR "Native compiler output is not an ELF executable")
+endif()
+file(CHMOD "${pending}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+
+foreach(mode tokens parse)
+    if(mode STREQUAL "tokens")
+        set(fixture lexer_features)
+    else()
+        set(fixture parser_features)
+    endif()
+    execute_process(COMMAND "${pending}" "${mode}" "${SOURCE_DIR}/tests/phase5/${fixture}.hy"
+        RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 30)
+    file(READ "${SOURCE_DIR}/tests/phase5/${fixture}.${mode}.expected" expected)
+    if(NOT result STREQUAL "0" OR NOT stderr STREQUAL "" OR NOT stdout STREQUAL expected)
+        message(FATAL_ERROR "Native compiler ${mode} golden failed (${result})\n${stdout}\n${stderr}")
+    endif()
+endforeach()
+
+set(NATIVE_BINARY "${pending}")
+set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_hello.hy")
+set(OUTPUT_FILE "${OUTPUT_DIR}/native-hello")
+set(EXPECTED_OUTPUT "Hydrogen native hello\n")
+include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
+file(RENAME "${pending}" "${native}")
+message(STATUS "Verified native Hydrogen compiler: ${native}")

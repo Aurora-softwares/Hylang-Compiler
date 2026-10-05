@@ -1134,6 +1134,69 @@ add_test(
 set_tests_properties(hy_self_hosting_check_tiny_program PROPERTIES PASS_REGULAR_EXPRESSION "WriteLineLiteral\\(\\\"Hydrogen native hello\\\"\\)")
 
 add_test(
+    NAME hy_self_hosting_native_runtime
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/runtime
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyNativeRuntime.cmake
+)
+
+add_test(
+    NAME hy_self_hosting_compiled_native_runtime
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/compiled_runtime
+        -DCOMPILE_CLI=ON
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyNativeRuntime.cmake
+)
+
+add_test(
+    NAME hy_self_hosting_native_static_calls
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/static_calls
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyNativeStaticCalls.cmake
+)
+
+add_test(
+    NAME hy_self_hosting_compiled_native_static_calls
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/compiled_static_calls
+        -DCOMPILE_CLI=ON
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyNativeStaticCalls.cmake
+)
+
+add_test(
+    NAME hy_self_hosting_native_compilation_failures
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/compilation_failures
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyNativeCompilationFailures.cmake
+)
+
+add_test(
+    NAME hy_self_hosting_compiled_native_compilation_failures
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/compiled_compilation_failures
+        -DCOMPILE_CLI=ON
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyNativeCompilationFailures.cmake
+)
+
+add_test(
     NAME hy_self_hosting_compile_native_hello_elf
     COMMAND ${CMAKE_COMMAND}
         -DHY_BINARY=$<TARGET_FILE:hy>
@@ -1188,3 +1251,92 @@ add_test(
         -DEXPECTED_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase5/parser_broken.parse.expected
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyRunAndCompare.cmake
 )
+
+add_test(
+    NAME hy_self_hosting_executable_ir
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/executable_ir
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyExecutableIr.cmake
+)
+add_test(
+    NAME hy_self_hosting_compiled_executable_ir
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/compiled_executable_ir
+        -DCOMPILE_CLI=ON
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyExecutableIr.cmake
+)
+
+add_test(
+    NAME hy_managed_payload_accounting
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/gc_payload_accounting.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/gc_payload_accounting
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyManagedPayload.cmake
+)
+set_tests_properties(hy_managed_payload_accounting hy_test_self_hosting_workspace PROPERTIES TIMEOUT 90)
+
+# The current native runtime and ELF emitter target Linux x86-64.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+    add_custom_target(hydrogen_stage1
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/self_hosting
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBuildHydrogenCompiler.cmake
+        DEPENDS hy
+        USES_TERMINAL
+        VERBATIM
+    )
+    set(stage1_test_dir "${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/stage1")
+    add_test(NAME hy_stage1_project_closure
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=${stage1_test_dir}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBuildHydrogenCompiler.cmake
+    )
+    set_tests_properties(hy_stage1_project_closure PROPERTIES
+        FIXTURES_SETUP hydrogen_stage1 TIMEOUT 240 RUN_SERIAL TRUE)
+    foreach(suite NativeStaticCalls NativeRuntime NativeCompilationFailures ExecutableIr)
+        add_test(NAME hy_stage1_${suite}
+            COMMAND ${CMAKE_COMMAND}
+                -DHY_BINARY=${stage1_test_dir}/stage0-unavailable
+                -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+                -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -DTEMP_DIR=${stage1_test_dir}/${suite}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Hy${suite}.cmake
+        )
+        set_tests_properties(hy_stage1_${suite} PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 ENVIRONMENT "PATH=" TIMEOUT 180 RUN_SERIAL TRUE)
+    endforeach()
+    find_program(HYDROGEN_PRLIMIT_BINARY prlimit REQUIRED)
+    add_custom_target(hydrogen_bootstrap_proof
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/self_hosting
+            -DSTAGE1_BINARY=${CMAKE_CURRENT_BINARY_DIR}/self_hosting/hydrogen-stage1
+            -DPRLIMIT_BINARY=${HYDROGEN_PRLIMIT_BINARY}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBootstrapProof.cmake
+        DEPENDS hydrogen_stage1
+        USES_TERMINAL
+        VERBATIM
+    )
+    add_test(NAME hy_stage6_bootstrap_proof
+        COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/stage6
+            -DSTAGE1_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DPRLIMIT_BINARY=${HYDROGEN_PRLIMIT_BINARY}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBootstrapProof.cmake
+    )
+    set_tests_properties(hy_stage6_bootstrap_proof PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 ENVIRONMENT "PATH=" TIMEOUT 600 RUN_SERIAL TRUE)
+endif()

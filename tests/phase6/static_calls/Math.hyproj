@@ -1,0 +1,4 @@
+format = 2
+name = "NativeMath"
+type = "lib"
+sources = ["Math.hy"]

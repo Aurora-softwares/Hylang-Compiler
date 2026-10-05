@@ -105,6 +105,7 @@ namespace Hydrogen.Compiler.Syntax {
             if (Check(SyntaxKind.ClassKeyword)) {
                 Consume(SyntaxKind.ClassKeyword, "Expected class");
             } else {
+                diagnostics.Report(Current().Line(), Current().Column(), "not supported in self-host subset: structs");
                 Consume(SyntaxKind.StructKeyword, "Expected struct");
             }
             string name = ConsumeIdentifier("Expected class name");
@@ -114,7 +115,7 @@ namespace Hydrogen.Compiler.Syntax {
                 SkipTypeArgumentOrParameterList();
             }
             if (Check(SyntaxKind.ColonToken)) {
-                // Parse and ignore base list; subset will reject in binder later if needed.
+                diagnostics.Report(Current().Line(), Current().Column(), "not supported in self-host subset: inheritance");
                 Advance();
                 ParseQualifiedNameText();
             }
@@ -131,9 +132,11 @@ namespace Hydrogen.Compiler.Syntax {
             int methodCount = 0;
             while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
                 bool isStatic = false;
+                bool isPrivate = false;
 				bool isVirtual = false;
 				bool isOverride = false;
 				while (SyntaxFacts.IsModifier(Current().Kind())) {
+                    if (Current().Kind() == SyntaxKind.PrivateKeyword) { isPrivate = true; }
 					if (Current().Kind() == SyntaxKind.StaticKeyword) {
 						isStatic = true;
 					}
@@ -154,6 +157,7 @@ namespace Hydrogen.Compiler.Syntax {
                         ParameterSyntax[] parameters = ParseParameterList();
                         StatementSyntax body = ParseBlock();
                         methods = AppendMethod(methods, methodCount, new MethodDeclarationSyntax(name, isStatic, isVirtual, isOverride, returnType, parameters, body));
+                        methods[methodCount].SetPrivate(isPrivate);
                         methodCount = methodCount + 1;
                         continue;
                     }
@@ -162,6 +166,7 @@ namespace Hydrogen.Compiler.Syntax {
                     ParameterSyntax[] parameters2 = ParseParameterList();
                     StatementSyntax body2 = ParseBlock();
                     methods = AppendMethod(methods, methodCount, new MethodDeclarationSyntax(returnType.DisplayName(), false, false, false, new TypeSyntax("void"), parameters2, body2));
+                    methods[methodCount].SetPrivate(isPrivate);
                     methodCount = methodCount + 1;
                     continue;
                 } else {
@@ -175,7 +180,8 @@ namespace Hydrogen.Compiler.Syntax {
                 }
                 Consume(SyntaxKind.SemicolonToken, "Expected ';' after field");
 				fields = AppendField(fields, fieldCount, new FieldDeclarationSyntax(returnType, name, isStatic, initializer));
-				fieldCount = fieldCount + 1;
+				fields[fieldCount].SetPrivate(isPrivate);
+                fieldCount = fieldCount + 1;
             }
             return new ClassMemberListSyntax(fields, methods);
         }
@@ -463,6 +469,12 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private ExpressionSyntax ParseUnary() {
+            if (Check(SyntaxKind.OpenParenToken) && LooksLikeCastExpression()) {
+                Advance();
+                TypeSyntax type = ParseType();
+                Consume(SyntaxKind.CloseParenToken, "Expected ')'");
+                return ExpressionSyntax.Cast(type, ParseUnary());
+            }
             if (Check(SyntaxKind.BangToken) || Check(SyntaxKind.MinusToken)) {
                 SyntaxKind op = Advance().Kind();
                 ExpressionSyntax operand = ParseUnary();
@@ -518,13 +530,6 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private ExpressionSyntax ParsePrimary() {
-            if (Check(SyntaxKind.OpenParenToken) && LooksLikeCastExpression()) {
-                Advance();
-                TypeSyntax type = ParseType();
-                Consume(SyntaxKind.CloseParenToken, "Expected ')'");
-                ExpressionSyntax operand = ParsePrimary();
-                return ExpressionSyntax.Cast(type, operand);
-            }
             if (Check(SyntaxKind.OpenParenToken)) {
                 Advance();
                 ExpressionSyntax inner = ParseExpression();
@@ -572,7 +577,7 @@ namespace Hydrogen.Compiler.Syntax {
 				Consume(SyntaxKind.CloseParenToken, "Expected ')' after sizeof type");
 				return ExpressionSyntax.SizeOf(type);
 			}
-            if (Current().Kind() == SyntaxKind.IdentifierToken) {
+            if (Current().Kind() == SyntaxKind.IdentifierToken || Check(SyntaxKind.ThisKeyword)) {
                 return ExpressionSyntax.NameExpr(Advance().Text());
             }
 			if (Check(SyntaxKind.StackAllocKeyword)) {
@@ -622,12 +627,25 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private string UnquoteStringToken(string tokenText) {
-            // Lexer includes surrounding quotes. Keep this bootstrap parser simple:
-            // strip one leading/trailing quote if present; leave escape sequences as-is.
-            if (tokenText.Length >= 2 && tokenText[0] == "\"" && tokenText[tokenText.Length - 1] == "\"") {
-                return Slice(tokenText, 1, tokenText.Length - 2);
+            string result = "";
+            int i = 1;
+            while (i < tokenText.Length - 1) {
+                string ch = tokenText[i];
+                if (ch == "\\") {
+                    i = i + 1;
+                    if (i >= tokenText.Length - 1) { break; }
+                    string escaped = tokenText[i];
+                    if (escaped == "n") { ch = "\n"; }
+                    else if (escaped == "r") { ch = "\r"; }
+                    else if (escaped == "t") { ch = "\t"; }
+                    else if (escaped == "\\") { ch = "\\"; }
+                    else if (escaped == "\"") { ch = "\""; }
+                    else { diagnostics.Report(Current().Line(), Current().Column(), "Unsupported string escape"); }
+                }
+                result = result + ch;
+                i = i + 1;
             }
-            return tokenText;
+            return result;
         }
 
         private string Slice(string text, int start, int length) {

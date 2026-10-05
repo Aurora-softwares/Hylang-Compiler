@@ -1,0 +1,5 @@
+format = 2
+name = "NativeStaticCalls"
+type = "exe"
+sources = ["Program.hy"]
+project_references = ["Math.hyproj"]

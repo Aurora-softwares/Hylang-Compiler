@@ -3,22 +3,7 @@ using Hydrogen.Compiler.Binding;
 namespace Hydrogen.Compiler.IR {
     public class IrLowering {
         public IrModule Lower(BoundProgram program) {
-            MethodSymbol[] methods = program.Methods();
-            IrFunction[] functions = new IrFunction[methods.Length];
-            int i = 0;
-            while (i < methods.Length) {
-                MethodSymbol method = methods[i];
-                ParameterSymbol[] parameters = method.Parameters();
-                string[] parameterTypes = new string[parameters.Length];
-                int p = 0;
-                while (p < parameters.Length) {
-                    parameterTypes[p] = parameters[p].Type().Name();
-                    p = p + 1;
-                }
-                functions[i] = new IrFunction(method.Name(), method.ReturnType().Name(), parameterTypes);
-                i = i + 1;
-            }
-            return new IrModule(functions);
+            return program.Module();
         }
 
         public IrEntryPoint LowerEntryPoint(BoundProgram program) {

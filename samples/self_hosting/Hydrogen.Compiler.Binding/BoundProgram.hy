@@ -1,3 +1,5 @@
+using Hydrogen.Compiler.IR;
+
 namespace Hydrogen.Compiler.Binding {
     public class BoundOp {
         public static int KindWriteLineLiteral() { return 1; }
@@ -27,6 +29,9 @@ namespace Hydrogen.Compiler.Binding {
     }
 
     public class BoundProgram {
+        private IrModule module;
+        public IrModule Module() { return module; }
+        public void SetModule(IrModule value) { module = value; }
         private MethodSymbol[] methods;
         private BoundOp[] entryOps;
 

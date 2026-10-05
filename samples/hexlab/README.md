@@ -1,6 +1,6 @@
 # HexLab
 
-HexLab is the current showcase project for Hylang’s workflow and byte-oriented file tooling. It is a pure-Hylang workspace with:
+HexLab demonstrates byte-oriented file tooling with the C++ SDK. It uses `Buffer`, `BinaryPrimitives`, and unsafe operations that the native Hydrogen compiler does not support. It is a pure-Hylang workspace with:
 
 - `HexLab.Core`
 - `HexLab.Cli`
@@ -20,12 +20,12 @@ Useful demo commands:
 
 ```bash
 ./build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- inspect samples/hexlab/demo.bin
-./build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- dump samples/hexlab/demo.bin 8
+./build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- dump samples/hexlab/demo.bin
 ./build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- search samples/hexlab/demo.bin 89504E47
 ./build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- diff samples/hexlab/demo.bin samples/hexlab/demo.bin
 ```
 
-Current expected outputs:
+Expected results (the dump below uses the default width of 16):
 
 ```text
 format=PNG width=1 height=1
@@ -35,10 +35,10 @@ found offset=0
 equal
 ```
 
-Current implementation notes:
+API usage:
 
-- `HexLab.Core` now routes dump, diff, search, and slice hot paths through the bootstrap `System.Runtime.Buffer`
-- PNG inspection now exercises the 64-bit `BinaryPrimitives` path
+- `HexLab.Core` routes dump, diff, search, and slice hot paths through the bootstrap `System.Runtime.Buffer`
+- PNG inspection exercises the 64-bit `BinaryPrimitives` path
 - search includes an explicit `unsafe` fast path through `Buffer.DangerousData()` to demonstrate the systems surface
 
 Command surface:

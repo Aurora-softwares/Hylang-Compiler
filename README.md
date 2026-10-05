@@ -1,196 +1,142 @@
-# Hylang
+# Hydrogen (Hylang)
 
-[![Language](https://img.shields.io/badge/language-C%2B%2B20-blue?style=flat-square)](https://en.cppreference.com/w/cpp/20)
-[![Language](https://img.shields.io/badge/language-Hydrogen-blue?style=flat-square)](https://en.cppreference.com/w/cpp/20)
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20x64-lightgrey?style=flat-square)](#build)
-[![Phase](https://img.shields.io/badge/phase-5%20%E2%80%93%20Self--Hosting%20Preparation-blue?style=flat-square)](ROADMAP.md)
-[![Docs](https://img.shields.io/badge/docs-online-brightgreen?style=flat-square)](https://aurora-softwares.github.io/Hylang-Docs/)
+Hydrogen is a C#-inspired language with classes, methods, managed strings and arrays, and explicit low-level facilities. Source files use `.hy`; project manifests use `.hyproj`.
 
-A C#-inspired systems programming language for [Australis OS](https://github.com/Aurora-Softwares) and general x64 systems.
+The Hydrogen-written compiler produces standalone Linux x86-64 executables and can compile itself. The C++ SDK provides additional language features, an interpreter, project scaffolding, packaging, formatting, and editor integration. Choose the tool according to the features your program needs.
 
----
+| Tool | Use it for | Output or execution |
+| --- | --- | --- |
+| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection | Linux x64 ELF; no external compiler or linker |
+| `hy` (C++ SDK) | Build/run/test/check/fmt/new/package/LSP workflows | Interpreter or host C backend |
+| `hyrun` | Direct interpreted execution | Shares the SDK semantic pipeline |
+| `hyc build` | Compatibility build command | Host C backend, executables or static libraries |
 
-Hylang has a full compiler pipeline — lexer, parser, AST, binder, type checker, and a bound IR shared by both the interpreter and the C code emitter. The current bootstrap is well past the toy-parser stage: it can run or compile multi-file projects, manage workspaces, and exercise a growing SDK-style workflow through the `hy` CLI.
+See the [language and tool reference](https://aurora-softwares.github.io/Hylang-Docs/) and [native compiler guide](samples/self_hosting/README.md) for the supported features of each route.
 
-## Tools
+## Build the tools
 
-| Tool        | Purpose                                                                 |
-|-------------|-------------------------------------------------------------------------|
-| `hy`        | Primary workflow CLI for scaffolding, building, running, testing, formatting, checking, and packaging |
-| `hyrun`     | Compatibility runner for direct `.hy` or `.hyproj` execution            |
-| `hyc build` | Compatibility compiler path for native executables and static libraries via the C backend |
-
-## Language subset
-
-```text
-using  namespace  class  struct  interface  enum
-public  private  internal  protected  static  virtual  override
-int  bool  string  string[]  null  var
-if  else  while  for  break  continue  return
-new  this  base  :  +  -  *  /  %  ==  !=  <  <=  >  >=  &&  ||  !
-```
-
-- Fields, constructors, and methods — with overloading
-- Single inheritance with inherited member lookup, `protected` access, `base(...)`, and `base.Member`
-- `virtual` / `override` dispatch for non-static instance methods
-- Namespace-scope interfaces, interface inheritance, and interface dispatch
-- Namespace-scope structs with bootstrap by-value semantics and interface boxing
-- Generic classes, interfaces, and methods, plus `var` local inference
-- Object creation, method calls, field access, and assignment
-- General managed arrays via `new T[count]`
-- String concatenation across `string`, `int`, and `bool`
-- Array and string `.Length`, array indexing, string character indexing
-- Minimal bootstrap `System.Collections.List<T>`
-- `System.Console.Write` / `WriteLine` and `System.IO.File` text read/write/exists
-- `System.IO.File.ReadAllBytes` / `WriteAllBytes`
-- Bootstrap `System.Runtime.Buffer` for safe byte-buffer allocation, slicing, copying, and explicit free semantics
-- Executable `unsafe { ... }`, pointer types, address-of, dereference, pointer indexing/arithmetic, `stackalloc`, and `sizeof`
-- Bootstrap `System.Runtime.Memory` for explicit allocation, free, copy, set, and compare
-- Bootstrap `System.Runtime.BinaryPrimitives` for 16-bit, 32-bit, and 64-bit little-endian/big-endian reads and writes
-- Bootstrap `System.Testing.Assert` and `System.Convert.ToInt32`
-
-## Workflow
-
-Phase 4 now has a local-first SDK-style workflow:
-
-- `hy new app|lib|tool|test|workspace <name>`
-- `hy build <target> [--target exe|lib] [-o output] [--debug]`
-- `hy run <target> [-- args...]`
-- `hy test [target]`
-- `hy fmt <path...> [--check]`
-- `hy check <target> [--json]`
-- `hy package pack <target> [-o output]`
-- `hy package add <target> <path>`
-- `hy package init-registry <path>`
-- `hy package publish <project.hyproj> --registry <path>`
-- `hy package search <query> --registry <path>`
-- `hy package install <target.hyproj> <package-id> [--version <version>] --registry <path>`
-- `hy lsp`
-
-Current workflow support includes:
-
-- v2 `.hyproj` manifests with workspace support
-- backward-compatible loading of older v1 manifests
-- local path dependencies
-- filesystem-backed local package registries
-- build caching under `.hylang/cache/`
-- simple `.hymap.json` debug/source-map files from `hy build --debug`
-- warning-bearing `hy check --json` output with severity/file/line/column/message entries
-- compiled runtime failures that report Hylang file/line/column context for the executing statement
-- lightweight JSON-RPC language-server support through `hy lsp`
-- VS Code assets under `tools/vscode/hylang`
-- `samples/hexlab` as the systems showcase workspace
-- `samples/sdk_demo` as the Phase 4 tooling/package/LSP proof workspace
-- `samples/self_hosting` as the Phase 6 Hydrogen compiler workspace
-
-The low-level Phase 3 closeout slice is executable in both `hyrun` and compiled output: raw `System.Runtime.Memory`, `unsafe` blocks, checked pointer indexing/arithmetic, `stackalloc`, `sizeof`, and `Buffer.DangerousData()` all run today. Phase 4 is complete at bootstrap scope with a local package registry, lightweight language server, expanded diagnostics, and a dedicated SDK demo workspace. Phase 5 is complete at prototype scope, and Phase 6 has started: Hydrogen now owns the first checker/IR/runtime-contract/codegen projects and can emit a tiny Linux x64 ELF executable directly from Hydrogen code.
-
-See the [full language reference](https://aurora-softwares.github.io/Hylang-Docs/) for details on every feature.
-
-## Build
-
-### With CMake (recommended)
+Run these commands from this repository's root. The SDK requires CMake 3.20 or newer and a C++20 compiler. Its executable builds also require a host C compiler; static-library builds require an archiver. The direct native compiler targets Linux x86-64.
 
 ```bash
 cmake -S . -B build
 cmake --build build
-ctest --test-dir build --output-on-failure
+cmake --build build --target hydrogen_stage1
 ```
 
-### Without CMake
+The native target initially uses the SDK's C backend to create a seed, then Hydrogen's own backend compiles the complete compiler CLI project and its referenced libraries. The resulting `build/self_hosting/hydrogen-stage1` has no C/C++ toolchain dependency when compiling supported programs.
+
+For a manual SDK build:
 
 ```bash
 mkdir -p build
+c++ -std=c++20 -Wall -Wextra -Wpedantic -Iinclude src/hylang.cpp src/hy_main.cpp -o build/hy
 c++ -std=c++20 -Wall -Wextra -Wpedantic -Iinclude src/hylang.cpp src/hyrun_main.cpp -o build/hyrun
 c++ -std=c++20 -Wall -Wextra -Wpedantic -Iinclude src/hylang.cpp src/hyc_main.cpp -o build/hyc
-c++ -std=c++20 -Wall -Wextra -Wpedantic -Iinclude src/hylang.cpp src/hy_main.cpp -o build/hy
 ```
 
-## Quick start
+## Write and run a program
+
+Save this as `hello.hy`:
+
+```hylang
+namespace Hello {
+    public class Program {
+        public static int Twice(int value) {
+            return value * 2;
+        }
+
+        public static int Main(string[] args) {
+            string name = "World";
+            if (args.Length > 0) { name = args[0]; }
+            System.Console.WriteLine("Hello, " + name);
+            System.Console.WriteLine(Twice(21));
+            return 0;
+        }
+    }
+}
+```
+
+Compile directly with Hydrogen:
 
 ```bash
-# Run a script directly through the new CLI
-build/hy run tests/hello_world.hy
-
-# Compile to an executable
-build/hy build tests/hello_world.hy -o build/hello_world
-./build/hello_world
-
-# Check and format a project
-build/hy check tests/projects/app/App.hyproj --json
-build/hy fmt --check tests samples
-
-# Build and run a multi-file project
-build/hy build tests/projects/app/App.hyproj -o build/demo_app
-./build/demo_app
-
-# Run the current showcase workspace
-build/hy build samples/hexlab/HexLab.hyproj
-build/hy test samples/hexlab/HexLab.hyproj
-build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- inspect samples/hexlab/demo.bin
-build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- dump samples/hexlab/demo.bin 8
-build/hy run samples/hexlab/HexLab.Cli/HexLab.Cli.hyproj -- search samples/hexlab/demo.bin 89504E47
-
-# Exercise the SDK/package workflow proof
-build/hy build samples/sdk_demo/SdkDemo.hyproj
-build/hy test samples/sdk_demo/SdkDemo.hyproj
-build/hy package init-registry build/local-registry
-build/hy package publish samples/sdk_demo/SdkDemo.Core/SdkDemo.Core.hyproj --registry build/local-registry
-build/hy package search SdkDemo --registry build/local-registry
-
-# Exercise the Phase 6 self-hosted compiler foundation
-build/hy build samples/self_hosting/Hydrogen.Compiler.hyproj
-build/hy test samples/self_hosting/Hydrogen.Compiler.hyproj
-build/hy run samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- tokens tests/hello_world.hy
-build/hy run samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- parse tests/hello_world.hy
-build/hy run samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- check tests/phase6/native_hello.hy
-build/hy run samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -- compile tests/phase6/native_hello.hy -o build/native_hello
-chmod +x build/native_hello
-./build/native_hello
-
-# Emit debug metadata alongside generated output
-build/hy build tests/hello_world.hy -o build/hello_world_debug --debug
-
-# Debug builds keep .hymap metadata, and runtime failures point back to .hy locations
-build/hy build tests/runtime_fail_location.hy -o build/runtime_fail_location --debug
-./build/runtime_fail_location
-
-# Compatibility shims still work
-build/hyrun samples/mini_frontend_model/MiniFrontendModel.hyproj
-build/hyc build tests/projects/mathlib/Math.hyproj --target lib -o build/libmathlib.a
+./build/self_hosting/hydrogen-stage1 check hello.hy
+./build/self_hosting/hydrogen-stage1 compile hello.hy -o build/hello
+chmod +x build/hello
+./build/hello Hydrogen
 ```
 
-See the Phase 4 tooling page in Hylang-Docs: <https://aurora-softwares.github.io/Hylang-Docs/implementation/phase4-tooling-slice.html>.
+Expected output:
 
-## Editor Assets
+```text
+Hello, Hydrogen
+42
+```
 
-Light VS Code integration lives in [`tools/vscode/hylang`](tools/vscode/hylang). It currently includes:
+Native output files need execute permission. Compilation failures return a nonzero status and do not create or overwrite the output; check that status before running an existing artifact.
 
-- syntax highlighting for `.hy` and `.hyproj`
-- snippets
-- task and launch templates
-- a JSON-diagnostic wrapper for `hy check --json`
-- lightweight `hy lsp` integration for diagnostics, symbols, hover, and formatting
-- format-on-save settings templates
+Alternatively, interpret or build with the SDK:
 
-This is intentionally lighter than a full semantic IDE experience: completion, go-to-definition, references, rename, semantic tokens, and workspace indexing are still later work.
+```bash
+./build/hy run hello.hy -- Hydrogen
+./build/hy build hello.hy -o build/hello-sdk
+./build/hello-sdk Hydrogen
+```
 
-## Runtime model
+`Main` is a static class method returning `int` or `void`, with no parameters or one `string[]` parameter. Its argument array excludes the executable name; an integer return supplies the process exit status. Hydrogen has no top-level statements or free functions.
 
-- The interpreter keeps bootstrap reference-managed runtime objects while matching the same visible string/array semantics as compiled mode.
-- The C backend now emits an in-tree non-moving mark-sweep GC with precise emitted root frames and managed string/array objects.
-- Raw manual memory and pointer operations now execute in both modes through checked runtime helpers.
-- Compiled runtime failures now carry Hylang file/line/column context instead of only raw generated-runtime messages.
-- `HYLANG_GC_STRESS=1` forces collection at runtime safe points, and `HYLANG_GC_THRESHOLD=<bytes>` lowers the compiled-runtime collection threshold for stress/debugging.
+## Projects
 
-Current bootstrap boundaries:
+An executable project can reference library projects by source closure:
 
-- `Buffer.DangerousData()` currently bridges into raw memory through a checked bootstrap path rather than a fully native unmanaged backing store.
-- Non-zero integer-to-pointer casts are intentionally rejected in the bootstrap runtime.
-- Pointer loads/stores are implemented for primitive, enum, and `bool` element types; broader unmanaged-struct pointer materialization is still a follow-on cleanup item.
+```toml
+format = 2
+name = "Hello"
+type = "exe"
+sources = ["Program.hy"]
+project_references = ["../Shared/Shared.hyproj"]
+```
 
-## Roadmap
+Paths are relative to the containing manifest. Use `type = "lib"` for a referenced library. The native compiler binds referenced sources together and emits one executable:
 
-Hylang is developed in phases toward a self-hosted compiler and first-class support for Australis OS userland. Phase 6 is now in progress under `samples/self_hosting`; the current native path can already write a tiny Linux x64 ELF directly from Hydrogen, while full self-hosting still requires binder/runtime/backend expansion and stage1/stage2 comparison.
+```bash
+./build/self_hosting/hydrogen-stage1 build Hello/Hello.hyproj -o build/hello-project
+chmod +x build/hello-project
+./build/hello-project
+```
 
-See [ROADMAP.md](ROADMAP.md) for the full plan.
+SDK projects additionally support workspaces, test projects, local package dependencies, caching, and static-library artifacts. Useful SDK commands:
+
+```bash
+./build/hy new app MyApp
+./build/hy check MyApp/MyApp.hyproj --json
+./build/hy build MyApp/MyApp.hyproj
+./build/hy run MyApp/MyApp.hyproj -- argument
+./build/hy fmt MyApp --check
+```
+
+## Language and runtime
+
+The direct native route supports classes with instance fields and constructors, static/instance methods, recursion, `var`, enums, `int`/`byte`/`bool`, strings, arrays, `if`/`else`, `while`, `break`, `continue`, and returns. `int` is signed 64-bit. Strings have byte-based length/indexing; indexing returns a one-byte string. Native literals accept ASCII and common escaped control characters; file contents and arguments preserve raw bytes.
+
+Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings. File reads require seekable files.
+
+The SDK also supports inheritance, virtual/interface dispatch, structs with value semantics, generics, overloads, static fields, `for`, string exceptions, `List<T>`, checked unsafe/manual-memory operations, `Buffer`, and `BinaryPrimitives`. These additional facilities are not implemented by the native compiler. The SDK interpreter evaluates both sides of `&&` and `||`; generated native and C-backed programs short-circuit. Write explicit conditional guards when sharing code with the interpreter.
+
+## Examples and editor support
+
+- [Native compiler](samples/self_hosting/README.md): commands, runtime, project binding, self-compilation.
+- [HexLab](samples/hexlab/README.md): binary-file inspection with the SDK's buffer and unsafe APIs.
+- [SDK demo](samples/sdk_demo/README.md): projects, testing, and local package registries.
+- [VS Code assets](tools/vscode/hylang/README.md): highlighting, snippets, check/format tasks, and the LSP process launcher.
+
+## Compiler development
+
+```bash
+ctest --test-dir build --output-on-failure
+cmake --build build --target hydrogen_bootstrap_proof
+cat build/self_hosting/bootstrap-proof.txt
+```
+
+The proof recompiles the native compiler through three generations, runs the same behavioral corpus with each, and requires identical stage 2/3 compiler and representative application artifacts. Retain a verified native seed to rebuild without C++; a source-only checkout still needs a bootstrap route. Native self-hosting does not replace the SDK's broader language and tooling surface.
+
+See [compiler architecture](docs/implementation/phase6-self-hosted-compiler.md), [future work](ROADMAP.md), and the [OS design plan](OS_ROADMAP.md).

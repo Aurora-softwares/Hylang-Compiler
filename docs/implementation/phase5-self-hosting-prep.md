@@ -1,35 +1,22 @@
-# Phase 5 Self-Hosting Preparation
+# Compiler workspace architecture
 
-Phase 5 prepares Hydrogen to implement its own compiler incrementally while keeping the C++ bootstrap compiler as the trusted implementation.
+The Hydrogen compiler lives in `samples/self_hosting` in Hylang-Compiler. Its executable project is `Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj`; the workspace manifest additionally includes its tests.
 
-## Bootstrap Compiler Contract
+| Project | Responsibility |
+| --- | --- |
+| `Hydrogen.Compiler.Core` | Source text, spans, locations, diagnostic storage |
+| `Hydrogen.Compiler.Syntax` | Lexer, outline parser, AST parser, syntax declarations/statements/expressions |
+| `Hydrogen.Compiler.IR` | Executable module, types, fields, methods, structured operations |
+| `Hydrogen.Compiler.Binding` | Project-aware type resolution and body checking |
+| `Hydrogen.Compiler.RuntimeModel` | Native runtime contracts |
+| `Hydrogen.Compiler.CodeGen.X64` | Method-body lowering, runtime emission, ELF image construction |
+| `Hydrogen.Compiler.Cli` | Tokens, parse, check, compile, build, artifact comparison |
+| `Hydrogen.Compiler.Tests` | Compiler library regressions |
 
-The C++ compiler currently flows through these layers:
+The lexer preserves source positions. The CLI `parse` command uses an outline view for stable syntax dumps; this is distinct from the AST parser and executable IR used by `check`/compilation. Parsing a construct does not establish its native executable support.
 
-- lexer: source text to tokens with file/line/column locations
-- parser: tokens to syntax declarations, statements, and expressions with recovery diagnostics
-- semantic model: namespaces, types, members, builtins, generics, inheritance, interfaces, structs, and primitive types
-- binder/type checker: syntax to bound IR with overload resolution, conversions, control-flow checks, and diagnostics
-- execution backends: interpreter and C emitter share the same bound IR
-- runtime: managed strings/arrays/objects, GC, unsafe/manual-memory helpers, file/console/test builtins, and source-mapped runtime failures
+The binder registers a complete project/reference closure before checking declarations and bodies. Each file keeps its namespace/import context. Declared types and resolved calls become canonical names in IR; methods carry bodies with allocations, fields, calls, casts, indexing, returns, branches, and loops.
 
-The Phase 5 Hydrogen frontend mirrored the lexer/parser side only. Phase 6 now extends that workspace with the first binding, IR, runtime-contract, and direct native codegen projects, but the C++ bootstrap compiler remains the trusted stage0 implementation.
+The x64 backend consumes executable IR and emits reachable methods and a native runtime into one Linux ELF. See [native compilation and bootstrapping](phase6-self-hosted-compiler.md) for the internal convention and rebuild checks.
 
-## Hydrogen Proof Workspace
-
-The proof workspace lives at `samples/self_hosting`:
-
-- `Hydrogen.Compiler.Core`: `SourceText`, `TextSpan`, `TextLocation`, `Diagnostic`, and `DiagnosticBag`
-- `Hydrogen.Compiler.Syntax`: `SyntaxKind`, `SyntaxToken`, `SyntaxNode`, `SyntaxTree`, `Lexer`, and `Parser`
-- `Hydrogen.Compiler.IR`: first compiler IR object model
-- `Hydrogen.Compiler.Binding`: first Hydrogen-owned checking path
-- `Hydrogen.Compiler.RuntimeModel`: native runtime contract notes
-- `Hydrogen.Compiler.CodeGen.X64`: direct Linux x64 ELF proof backend
-- `Hydrogen.Compiler.Cli`: `tokens <file>`, `parse <file>`, `check <file>`, and `compile <file> -o <output>` commands
-- `Hydrogen.Compiler.Tests`: self-hosting preparation regression tests
-
-The parser prototype covers usings, namespaces, classes, structs, interfaces, enums, members, parameters, blocks, statements, and core expressions including calls, member access, indexing, object/array creation, casts-shaped syntax, `sizeof`, `stackalloc`, and unsafe blocks.
-
-## Phase Boundary
-
-Phase 5 is complete. Phase 6 is in progress: the current native path can emit a tiny Linux x64 ELF directly from Hydrogen code for a `System.Console.WriteLine("...")` proof program. Full self-hosting still requires the managed runtime clone, broad semantic binding, native codegen expansion, and stage1/stage2 comparison before promotion.
+The SDK is a separate implementation: its interpreter and C emitter share the C++ bound semantic model. SDK-only generics, inheritance, struct semantics, overloads, and tooling are not inferred to exist in the Hydrogen backend merely because SDK builds accept its compiler sources.

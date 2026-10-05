@@ -96,7 +96,7 @@ namespace Hydrogen.Compiler.Tests {
             Assert.True(image[3] == (byte)0x46, "ELF magic byte 3 should be valid");
 
             NativeRuntimeContract runtime = new NativeRuntimeContract();
-            Assert.Equal("linux-x64-elf phase6c-direct-entrypoint", runtime.Describe(), "runtime model should name the native target");
+            Assert.Equal("linux-x64-elf phase6c-managed-runtime", runtime.Describe(), "runtime model should name the native target");
 
             NativeCompiler nativeCompiler = new NativeCompiler();
             NativeCompilerResult helloCheck = nativeCompiler.CheckFileEmitIr(FindRepoPath("tests/phase6/native_hello.hy"));
@@ -111,7 +111,7 @@ namespace Hydrogen.Compiler.Tests {
 
             DirectMainCompiler directMain = new DirectMainCompiler();
             SyntaxTree directTree = SyntaxTree.ParseFast(new SourceText("public class Program { public static int Main(string[] args) { int x = 1; if (x == 1) { System.Console.WriteLine(\"x was 1\"); return 7; } System.Console.WriteLine(\"x was not 1\"); return 3; } }"));
-            DirectImageResult directImage = directMain.Compile(directTree.Root());
+            DirectImageResult directImage = directMain.Compile(new Hydrogen.Compiler.Binding.Binder().Bind(directTree.Root(), new DiagnosticBag()).Module());
             Assert.True(directImage.Success(), "direct backend should lower locals, comparison, if, WriteLine, and return");
             Assert.True(directImage.Image().Length > 200, "direct backend image should include generated code and rodata");
 

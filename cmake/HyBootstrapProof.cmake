@@ -1,0 +1,104 @@
+foreach(required SOURCE_DIR OUTPUT_DIR STAGE1_BINARY)
+    if(NOT DEFINED ${required})
+        message(FATAL_ERROR "${required} is required")
+    endif()
+endforeach()
+if(NOT DEFINED PRLIMIT_BINARY)
+    find_program(PRLIMIT_BINARY prlimit REQUIRED)
+endif()
+if(NOT EXISTS "${STAGE1_BINARY}")
+    message(FATAL_ERROR "Native seed compiler does not exist: ${STAGE1_BINARY}")
+endif()
+set(project "${SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj")
+file(MAKE_DIRECTORY "${OUTPUT_DIR}")
+# Native commands have no external toolchain available. prlimit and CMake are
+# absolute-path test drivers; neither participates in Hydrogen code generation.
+set(ENV{PATH} "")
+set(stage1 "${STAGE1_BINARY}")
+set(stage2 "${OUTPUT_DIR}/hydrogen-stage2.pending")
+set(stage3 "${OUTPUT_DIR}/hydrogen-stage3.pending")
+file(REMOVE "${stage2}" "${stage3}" "${OUTPUT_DIR}/bootstrap-proof.txt")
+
+function(run_checked label)
+    execute_process(COMMAND "${PRLIMIT_BINARY}" --as=1073741824 ${ARGN}
+        RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 180)
+    if(NOT result STREQUAL "0" OR NOT stderr STREQUAL "")
+        message(FATAL_ERROR "${label} failed (${result})\n${stdout}\n${stderr}")
+    endif()
+endfunction()
+
+foreach(stage RANGE 2 3)
+    math(EXPR previous "${stage} - 1")
+    message(STATUS "Native stage ${previous} compiling the complete compiler into stage ${stage}")
+    run_checked("Building stage ${stage}" "${stage${previous}}" build "${project}" -o "${stage${stage}}")
+    file(READ "${stage${stage}}" magic HEX OFFSET 0 LIMIT 4)
+    if(NOT magic STREQUAL "7f454c46")
+        message(FATAL_ERROR "Stage ${stage} is not an ELF executable")
+    endif()
+    file(CHMOD "${stage${stage}}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+endforeach()
+
+set(report "Hydrogen native bootstrap proof\nProject: ${project}\nNative commands: empty PATH; 1 GiB address-space limit\n")
+foreach(stage RANGE 1 3)
+    file(SHA256 "${stage${stage}}" hash${stage})
+    string(APPEND report "Stage ${stage} SHA256: ${hash${stage}}\n")
+    message(STATUS "Testing native stage ${stage}")
+    foreach(mode tokens parse)
+        if(mode STREQUAL "tokens")
+            set(fixture lexer_features)
+        else()
+            set(fixture parser_features)
+        endif()
+        execute_process(COMMAND "${PRLIMIT_BINARY}" --as=1073741824 "${stage${stage}}" "${mode}" "${SOURCE_DIR}/tests/phase5/${fixture}.hy"
+            RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 30)
+        file(READ "${SOURCE_DIR}/tests/phase5/${fixture}.${mode}.expected" expected)
+        if(NOT result STREQUAL "0" OR NOT stderr STREQUAL "" OR NOT stdout STREQUAL expected)
+            message(FATAL_ERROR "Stage ${stage} ${mode} golden failed (${result})\n${stdout}\n${stderr}")
+        endif()
+    endforeach()
+    foreach(suite NativeStaticCalls NativeRuntime NativeCompilationFailures ExecutableIr)
+        # Each suite gets a fresh process and directory, avoiding variable leakage
+        # and stale outputs. An unavailable stage 0 path forbids a fallback.
+        run_checked("Stage ${stage} ${suite}" "${CMAKE_COMMAND}"
+            "-DHY_BINARY=${OUTPUT_DIR}/stage0-unavailable"
+            "-DPROJECT_TARGET=${project}"
+            "-DSOURCE_DIR=${SOURCE_DIR}"
+            "-DTEMP_DIR=${OUTPUT_DIR}/proof/stage${stage}/${suite}"
+            "-DNATIVE_BINARY=${stage${stage}}"
+            -P "${SOURCE_DIR}/cmake/Hy${suite}.cmake")
+        string(APPEND report "Stage ${stage}: ${suite} passed\n")
+    endforeach()
+endforeach()
+if(NOT hash2 STREQUAL hash3)
+    message(FATAL_ERROR "Stage 2 and stage 3 compiler artifacts differ: ${hash2} vs ${hash3}")
+endif()
+run_checked("Hydrogen artifact comparison" "${stage3}" stage-compare "${project}" --stage1 "${stage2}" --stage2 "${stage3}")
+# Check the comparison command actually rejects different artifacts.
+file(WRITE "${OUTPUT_DIR}/different-artifact" "different")
+execute_process(COMMAND "${stage3}" stage-compare "${project}" --stage1 "${stage2}" --stage2 "${OUTPUT_DIR}/different-artifact"
+    RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 30)
+if(NOT result STREQUAL "1" OR NOT stdout MATCHES "stage artifacts differ" OR NOT stderr STREQUAL "")
+    message(FATAL_ERROR "Artifact comparison failed to reject unequal inputs: ${result}\n${stdout}\n${stderr}")
+endif()
+file(REMOVE "${OUTPUT_DIR}/different-artifact")
+
+foreach(artifact NativeStaticCalls/static_calls NativeStaticCalls/project_calls NativeRuntime/runtime NativeRuntime/files NativeRuntime/gc ExecutableIr/semantic_project)
+    foreach(stage RANGE 1 3)
+        file(SHA256 "${OUTPUT_DIR}/proof/stage${stage}/${artifact}" artifact_hash${stage})
+    endforeach()
+    if(NOT artifact_hash2 STREQUAL artifact_hash3)
+        message(FATAL_ERROR "Generated executable differs between stage 2/3 compilers: ${artifact}")
+    endif()
+    if(artifact_hash1 STREQUAL artifact_hash2)
+        string(APPEND report "Identical stage 1/2/3 executable: ${artifact} (${artifact_hash3})\n")
+    else()
+        # A retained older native seed may legitimately emit different code
+        # after a backend upgrade; its behavior must still pass the same corpus.
+        string(APPEND report "Identical stage 2/3 executable: ${artifact} (${artifact_hash3}); seed emitted different bytes\n")
+    endif()
+endforeach()
+file(RENAME "${stage2}" "${OUTPUT_DIR}/hydrogen-stage2")
+file(RENAME "${stage3}" "${OUTPUT_DIR}/hydrogen-stage3")
+string(APPEND report "PASS: stage 2/3 compiler artifacts match; all three stages passed the same native corpus.\n")
+file(WRITE "${OUTPUT_DIR}/bootstrap-proof.txt" "${report}")
+message(STATUS "Repeated self-compilation verified; report: ${OUTPUT_DIR}/bootstrap-proof.txt")

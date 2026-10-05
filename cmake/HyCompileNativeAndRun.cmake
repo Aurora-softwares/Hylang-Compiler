@@ -16,15 +16,23 @@ endif()
 if(NOT DEFINED EXPECTED_EXIT_CODE)
     set(EXPECTED_EXIT_CODE 0)
 endif()
+if(NOT DEFINED NATIVE_COMMAND)
+    set(NATIVE_COMMAND compile)
+endif()
 
 get_filename_component(output_dir "${OUTPUT_FILE}" DIRECTORY)
 file(MAKE_DIRECTORY "${output_dir}")
+set(compiler_command "${HY_BINARY}" run "${PROJECT_TARGET}" --)
+if(DEFINED NATIVE_BINARY)
+    set(compiler_command "${NATIVE_BINARY}")
+endif()
 
 execute_process(
-    COMMAND "${HY_BINARY}" run "${PROJECT_TARGET}" -- compile "${INPUT_FILE}" -o "${OUTPUT_FILE}"
+    COMMAND ${compiler_command} "${NATIVE_COMMAND}" "${INPUT_FILE}" -o "${OUTPUT_FILE}"
     RESULT_VARIABLE compile_result
     OUTPUT_VARIABLE compile_stdout
     ERROR_VARIABLE compile_stderr
+    TIMEOUT 30
 )
 if(NOT compile_result EQUAL 0)
     message(FATAL_ERROR "native compile failed (${compile_result})\nstdout:\n${compile_stdout}\nstderr:\n${compile_stderr}")
@@ -37,10 +45,11 @@ endif()
 
 file(CHMOD "${OUTPUT_FILE}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 execute_process(
-    COMMAND "${OUTPUT_FILE}"
+    COMMAND "${OUTPUT_FILE}" ${RUN_ARGS}
     RESULT_VARIABLE run_result
     OUTPUT_VARIABLE run_stdout
     ERROR_VARIABLE run_stderr
+    TIMEOUT 10
 )
 if(NOT run_result EQUAL EXPECTED_EXIT_CODE)
     message(FATAL_ERROR "native executable returned ${run_result}; expected ${EXPECTED_EXIT_CODE}\nstdout:\n${run_stdout}\nstderr:\n${run_stderr}")
