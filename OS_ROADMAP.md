@@ -1,6 +1,6 @@
 # Hydrogen OS and firmware design plan
 
-This is a plan for future targets, not a guide to executable features. Current direct native output is a Linux x86-64 ELF with a Linux syscall runtime. It cannot be used as a UEFI application, an Australis executable, or a freestanding kernel merely by changing its extension.
+This is a plan for future targets, not a guide to executable features. The self-hosted compiler now has a deliberately constrained `uefi-x64` proof target: it emits a PE32+ x86_64 EFI application that writes ASCII `System.Console.WriteLine` literals as UTF-16 through the firmware text-output protocol. The complete native runtime remains a Linux x86-64 ELF with Linux syscalls; it cannot become a general UEFI application, an Australis executable, or a freestanding kernel merely by changing its extension.
 
 For present language/runtime support, see the [native compiler guide](samples/self_hosting/README.md). SDK unsafe syntax does not establish native firmware or arbitrary-address interoperability.
 

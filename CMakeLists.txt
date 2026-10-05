@@ -169,6 +169,15 @@ add_test(
 )
 
 add_test(
+    NAME hy_build_uefi_hello
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/uefi_hello.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generated/uefi_hello.efi
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildUefiHello.cmake
+)
+
+add_test(
     NAME hyc_build_and_run_object_flow
     COMMAND ${CMAKE_COMMAND}
         -DHY_BINARY=$<TARGET_FILE:hyc>
@@ -1282,7 +1291,8 @@ add_test(
 )
 set_tests_properties(hy_managed_payload_accounting hy_test_self_hosting_workspace PROPERTIES TIMEOUT 90)
 
-# The current native runtime and ELF emitter target Linux x86-64.
+# The managed native runtime targets Linux x86-64. The self-hosted compiler
+# additionally validates its constrained freestanding UEFI hello-world target.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
     add_custom_target(hydrogen_stage1
         COMMAND ${CMAKE_COMMAND}
@@ -1317,6 +1327,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
         set_tests_properties(hy_stage1_${suite} PROPERTIES
             FIXTURES_REQUIRED hydrogen_stage1 ENVIRONMENT "PATH=" TIMEOUT 180 RUN_SERIAL TRUE)
     endforeach()
+    add_test(NAME hy_stage1_compile_uefi_hello
+        COMMAND ${CMAKE_COMMAND}
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/uefi_hello.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/uefi_hello.efi
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileUefi.cmake
+    )
+    set_tests_properties(hy_stage1_compile_uefi_hello PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
     find_program(HYDROGEN_PRLIMIT_BINARY prlimit REQUIRED)
     add_custom_target(hydrogen_bootstrap_proof
         COMMAND ${CMAKE_COMMAND}

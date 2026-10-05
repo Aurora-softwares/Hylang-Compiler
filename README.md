@@ -2,12 +2,12 @@
 
 Hydrogen is a C#-inspired language with classes, methods, managed strings and arrays, and explicit low-level facilities. Source files use `.hy`; project manifests use `.hyproj`.
 
-The Hydrogen-written compiler produces standalone Linux x86-64 executables and can compile itself. The C++ SDK provides additional language features, an interpreter, project scaffolding, packaging, formatting, and editor integration. Choose the tool according to the features your program needs.
+The Hydrogen-written compiler produces standalone Linux x86-64 executables, a constrained x86_64 UEFI proof image, and can compile itself. The C++ SDK provides additional language features, an interpreter, project scaffolding, packaging, formatting, and editor integration. Choose the tool according to the features your program needs.
 
 | Tool | Use it for | Output or execution |
 | --- | --- | --- |
-| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection | Linux x64 ELF; no external compiler or linker |
-| `hy` (C++ SDK) | Build/run/test/check/fmt/new/package/LSP workflows | Interpreter or host C backend |
+| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI hello-world proof | Linux x64 ELF or constrained `uefi-x64` PE32+ output; no external compiler or linker |
+| `hy` (C++ SDK) | Build/run/test/check/fmt/new/package/LSP workflows; UEFI hello-world proof | Interpreter, host C backend, or constrained `uefi-x64` PE32+ output |
 | `hyrun` | Direct interpreted execution | Shares the SDK semantic pipeline |
 | `hyc build` | Compatibility build command | Host C backend, executables or static libraries |
 
@@ -73,6 +73,25 @@ Hello, Hydrogen
 ```
 
 Native output files need execute permission. Compilation failures return a nonzero status and do not create or overwrite the output; check that status before running an existing artifact.
+
+## UEFI hello-world proof
+
+The SDK compiler can also emit a bootable x86_64 UEFI PE32+ application for a
+deliberately constrained proof of concept. The input must have a normal Hylang
+`Main` method containing exactly one `System.Console.WriteLine` with a printable
+ASCII string literal:
+
+```bash
+./build/self_hosting/hydrogen-stage1 compile tests/uefi_hello.hy --target uefi-x64 -o build/BOOTX64.EFI
+file build/BOOTX64.EFI
+```
+
+The result is an EFI application, not a Linux ELF. The self-hosted compiler
+emits a PE32+ image, uses the UEFI Microsoft x64 entry ABI, writes an ASCII
+message as UTF-16 through the firmware `OutputString` function pointer, and
+then remains on screen. This target has no managed runtime, Linux syscalls,
+allocator, or general method support yet; it is the bootability proof on the
+path to a complete firmware backend.
 
 Alternatively, interpret or build with the SDK:
 

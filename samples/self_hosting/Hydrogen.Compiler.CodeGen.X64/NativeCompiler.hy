@@ -97,6 +97,28 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return EmitNativeImage(program, inputPath, outputPath);
         }
 
+        public NativeCompilerResult CompileFileUefi(string inputPath, string outputPath) {
+            SourceText source = SourceText.FromFile(inputPath);
+            DiagnosticBag subsetDiagnostics = new DiagnosticBag();
+            SelfHostSubsetValidator subset = new SelfHostSubsetValidator();
+            if (!subset.Validate(source, subsetDiagnostics)) {
+                return new NativeCompilerResult(false, inputPath + ":\n" + subsetDiagnostics.ToText());
+            }
+            SyntaxTree tree = SyntaxTree.ParseFast(source);
+            if (tree.Diagnostics().HasErrors()) {
+                return new NativeCompilerResult(false, inputPath + ":\n" + tree.Diagnostics().ToText());
+            }
+
+            DiagnosticBag diagnostics = new DiagnosticBag();
+            Hydrogen.Compiler.Binding.Binder binder = new Hydrogen.Compiler.Binding.Binder();
+            BoundProgram program = binder.Bind(tree.Root(), diagnostics);
+            if (diagnostics.HasErrors()) {
+                return new NativeCompilerResult(false, inputPath + ":\n" + diagnostics.ToText());
+            }
+
+            return EmitUefiImage(program, inputPath, outputPath);
+        }
+
         private NativeCompilerResult EmitNativeImage(BoundProgram program, string inputPath, string outputPath) {
             DirectMainCompiler direct = new DirectMainCompiler();
             IrLowering lowering = new IrLowering();
@@ -107,6 +129,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
             // Write only after the entire entrypoint has compiled successfully.
             // Unsupported code must never become a partial program or an IR-debug ELF.
+            System.IO.File.WriteAllBytes(outputPath, result.Image());
+            return new NativeCompilerResult(true, "");
+        }
+
+        private NativeCompilerResult EmitUefiImage(BoundProgram program, string inputPath, string outputPath) {
+            IrLowering lowering = new IrLowering();
+            UefiImageBuilder builder = new UefiImageBuilder();
+            UefiImageResult result = builder.Build(lowering.LowerEntryPoint(program));
+            if (!result.Success()) {
+                return new NativeCompilerResult(false, inputPath + ": error: UEFI compilation failed: " + result.Message() + "\n");
+            }
             System.IO.File.WriteAllBytes(outputPath, result.Image());
             return new NativeCompilerResult(true, "");
         }

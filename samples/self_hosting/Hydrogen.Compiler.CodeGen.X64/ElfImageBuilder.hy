@@ -339,7 +339,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return true;
         }
 
-        private int AsciiCode(string ch) {
+        public int AsciiCode(string ch) {
             if (ch == "\n") { return 10; }
             if (ch == "\t") { return 9; }
             if (ch == "\r") { return 13; }

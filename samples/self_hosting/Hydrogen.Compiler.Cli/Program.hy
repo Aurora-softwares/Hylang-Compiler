@@ -87,22 +87,28 @@ namespace Hydrogen.Compiler.Cli {
         }
 
         private static int Compile(string[] args) {
-            if (args.Length != 4) {
+            bool uefi = false;
+            string output = "";
+            if (args.Length == 4 && args[2] == "-o") {
+                output = args[3];
+            } else if (args.Length == 6 && args[2] == "--target" && args[3] == "uefi-x64" && args[4] == "-o") {
+                uefi = true;
+                output = args[5];
+            } else {
                 System.Console.WriteLine("usage: hydrogen-compiler compile <file.hy> -o <output>");
-                return 1;
-            }
-            if (args[2] != "-o") {
-                System.Console.WriteLine("usage: hydrogen-compiler compile <file.hy> -o <output>");
+                System.Console.WriteLine("   or: hydrogen-compiler compile <file.hy> --target uefi-x64 -o <output>");
                 return 1;
             }
 
             NativeCompiler compiler = new NativeCompiler();
-            NativeCompilerResult result = compiler.CompileFile(args[1], args[3]);
+            NativeCompilerResult result;
+            if (uefi) { result = compiler.CompileFileUefi(args[1], output); }
+            else { result = compiler.CompileFile(args[1], output); }
             if (!result.Success()) {
                 System.Console.Write(result.DiagnosticsText());
                 return 1;
             }
-            System.Console.WriteLine("wrote " + args[3]);
+            System.Console.WriteLine("wrote " + output);
             return 0;
         }
 
@@ -203,6 +209,7 @@ namespace Hydrogen.Compiler.Cli {
             System.Console.WriteLine("usage: hydrogen-compiler <tokens|parse|check|build> <file.hy|project.hyproj>");
             System.Console.WriteLine("usage: hydrogen-compiler check <file.hy> --emit-ir");
             System.Console.WriteLine("usage: hydrogen-compiler compile <file.hy> -o <output>");
+            System.Console.WriteLine("usage: hydrogen-compiler compile <file.hy> --target uefi-x64 -o <output>");
             System.Console.WriteLine("usage: hydrogen-compiler build <project.hyproj> -o <output>");
             System.Console.WriteLine("usage: hydrogen-compiler stage-compare <project.hyproj> --stage1 <path> --stage2 <path>");
         }

@@ -10146,6 +10146,9 @@ std::optional<HostToolchain> detect_host_toolchain() {
 
 fs::path default_output_path(const fs::path& input_path, const ProjectManifest& manifest, const string& target_type) {
     const fs::path build_dir = input_path.parent_path() / ".hylang";
+    if (target_type == "uefi-x64") {
+        return build_dir / (manifest.name + ".efi");
+    }
     if (target_type == "lib") {
 #ifdef _WIN32
         return build_dir / (manifest.name + ".lib");
@@ -10158,6 +10161,157 @@ fs::path default_output_path(const fs::path& input_path, const ProjectManifest& 
 #else
     return build_dir / manifest.name;
 #endif
+}
+
+void write_u16_le(vector<uint8_t>& output, std::size_t offset, uint16_t value) {
+    output[offset] = static_cast<uint8_t>(value);
+    output[offset + 1] = static_cast<uint8_t>(value >> 8);
+}
+
+void write_u32_le(vector<uint8_t>& output, std::size_t offset, uint32_t value) {
+    for (int index = 0; index < 4; ++index) {
+        output[offset + static_cast<std::size_t>(index)] = static_cast<uint8_t>(value >> (index * 8));
+    }
+}
+
+void write_u64_le(vector<uint8_t>& output, std::size_t offset, uint64_t value) {
+    for (int index = 0; index < 8; ++index) {
+        output[offset + static_cast<std::size_t>(index)] = static_cast<uint8_t>(value >> (index * 8));
+    }
+}
+
+bool uefi_hello_message(const BoundProgram& program, string& message, string& failure) {
+    if (program.entry_point == nullptr) {
+        failure = "UEFI target requires an entry point";
+        return false;
+    }
+    const auto entry_body = program.methods.find(program.entry_point);
+    if (entry_body == program.methods.end() || entry_body->second == nullptr || entry_body->second->body == nullptr) {
+        failure = "UEFI target could not locate the entry point body";
+        return false;
+    }
+
+    const auto& statements = entry_body->second->body->statements;
+    if (statements.size() != 1 || statements[0]->kind != BoundStatementKind::Expression) {
+        failure = "UEFI target currently supports one System.Console.WriteLine string literal in Main";
+        return false;
+    }
+    const auto& statement = static_cast<const BoundExpressionStatement&>(*statements[0]);
+    if (statement.expression == nullptr || statement.expression->kind != BoundExpressionKind::Call) {
+        failure = "UEFI target currently supports one System.Console.WriteLine string literal in Main";
+        return false;
+    }
+    const auto& call = static_cast<const BoundCallExpression&>(*statement.expression);
+    if (call.method != program.semantic_model.console_writeline_string || call.arguments.size() != 1 ||
+        call.arguments[0]->kind != BoundExpressionKind::Literal) {
+        failure = "UEFI target currently supports one System.Console.WriteLine string literal in Main";
+        return false;
+    }
+    const auto& literal = static_cast<const BoundLiteralExpression&>(*call.arguments[0]);
+    if (!std::holds_alternative<string>(literal.value)) {
+        failure = "UEFI target requires a string literal";
+        return false;
+    }
+
+    message = std::get<string>(literal.value);
+    if (message.empty()) {
+        failure = "UEFI target requires a non-empty message";
+        return false;
+    }
+    if (!std::all_of(message.begin(), message.end(), [](unsigned char character) { return character >= 0x20 && character <= 0x7e; })) {
+        failure = "UEFI target currently supports printable ASCII string literals only";
+        return false;
+    }
+    return true;
+}
+
+bool write_uefi_hello_image(const fs::path& output_path, const string& message) {
+    constexpr std::size_t headers_size = 0x200;
+    constexpr std::size_t section_raw_size = 0x200;
+    constexpr std::size_t text_raw_offset = headers_size;
+    constexpr std::size_t data_raw_offset = text_raw_offset + section_raw_size;
+    constexpr uint32_t text_rva = 0x1000;
+    constexpr uint32_t data_rva = 0x2000;
+
+    vector<uint8_t> image(data_raw_offset + section_raw_size, 0);
+    image[0] = 'M';
+    image[1] = 'Z';
+    write_u32_le(image, 0x3c, 0x80);
+
+    constexpr std::size_t pe_offset = 0x80;
+    image[pe_offset] = 'P';
+    image[pe_offset + 1] = 'E';
+    write_u16_le(image, pe_offset + 4, 0x8664);       // AMD64
+    write_u16_le(image, pe_offset + 6, 2);            // .text and .rdata
+    write_u16_le(image, pe_offset + 20, 0x00f0);      // PE32+ optional header size
+    write_u16_le(image, pe_offset + 22, 0x0222);      // executable, large-address-aware, debug stripped
+
+    constexpr std::size_t optional_offset = pe_offset + 24;
+    write_u16_le(image, optional_offset, 0x020b);      // PE32+
+    write_u32_le(image, optional_offset + 4, section_raw_size);
+    write_u32_le(image, optional_offset + 8, section_raw_size);
+    write_u32_le(image, optional_offset + 16, text_rva);
+    write_u32_le(image, optional_offset + 20, text_rva);
+    write_u64_le(image, optional_offset + 24, 0x0000000140000000ull);
+    write_u32_le(image, optional_offset + 32, 0x1000); // section alignment
+    write_u32_le(image, optional_offset + 36, 0x0200); // file alignment
+    write_u16_le(image, optional_offset + 48, 2);      // UEFI subsystem version
+    write_u32_le(image, optional_offset + 56, 0x3000); // size of image
+    write_u32_le(image, optional_offset + 60, headers_size);
+    write_u16_le(image, optional_offset + 68, 10);     // EFI application subsystem
+    write_u16_le(image, optional_offset + 70, 0x0100); // NX compatible
+    write_u64_le(image, optional_offset + 72, 0x100000);
+    write_u64_le(image, optional_offset + 80, 0x1000);
+    write_u64_le(image, optional_offset + 88, 0x100000);
+    write_u64_le(image, optional_offset + 96, 0x1000);
+    write_u32_le(image, optional_offset + 108, 16);    // data-directory count
+
+    constexpr std::size_t section_offset = optional_offset + 0xf0;
+    std::memcpy(image.data() + section_offset, ".text", 5);
+    write_u32_le(image, section_offset + 8, 26);
+    write_u32_le(image, section_offset + 12, text_rva);
+    write_u32_le(image, section_offset + 16, section_raw_size);
+    write_u32_le(image, section_offset + 20, text_raw_offset);
+    write_u32_le(image, section_offset + 36, 0x60000020); // code, execute, read
+
+    constexpr std::size_t data_section_offset = section_offset + 40;
+    std::memcpy(image.data() + data_section_offset, ".rdata", 6);
+    const uint32_t string_size = static_cast<uint32_t>((message.size() + 3) * 2);
+    write_u32_le(image, data_section_offset + 8, string_size);
+    write_u32_le(image, data_section_offset + 12, data_rva);
+    write_u32_le(image, data_section_offset + 16, section_raw_size);
+    write_u32_le(image, data_section_offset + 20, data_raw_offset);
+    write_u32_le(image, data_section_offset + 36, 0x40000040); // initialized data, read
+
+    // EFIAPI Main(EFI_HANDLE, EFI_SYSTEM_TABLE*) receives the system table in RDX.
+    // EFI_SYSTEM_TABLE.ConOut is at offset 0x40 and OutputString is its second member.
+    const vector<uint8_t> code = {
+        0x48, 0x83, 0xec, 0x28,             // sub rsp, 40: shadow space and 16-byte call alignment
+        0x48, 0x8b, 0x42, 0x40,             // mov rax, [rdx + 0x40]
+        0x48, 0x89, 0xc1,                   // mov rcx, rax
+        0x48, 0x8b, 0x40, 0x08,             // mov rax, [rax + 8]
+        0x48, 0x8d, 0x15, 0xea, 0x0f, 0x00, 0x00, // lea rdx, [rip + 0xfea] (.rdata)
+        0xff, 0xd0,                         // call rax
+        0xeb, 0xfe                          // retain the proof-of-concept message on screen
+    };
+    std::copy(code.begin(), code.end(), image.begin() + text_raw_offset);
+
+    std::size_t string_offset = data_raw_offset;
+    for (const unsigned char character : message) {
+        image[string_offset++] = character;
+        image[string_offset++] = 0;
+    }
+    image[string_offset++] = '\r';
+    image[string_offset++] = 0;
+    image[string_offset++] = '\n';
+    image[string_offset++] = 0;
+
+    std::ofstream output(output_path, std::ios::binary);
+    if (!output) {
+        return false;
+    }
+    output.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
+    return static_cast<bool>(output);
 }
 
 bool write_text_file(const fs::path& path, const string& contents) {
@@ -11111,17 +11265,11 @@ BuildResult build_target(const BuildOptions& options) {
     if (target_type == "test") {
         target_type = "exe";
     }
-    if (target_type != "exe" && target_type != "lib") {
+    if (target_type != "exe" && target_type != "lib" && target_type != "uefi-x64") {
         diagnostics.add(options.input_path, 1, 1, "Unsupported build target '" + target_type + "'");
         return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
-    if (target_type == "exe" && !locate_entry_point(*program, diagnostics)) {
-        return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
-    }
-
-    const auto toolchain = detect_host_toolchain();
-    if (!toolchain.has_value()) {
-        diagnostics.add(options.input_path, 1, 1, "Could not find a host C compiler");
+    if ((target_type == "exe" || target_type == "uefi-x64") && !locate_entry_point(*program, diagnostics)) {
         return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
 
@@ -11145,6 +11293,30 @@ BuildResult build_target(const BuildOptions& options) {
             cached.source_map_path = build_dir / (manifest->name + ".hymap.json");
         }
         return cached;
+    }
+
+    if (target_type == "uefi-x64") {
+        string message;
+        string failure;
+        if (!uefi_hello_message(*program, message, failure)) {
+            diagnostics.add(options.input_path, 1, 1, failure);
+            return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
+        }
+        if (!write_uefi_hello_image(output_path, message)) {
+            diagnostics.add(output_path, 1, 1, "Could not write UEFI image");
+            return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
+        }
+        write_text_file(cache_key_path, fingerprint + "\n");
+        BuildResult built;
+        built.success = true;
+        built.output_path = output_path;
+        return built;
+    }
+
+    const auto toolchain = detect_host_toolchain();
+    if (!toolchain.has_value()) {
+        diagnostics.add(options.input_path, 1, 1, "Could not find a host C compiler");
+        return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
 
     CEmitter emitter(*program);
