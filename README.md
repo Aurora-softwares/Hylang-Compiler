@@ -13,6 +13,27 @@ The Hydrogen-written compiler produces standalone Linux x86-64 executables, a co
 
 See the [language and tool reference](https://aurora-softwares.github.io/Hylang-Docs/) and [native compiler guide](samples/self_hosting/README.md) for the supported features of each route.
 
+## Package a self-hosted release
+
+After you have verified and renamed the final self-hosted compiler to `safe/hy`,
+create a Linux x86-64 release archive with:
+
+```bash
+cmake -DSOURCE_DIR="$PWD" -DVERSION=alpha-0.0.1 -P cmake/PackageHydrogenRelease.cmake
+```
+
+This writes `releases/hydrogen-alpha-0.0.1-linux-x86_64.tar.gz` and its adjacent
+`.sha256` checksum. The archive contains `bin/hy`, a release README, build
+metadata, and `SHA256SUMS` for the executable. The command refuses to overwrite
+an existing release; pass `-DFORCE=ON` only when intentionally rebuilding it.
+
+If CMake is already configured, the equivalent target is:
+
+```bash
+cmake -S . -B build -DHYDROGEN_RELEASE_VERSION=alpha-0.0.1
+cmake --build build --target hydrogen_package_release
+```
+
 ## Build the tools
 
 Run these commands from this repository's root. The SDK requires CMake 3.20 or newer and a C++20 compiler. Its executable builds also require a host C compiler; static-library builds require an archiver. The direct native compiler targets Linux x86-64.

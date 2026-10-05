@@ -47,3 +47,5 @@ PLAN.md
 .claude/
 st
 de_modules
+/releases/
+/safe/

@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(HylangCompiler VERSION 0.1.0 LANGUAGES CXX)
 
+set(HYDROGEN_RELEASE_VERSION "" CACHE STRING
+    "Version for hydrogen_package_release, for example alpha-0.0.1")
+set(HYDROGEN_RELEASE_BINARY "${CMAKE_CURRENT_SOURCE_DIR}/safe/hy" CACHE FILEPATH
+    "Verified self-hosted hy binary to package")
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -30,6 +35,16 @@ add_executable(hy src/hy_main.cpp)
 target_link_libraries(hy PRIVATE hylang)
 
 enable_testing()
+
+add_custom_target(hydrogen_package_release
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DINPUT_BINARY=${HYDROGEN_RELEASE_BINARY}
+        -DVERSION=${HYDROGEN_RELEASE_VERSION}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PackageHydrogenRelease.cmake
+    COMMENT "Packaging the verified self-hosted Hydrogen release"
+    VERBATIM
+)
 
 function(add_hyrun_negative_test test_name source_file expected_regex)
     add_test(
