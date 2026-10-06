@@ -6,9 +6,9 @@
 # Builds the C++ Stage 0 compiler, then bootstraps the self-hosting Hydrogen
 # compiler through stages 1, 2, and 3 before verifying reproducibility.
 #
-# Usage:
+# Run this script from the root of the Hydrogen compiler repository:
+#
 #   ./bootstrap.sh
-#   ./bootstrap.sh /path/to/Hylang-Compiler
 #
 # ==============================================================================
 
@@ -18,8 +18,8 @@ set -Eeuo pipefail
 # Configuration
 # ------------------------------------------------------------------------------
 
-DEFAULT_PROJECT_DIR="/home/rsmith/Projects/Aurora-Softwares/Hylang-Compiler"
-PROJECT_DIR="${1:-$DEFAULT_PROJECT_DIR}"
+# The project is ALWAYS the directory the user ran the script from.
+PROJECT_DIR="$(pwd)"
 
 BUILD_DIR="$PROJECT_DIR/build"
 SELF_HOST_DIR="$BUILD_DIR/self_hosting"
@@ -36,6 +36,21 @@ LOG_FILE="$BUILD_DIR/bootstrap.log"
 
 TOTAL_STEPS=11
 CURRENT_STEP=0
+CURRENT_MESSAGE="Starting..."
+
+# Braille spinner frames.
+SPINNER=(
+    "⠋"
+    "⠙"
+    "⠹"
+    "⠸"
+    "⠼"
+    "⠴"
+    "⠦"
+    "⠧"
+    "⠇"
+    "⠏"
+)
 
 # ------------------------------------------------------------------------------
 # Colours
@@ -54,6 +69,7 @@ if [[ -t 1 ]]; then
 else
     RESET=""
     BOLD=""
+
     RED=""
     GREEN=""
     YELLOW=""
@@ -82,7 +98,13 @@ error() {
     printf "${RED}✗${RESET} %s\n" "$*" >&2
 }
 
+clear_progress_line() {
+    # Clear the whole current terminal line.
+    printf "\r\033[2K"
+}
+
 die() {
+    clear_progress_line
     error "$*"
 
     if [[ -f "$LOG_FILE" ]]; then
@@ -97,8 +119,14 @@ die() {
     exit 1
 }
 
+# ------------------------------------------------------------------------------
+# Progress bar
+# ------------------------------------------------------------------------------
+
 draw_progress() {
     local message="$1"
+    local spinner="${2:- }"
+
     local width=30
     local percent=$(( CURRENT_STEP * 100 / TOTAL_STEPS ))
     local filled=$(( CURRENT_STEP * width / TOTAL_STEPS ))
@@ -113,31 +141,103 @@ draw_progress() {
     bar_filled="${bar_filled// /#}"
     bar_empty="${bar_empty// /-}"
 
-    printf "\r${CYAN}[%s%s]${RESET} %3d%%  %s" \
+    # Return to the start of the line and clear the entire line first.
+    printf "\r\033[2K"
+
+    printf "${CYAN}%s [%s%s]${RESET} %3d%%  %s" \
+        "$spinner" \
         "$bar_filled" \
         "$bar_empty" \
         "$percent" \
         "$message"
-
-    if (( CURRENT_STEP == TOTAL_STEPS )); then
-        printf "\n"
-    fi
 }
 
 step() {
     CURRENT_STEP=$((CURRENT_STEP + 1))
-    draw_progress "$1"
+    CURRENT_MESSAGE="$1"
+
+    draw_progress "$CURRENT_MESSAGE" " "
 }
 
-# Run a command silently, logging stdout/stderr to bootstrap.log.
+# ------------------------------------------------------------------------------
+# Command runner with spinner
+# ------------------------------------------------------------------------------
+
 run() {
     printf "\n\n==> %s\n" "$*" >> "$LOG_FILE"
 
-    if ! "$@" >> "$LOG_FILE" 2>&1; then
-        printf "\n"
-        die "Command failed: $*"
+    # Start command in the background and send output to the log.
+    "$@" >> "$LOG_FILE" 2>&1 &
+
+    local command_pid=$!
+    local spinner_index=0
+
+    # Animate while command is running.
+    while kill -0 "$command_pid" 2>/dev/null; do
+        draw_progress "$CURRENT_MESSAGE" "${SPINNER[$spinner_index]}"
+
+        spinner_index=$(( (spinner_index + 1) % ${#SPINNER[@]} ))
+
+        sleep 0.08
+    done
+
+    # Collect the actual exit code.
+    local exit_code=0
+
+    wait "$command_pid" || exit_code=$?
+
+    if (( exit_code != 0 )); then
+        clear_progress_line
+
+        die "Command failed:
+  $*
+
+Exit code: $exit_code"
     fi
+
+    # Leave the completed operation visible with a tick.
+    draw_progress "$CURRENT_MESSAGE" "${GREEN}✓${RESET}"
 }
+
+run_test() {
+    printf "\n\n==> %s\n" "$*" >> "$LOG_FILE"
+
+    "$@" >> "$LOG_FILE" 2>&1 &
+
+    local command_pid=$!
+    local spinner_index=0
+
+    while kill -0 "$command_pid" 2>/dev/null; do
+        draw_progress "$CURRENT_MESSAGE" "${SPINNER[$spinner_index]}"
+
+        spinner_index=$(( (spinner_index + 1) % ${#SPINNER[@]} ))
+
+        sleep 0.08
+    done
+
+    local exit_code=0
+
+    wait "$command_pid" || exit_code=$?
+
+    # For compiler sanity checks we accept 0 or 1.
+    #
+    # Some versions of Hydrogen currently return 1 for --help even
+    # though the executable launched correctly and printed its usage.
+    if (( exit_code > 1 )); then
+        clear_progress_line
+
+        die "Compiler sanity check failed:
+  $*
+
+Exit code: $exit_code"
+    fi
+
+    draw_progress "$CURRENT_MESSAGE" "${GREEN}✓${RESET}"
+}
+
+# ------------------------------------------------------------------------------
+# File validation
+# ------------------------------------------------------------------------------
 
 require_file() {
     local file="$1"
@@ -159,7 +259,8 @@ require_executable() {
     fi
 
     if [[ ! -x "$file" ]]; then
-        chmod +x "$file" || die "Could not make $description executable."
+        chmod +x "$file" ||
+            die "Could not make $description executable."
     fi
 }
 
@@ -169,17 +270,13 @@ require_executable() {
 
 cleanup() {
     # Never leave incomplete compiler stages looking like successful builds.
-    rm -f \
-        "$STAGE1.pending" \
-        "$STAGE2.pending" \
-        "$STAGE3.pending" \
-        2>/dev/null || true
+    rm -f "$STAGE1.pending" "$STAGE2.pending" "$STAGE3.pending" 2>/dev/null || true
 }
 
 on_error() {
     local exit_code=$?
 
-    printf "\n"
+    clear_progress_line
 
     cleanup
 
@@ -202,14 +299,19 @@ trap cleanup EXIT
 detect_package_manager() {
     if command -v apt-get >/dev/null 2>&1; then
         echo "apt"
+
     elif command -v dnf >/dev/null 2>&1; then
         echo "dnf"
+
     elif command -v yum >/dev/null 2>&1; then
         echo "yum"
+
     elif command -v pacman >/dev/null 2>&1; then
         echo "pacman"
+
     elif command -v zypper >/dev/null 2>&1; then
         echo "zypper"
+
     else
         echo "unknown"
     fi
@@ -224,44 +326,41 @@ install_dependencies() {
     warning "Some required build tools are missing."
 
     case "$package_manager" in
+
         apt)
-            info "Detected Debian/Ubuntu package manager."
-            info "Installing build-essential and cmake..."
+            info "Detected Debian/Ubuntu."
+            info "Installing build-essential and CMake..."
 
             sudo apt-get update
             sudo apt-get install -y build-essential cmake
             ;;
 
         dnf)
-            info "Detected Fedora/RHEL package manager."
-            info "Installing GCC, GCC C++, make and CMake..."
+            info "Detected Fedora/RHEL."
+            info "Installing GCC, GCC C++, Make and CMake..."
 
             sudo dnf install -y gcc gcc-c++ make cmake
             ;;
 
         yum)
-            info "Detected yum package manager."
-            info "Installing GCC, GCC C++, make and CMake..."
+            info "Detected yum."
+            info "Installing GCC, GCC C++, Make and CMake..."
 
             sudo yum install -y gcc gcc-c++ make cmake
             ;;
 
         pacman)
-            info "Detected Arch Linux package manager."
+            info "Detected Arch Linux."
             info "Installing base-devel and CMake..."
 
             sudo pacman -S --needed --noconfirm base-devel cmake
             ;;
 
         zypper)
-            info "Detected openSUSE package manager."
+            info "Detected openSUSE."
             info "Installing compiler tools and CMake..."
 
-            sudo zypper --non-interactive install \
-                gcc \
-                gcc-c++ \
-                make \
-                cmake
+            sudo zypper --non-interactive install gcc gcc-c++ make cmake
             ;;
 
         *)
@@ -290,17 +389,21 @@ check_dependencies() {
     if ! command -v c++ >/dev/null 2>&1 &&
        ! command -v g++ >/dev/null 2>&1 &&
        ! command -v clang++ >/dev/null 2>&1; then
+
         warning "No C++ compiler was found."
         missing=1
     fi
 
     if (( missing == 1 )); then
+
         if [[ ! -t 0 ]]; then
             die "Missing build dependencies and no interactive terminal is available."
         fi
 
         printf "\n"
+
         read -r -p "Would you like to install the missing dependencies? [Y/n] " answer
+
         answer="${answer:-Y}"
 
         if [[ "$answer" =~ ^[Yy]$ ]]; then
@@ -317,6 +420,7 @@ check_dependencies() {
     if ! command -v c++ >/dev/null 2>&1 &&
        ! command -v g++ >/dev/null 2>&1 &&
        ! command -v clang++ >/dev/null 2>&1; then
+
         die "A C++ compiler is still unavailable."
     fi
 }
@@ -329,7 +433,7 @@ clear 2>/dev/null || true
 
 printf "${BOLD}${CYAN}"
 printf "╔══════════════════════════════════════════════════════╗\n"
-printf "║           Hydrogen Compiler Bootstrap               ║\n"
+printf "║              Hydrogen Compiler Bootstrap             ║\n"
 printf "╚══════════════════════════════════════════════════════╝\n"
 printf "${RESET}\n"
 
@@ -339,16 +443,14 @@ printf "Project: %s\n\n" "$PROJECT_DIR"
 # Pre-flight checks
 # ------------------------------------------------------------------------------
 
-if [[ ! -d "$PROJECT_DIR" ]]; then
-    die "Project directory does not exist:
-  $PROJECT_DIR"
-fi
-
 if [[ ! -f "$PROJECT_DIR/CMakeLists.txt" ]]; then
-    die "No CMakeLists.txt was found in:
+    die "No CMakeLists.txt was found in the current directory:
+
   $PROJECT_DIR
 
-This does not appear to be the Hydrogen compiler source directory."
+This does not appear to be the Hydrogen compiler repository.
+
+Run this script from the root of the Hydrogen project."
 fi
 
 require_file "$PROJECT_FILE" "Hydrogen self-hosting project"
@@ -366,29 +468,25 @@ success "Build requirements available."
 # Remove stale pending files from previous failed builds.
 cleanup
 
+printf "\n"
+
 # ------------------------------------------------------------------------------
 # Stage 0
 # ------------------------------------------------------------------------------
 
 step "Configuring Stage 0 build..."
 
-run cmake \
-    -S "$PROJECT_DIR" \
-    -B "$BUILD_DIR" \
-    -DCMAKE_BUILD_TYPE=Release
+run cmake -S "$PROJECT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
 
 step "Building C++ Stage 0 compiler..."
 
-run cmake \
-    --build "$BUILD_DIR" \
-    --target hy \
-    --parallel
+run cmake --build "$BUILD_DIR" --target hy --parallel
 
 require_executable "$STAGE0" "Stage 0 compiler"
 
 step "Testing Stage 0 compiler..."
 
-run "$STAGE0" --help
+run_test "$STAGE0" --help
 
 # ------------------------------------------------------------------------------
 # Bootstrap compiler
@@ -398,16 +496,13 @@ step "Building temporary bootstrap compiler..."
 
 rm -f "$BOOTSTRAP"
 
-run "$STAGE0" \
-    build \
-    "$PROJECT_FILE" \
-    -o "$BOOTSTRAP"
+run "$STAGE0" build "$PROJECT_FILE" -o "$BOOTSTRAP"
 
 require_executable "$BOOTSTRAP" "bootstrap compiler"
 
 step "Testing bootstrap compiler..."
 
-run "$BOOTSTRAP" --help
+run_test "$BOOTSTRAP" --help
 
 # ------------------------------------------------------------------------------
 # Stage 1
@@ -417,10 +512,7 @@ step "Bootstrapping Stage 1..."
 
 rm -f "$STAGE1.pending"
 
-run "$BOOTSTRAP" \
-    build \
-    "$PROJECT_FILE" \
-    -o "$STAGE1.pending"
+run "$BOOTSTRAP" build "$PROJECT_FILE" -o "$STAGE1.pending"
 
 require_executable "$STAGE1.pending" "Stage 1 pending compiler"
 
@@ -429,7 +521,7 @@ chmod +x "$STAGE1"
 
 step "Testing Stage 1 compiler..."
 
-run "$STAGE1" --help
+run_test "$STAGE1" --help
 
 # ------------------------------------------------------------------------------
 # Stage 2
@@ -439,10 +531,7 @@ step "Bootstrapping Stage 2..."
 
 rm -f "$STAGE2.pending"
 
-run "$STAGE1" \
-    build \
-    "$PROJECT_FILE" \
-    -o "$STAGE2.pending"
+run "$STAGE1" build "$PROJECT_FILE" -o "$STAGE2.pending"
 
 require_executable "$STAGE2.pending" "Stage 2 pending compiler"
 
@@ -451,7 +540,7 @@ chmod +x "$STAGE2"
 
 step "Testing Stage 2 compiler..."
 
-run "$STAGE2" --help
+run_test "$STAGE2" --help
 
 # ------------------------------------------------------------------------------
 # Stage 3
@@ -461,10 +550,7 @@ step "Bootstrapping Stage 3..."
 
 rm -f "$STAGE3.pending"
 
-run "$STAGE2" \
-    build \
-    "$PROJECT_FILE" \
-    -o "$STAGE3.pending"
+run "$STAGE2" build "$PROJECT_FILE" -o "$STAGE3.pending"
 
 require_executable "$STAGE3.pending" "Stage 3 pending compiler"
 
@@ -473,7 +559,7 @@ chmod +x "$STAGE3"
 
 step "Testing Stage 3 compiler..."
 
-run "$STAGE3" --help
+run_test "$STAGE3" --help
 
 # ------------------------------------------------------------------------------
 # Reproducibility check
@@ -487,9 +573,14 @@ step "Verifying Stage 2 and Stage 3..."
 } >> "$LOG_FILE" 2>&1
 
 if cmp -s "$STAGE2" "$STAGE3"; then
-    success "Stage 2 and Stage 3 are byte-identical."
-else
+
+    draw_progress "Stage 2 and Stage 3 are byte-identical." "${GREEN}✓${RESET}"
+
     printf "\n"
+
+else
+
+    clear_progress_line
 
     warning "Stage 2 and Stage 3 are NOT byte-identical."
 
@@ -497,6 +588,7 @@ else
     sha256sum "$STAGE2" "$STAGE3"
 
     printf "\n"
+
     die "The self-hosting compiler did not reach a reproducible fixed point."
 fi
 
@@ -504,16 +596,23 @@ fi
 # Complete
 # ------------------------------------------------------------------------------
 
-# Disable ERR trap now that everything succeeded.
 trap - ERR
 
-printf "\n"
+# Clear the progress line first.
+clear_progress_line
+
+# Clear the terminal and move cursor to the top-left.
+clear
 
 printf "${GREEN}${BOLD}"
 printf "╔══════════════════════════════════════════════════════╗\n"
-printf "║              Bootstrap successful!                  ║\n"
+printf "║                 Bootstrap successful!                ║\n"
 printf "╚══════════════════════════════════════════════════════╝\n"
 printf "${RESET}\n"
+
+printf "Project: %s\n\n" "$PROJECT_DIR"
+
+printf "${GREEN}✓${RESET} Stage 2 and Stage 3 are byte-identical.\n\n"
 
 printf "Compilers produced:\n\n"
 printf "  Stage 0    %s\n" "$STAGE0"
@@ -523,6 +622,5 @@ printf "  Stage 2    %s\n" "$STAGE2"
 printf "  Stage 3    %s\n" "$STAGE3"
 
 printf "\n"
-printf "Stage 2 and Stage 3 are byte-identical.\n"
 printf "Build log: %s\n" "$LOG_FILE"
 printf "\n"
