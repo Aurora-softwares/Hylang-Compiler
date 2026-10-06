@@ -30,17 +30,31 @@ hydrogen-stage1 stage-compare <project.hyproj> --stage1 <artifact> --stage2 <art
 
 `tokens` prints lexer tokens/locations. `parse` prints a syntax outline. `check` performs semantic checking; `--emit-ir` prints typed executable method-body IR. `compile` emits a Linux executable by default, or a constrained PE32+ UEFI application with `--target uefi-x64`; `build` emits a format-2 executable project's complete reference closure. `stage-compare` compares existing files exactly; it does not build or behaviorally test them.
 
-## UEFI hello-world target
+## UEFI console and chain-loading target
 
 ```bash
 ./build/self_hosting/hydrogen-stage1 compile tests/uefi_hello.hy --target uefi-x64 -o build/BOOTX64.EFI
 ```
 
 The UEFI target accepts static `Main(string[] args)` entry points containing
-`System.Console.WriteLine` ASCII string literals. It emits the PE32+ image in
-Hydrogen, encodes its console text as UTF-16, and invokes the firmware text
-output protocol through the UEFI x64 calling convention. It does not yet offer
-a general firmware runtime or arbitrary method compilation.
+multiple `System.Console.WriteLine` ASCII string literals. It can also use
+`System.Uefi.StartImage` with an ASCII path to load and launch an EFI image from
+the boot volume. A kernel image can finish with
+`System.Uefi.ExitBootServices()`, `System.Kernel.MemoryMap.Initialize()`,
+`System.Kernel.Memory.Initialize()`,
+`System.Kernel.VirtualMemory.Initialize()`, and `System.Kernel.Halt()`. The
+target captures a final memory map, selects the largest
+`EfiConventionalMemory` descriptor, reserves and clears its first 4 KiB page,
+publishes the remaining physical-page range, retries `ExitBootServices` with a
+fresh map key when needed, then copies the active PML4 into a kernel-owned
+allocator page and loads it through `CR3`. The image has a zero image base and
+uses RIP-relative internal references. The `KernelBootInfo` record pointer is
+available in `RDI` to post-handoff Hydrogen code. Its state is `7` once
+virtual-memory initialization is complete; it then disables interrupts and
+idles. It emits the PE32+ image in Hydrogen, encodes its console text as UTF-16,
+and invokes the firmware text
+output protocol through the UEFI x64 calling convention. The target does not
+offer a general firmware runtime or arbitrary method compilation.
 
 The CLI returns nonzero on invalid or unsupported compilation and does not create or overwrite the output on failure. An older output may remain, so check status before running it. Checking does not guarantee emission support. Normal compilation never substitutes a debug IR executable. Semantic positions use `1:1` where AST spans are unavailable; lexer/parser diagnostics have source positions.
 

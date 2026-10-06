@@ -6,8 +6,8 @@ The Hydrogen-written compiler produces standalone Linux x86-64 executables, a co
 
 | Tool | Use it for | Output or execution |
 | --- | --- | --- |
-| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI hello-world proof | Linux x64 ELF or constrained `uefi-x64` PE32+ output; no external compiler or linker |
-| `hy` (C++ SDK) | Build/run/test/check/fmt/new/package/LSP workflows; UEFI hello-world proof | Interpreter, host C backend, or constrained `uefi-x64` PE32+ output |
+| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI console and chain-loading proof | Linux x64 ELF or constrained `uefi-x64` PE32+ output; no external compiler or linker |
+| `hy` (C++ SDK) | Build/run/test/check/fmt/new/package/LSP workflows; UEFI console proof | Interpreter, host C backend, or constrained `uefi-x64` PE32+ output |
 | `hyrun` | Direct interpreted execution | Shares the SDK semantic pipeline |
 | `hyc build` | Compatibility build command | Host C backend, executables or static libraries |
 
@@ -148,12 +148,29 @@ Hello, Hydrogen
 
 Native output files need execute permission. Compilation failures return a nonzero status and do not create or overwrite the output; check that status before running an existing artifact.
 
-## UEFI hello-world proof
+## UEFI console proof
 
-The SDK compiler can also emit a bootable x86_64 UEFI PE32+ application for a
-deliberately constrained proof of concept. The input must have a normal Hylang
-`Main` method containing exactly one `System.Console.WriteLine` with a printable
-ASCII string literal:
+The self-hosted compiler can emit a bootable x86_64 UEFI PE32+ application.
+Its `Main` method can contain multiple `System.Console.WriteLine` calls with
+ASCII string literals. A UEFI program may also call
+`System.Uefi.StartImage("\\EFI\\AUSTRALIS\\KERNEL.EFI")` to read an EFI
+application from the same FAT volume and start it through UEFI boot services.
+For the first freestanding kernel handoff, call
+`System.Uefi.ExitBootServices()`, `System.Kernel.MemoryMap.Initialize()`,
+`System.Kernel.Memory.Initialize()`,
+`System.Kernel.VirtualMemory.Initialize()`, then `System.Kernel.Halt()`. The
+generated image captures a final UEFI memory map, chooses the largest
+`EfiConventionalMemory` descriptor, reserves and clears its first 4 KiB page,
+and writes the resulting physical-page range to a writable `KernelBootInfo`
+record. It reserves 64 descriptor slots, retries the final
+`GetMemoryMap`/`ExitBootServices` pair up to eight times, then copies the active
+PML4 into the allocator's next page, records that kernel-owned root, and switches
+`CR3` to it. The PE32+ image has a zero image base and RIP-relative internal
+references. Post-handoff Hydrogen code receives the record pointer in `RDI`; its
+state is `7` after virtual-memory setup, before interrupts are disabled and the
+CPU idles.
+The SDK compiler's older UEFI path still accepts only one printable ASCII
+`WriteLine` literal.
 
 ```bash
 ./build/self_hosting/hydrogen-stage1 compile tests/uefi_hello.hy --target uefi-x64 -o build/BOOTX64.EFI
@@ -163,9 +180,14 @@ file build/BOOTX64.EFI
 The result is an EFI application, not a Linux ELF. The self-hosted compiler
 emits a PE32+ image, uses the UEFI Microsoft x64 entry ABI, writes an ASCII
 message as UTF-16 through the firmware `OutputString` function pointer, and
-then remains on screen. This target has no managed runtime, Linux syscalls,
-allocator, or general method support yet; it is the bootability proof on the
-path to a complete firmware backend.
+then remains on screen. The chain-loading intrinsic uses the loaded-image,
+simple-file-system, and file protocols to pass an in-memory EFI application to
+`LoadImage` and `StartImage`. The kernel handoff collects the final memory map,
+materializes `KernelBootInfo`, invokes `ExitBootServices`, initializes a
+bootstrap physical-page range, clones the active PML4 into a kernel-owned page,
+then halts with interrupts disabled. This target has no managed runtime, Linux
+syscalls, general allocation API, arbitrary method support, independent
+lower-level page tables, or post-handoff framebuffer output yet.
 
 Alternatively, interpret or build with the SDK:
 

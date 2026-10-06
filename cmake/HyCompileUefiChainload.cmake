@@ -1,0 +1,17 @@
+foreach(required NATIVE_BINARY INPUT_FILE OUTPUT_FILE)
+    if(NOT DEFINED ${required})
+        message(FATAL_ERROR "${required} is required")
+    endif()
+endforeach()
+
+include("${CMAKE_CURRENT_LIST_DIR}/HyCompileUefi.cmake")
+
+file(READ "${OUTPUT_FILE}" image_hex HEX)
+string(FIND "${image_hex}" "225b4e965964d2118e3900a0c969723b" simple_file_system_guid)
+if(simple_file_system_guid EQUAL -1)
+    message(FATAL_ERROR "UEFI chain-loader image is missing EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID")
+endif()
+string(FIND "${image_hex}" "5c004500460049005c004100550053005400520041004c00490053005c004b00450052004e0045004c002e004500460049000000" kernel_path)
+if(kernel_path EQUAL -1)
+    message(FATAL_ERROR "UEFI chain-loader image is missing its UTF-16 kernel path")
+endif()

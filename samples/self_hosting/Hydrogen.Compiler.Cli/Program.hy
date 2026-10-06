@@ -12,23 +12,27 @@ namespace Hydrogen.Compiler.Cli {
                 return 1;
             }
 
+			// The first argument is always the command, so we branch on that.
             string command = args[0];
             if (command == "new") {
                 return New(args);
             }
+
+			// From here the commands need a second argument
             if (args.Length < 2) {
                 PrintUsage();
                 return 1;
             }
-            string path = args[1];
             if (command == "stage-compare") {
                 return StageCompare(args);
             }
+
+			// From here the commands need a file path to operate on, so we check for existence of the file.
+            string path = args[1];
             if (!System.IO.File.Exists(path)) {
                 System.Console.WriteLine("error: file not found");
                 return 1;
             }
-
             if (command == "tokens") {
                 // Token dump should be lexer-only (no AST parser diagnostics), for stable golden output.
                 SourceText source = SourceText.FromFile(path);
@@ -66,6 +70,7 @@ namespace Hydrogen.Compiler.Cli {
                 return Build(args);
             }
 
+			// If we reach here, the command was not recognized, so we print usage and return an error code.
             PrintUsage();
             return 1;
         }

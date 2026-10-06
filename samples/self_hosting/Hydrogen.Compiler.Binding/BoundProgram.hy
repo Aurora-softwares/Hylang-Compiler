@@ -4,6 +4,12 @@ namespace Hydrogen.Compiler.Binding {
     public class BoundOp {
         public static int KindWriteLineLiteral() { return 1; }
         public static int KindExit() { return 2; }
+        public static int KindStartImageLiteral() { return 3; }
+        public static int KindExitBootServices() { return 4; }
+        public static int KindKernelHalt() { return 5; }
+        public static int KindInitializeMemoryMap() { return 6; }
+        public static int KindInitializeKernelMemory() { return 7; }
+        public static int KindInitializeVirtualMemory() { return 8; }
 
         private int kind;
         private string text;
@@ -67,6 +73,18 @@ namespace Hydrogen.Compiler.Binding {
             while (o < entryOps.Length) {
                 if (entryOps[o].Kind() == BoundOp.KindWriteLineLiteral()) {
                     text = text + "  WriteLineLiteral(\"" + entryOps[o].Text() + "\")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindStartImageLiteral()) {
+                    text = text + "  StartImageLiteral(\"" + entryOps[o].Text() + "\")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindExitBootServices()) {
+                    text = text + "  ExitBootServices()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindKernelHalt()) {
+                    text = text + "  KernelHalt()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializeMemoryMap()) {
+                    text = text + "  MemoryMap.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializeKernelMemory()) {
+                    text = text + "  Memory.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializeVirtualMemory()) {
+                    text = text + "  VirtualMemory.Initialize()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindExit()) {
                     text = text + "  Exit(" + entryOps[o].ExitCode() + ")\n";
                 } else {

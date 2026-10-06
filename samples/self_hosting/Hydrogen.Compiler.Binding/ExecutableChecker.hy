@@ -422,6 +422,12 @@ namespace Hydrogen.Compiler.Binding {
                 e.SetResolvedOwner("System.Console"); return "void";
             }
             if (qualified == "System.Console.ReadLine") { return Intrinsic(e, qualified, "", "", "string"); }
+            if (qualified == "System.Uefi.StartImage") { return Intrinsic(e, qualified, "string", "", "void"); }
+            if (qualified == "System.Uefi.ExitBootServices") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Halt") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.MemoryMap.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Memory.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.VirtualMemory.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.IO.File.Exists") { return Intrinsic(e, qualified, "string", "", "bool"); }
             if (qualified == "System.IO.File.ReadAllText") { return Intrinsic(e, qualified, "string", "", "string"); }
             if (qualified == "System.IO.File.ReadAllBytes") { return Intrinsic(e, qualified, "string", "", "byte[]"); }
