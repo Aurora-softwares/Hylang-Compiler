@@ -502,6 +502,27 @@ rt_int_string:
  add rsp,48
  pop rbx
  ret
+rt_uint_string:
+ sub rsp,48
+ mov rax,rdi
+ lea rsi,[rsp+47]
+ mov byte ptr [rsi],0
+ mov r8d,10
+ xor ecx,ecx
+.uint_digit:
+ xor edx,edx
+ div r8
+ add dl,'0'
+ dec rsi
+ mov [rsi],dl
+ inc rcx
+ test rax,rax
+ jnz .uint_digit
+ mov rdi,rsi
+ mov rsi,rcx
+ call rt_string
+ add rsp,48
+ ret
 rt_bool_string:
  test rdi,rdi
  jz .false_string
@@ -683,7 +704,11 @@ rt_write_text:
  jz rt_null_error
  push rbx
  push r12
+ push r13
+ mov r13,rdi
  mov r12,rsi
+ call rt_create_parents
+ mov rdi,r13
  add rdi,8
  mov esi,0x241
  mov edx,420
@@ -701,6 +726,7 @@ rt_write_text:
  syscall
  test rax,rax
  js rt_io_error
+ pop r13
  pop r12
  pop rbx
  xor eax,eax
@@ -733,6 +759,45 @@ rt_write_bytes:
  pop r13
  pop r12
  pop rbx
+ ret
+rt_create_parents:
+ test rdi,rdi
+ jz rt_null_error
+ push rbx
+ push r12
+ push r13
+ mov rbx,rdi
+ mov r12,[rdi]
+ test r12,r12
+ jz rt_io_error
+ add rbx,8
+ xor r13d,r13d
+.mkdir_parts:
+ cmp r13,r12
+ jae .mkdir_done
+ cmp byte ptr [rbx+r13],47
+ jne .mkdir_next
+ test r13,r13
+ jz .mkdir_next
+ mov byte ptr [rbx+r13],0
+ mov edi,-100
+ mov rsi,rbx
+ mov edx,493
+ mov eax,258
+ syscall
+ mov byte ptr [rbx+r13],47
+ test rax,rax
+ jz .mkdir_next
+ cmp rax,-17
+ jne rt_io_error
+.mkdir_next:
+ inc r13
+ jmp .mkdir_parts
+.mkdir_done:
+ pop r13
+ pop r12
+ pop rbx
+ xor eax,eax
  ret
 rt_args:
  push rbx

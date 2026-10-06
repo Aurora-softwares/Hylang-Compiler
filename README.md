@@ -39,9 +39,62 @@ cmake --build build --target hydrogen_package_release
 Run these commands from this repository's root. The SDK requires CMake 3.20 or newer and a C++20 compiler. Its executable builds also require a host C compiler; static-library builds require an archiver. The direct native compiler targets Linux x86-64.
 
 ```bash
-cmake -S . -B build
-cmake --build build
-cmake --build build --target hydrogen_stage1
+cd /home/rsmith/Projects/Aurora-Softwares/Hylang-Compiler
+
+# Build the C++ stage 0 compiler.
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target hy --parallel
+
+./build/hy --help
+
+# Use stage 0 to produce the temporary Hydrogen bootstrap compiler.
+mkdir -p build/self_hosting
+rm -f build/self_hosting/hydrogen-bootstrap
+
+./build/hy build samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build/self_hosting/hydrogen-bootstrap
+
+chmod +x build/self_hosting/hydrogen-bootstrap
+
+# This is the temporary Hydrogen bootstrap compiler.
+./build/self_hosting/hydrogen-bootstrap --help
+
+# Bootstrap compiler -> stage 1.
+rm -f build/self_hosting/hydrogen-stage1.pending
+
+./build/self_hosting/hydrogen-bootstrap build ./samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o ./build/self_hosting/hydrogen-stage1.pending
+
+chmod +x build/self_hosting/hydrogen-stage1.pending
+mv build/self_hosting/hydrogen-stage1.pending build/self_hosting/hydrogen-stage1
+
+# This is stage 1.
+./build/self_hosting/hydrogen-stage1 --help
+
+# Stage 1 -> stage 2.
+rm -f build/self_hosting/hydrogen-stage2.pending
+
+./build/self_hosting/hydrogen-stage1 build ./samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o ./build/self_hosting/hydrogen-stage2.pending
+
+chmod +x build/self_hosting/hydrogen-stage2.pending
+mv build/self_hosting/hydrogen-stage2.pending build/self_hosting/hydrogen-stage2
+
+# This is stage 2.
+./build/self_hosting/hydrogen-stage2 --help
+
+# Stage 2 -> stage 3.
+rm -f build/self_hosting/hydrogen-stage3.pending
+
+./build/self_hosting/hydrogen-stage2 build ./samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o ./build/self_hosting/hydrogen-stage3.pending
+
+chmod +x build/self_hosting/hydrogen-stage3.pending
+mv build/self_hosting/hydrogen-stage3.pending build/self_hosting/hydrogen-stage3
+
+# This is stage 3.
+./build/self_hosting/hydrogen-stage3 --help
+
+# Stage 2 and stage 3 should be byte-identical.
+sha256sum build/self_hosting/hydrogen-stage2 build/self_hosting/hydrogen-stage3
+
+cmp build/self_hosting/hydrogen-stage2 build/self_hosting/hydrogen-stage3
 ```
 
 The native target initially uses the SDK's C backend to create a seed, then Hydrogen's own backend compiles the complete compiler CLI project and its referenced libraries. The resulting `build/self_hosting/hydrogen-stage1` has no C/C++ toolchain dependency when compiling supported programs.

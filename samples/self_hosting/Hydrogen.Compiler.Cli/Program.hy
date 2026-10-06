@@ -7,12 +7,19 @@ using Hydrogen.Compiler.Text;
 namespace Hydrogen.Compiler.Cli {
     public class Program {
         public static int Main(string[] args) {
-            if (args.Length < 2) {
+            if (args.Length < 1) {
                 PrintUsage();
                 return 1;
             }
 
             string command = args[0];
+            if (command == "new") {
+                return New(args);
+            }
+            if (args.Length < 2) {
+                PrintUsage();
+                return 1;
+            }
             string path = args[1];
             if (command == "stage-compare") {
                 return StageCompare(args);
@@ -63,6 +70,92 @@ namespace Hydrogen.Compiler.Cli {
             return 1;
         }
 
+        private static int New(string[] args) {
+            if (args.Length != 3) {
+                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace <name>");
+                return 1;
+            }
+            string kind = args[1];
+            string destination = PathUtils.Normalize(args[2]);
+            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace") {
+                System.Console.WriteLine("error: unknown project kind '" + kind + "'");
+                return 1;
+            }
+            if (System.IO.File.Exists(destination)) {
+                System.Console.WriteLine("destination already exists: " + destination);
+                return 1;
+            }
+
+            string name = PathUtils.BaseName(destination);
+            if (kind == "workspace") {
+                string workspacePath = PathUtils.Join(destination, name + ".hyproj");
+                string workspaceManifest = RenderManifest(name, "workspace", "", true);
+                System.IO.File.WriteAllText(workspacePath, workspaceManifest);
+                return 0;
+            }
+
+            string projectType = "exe";
+            string sourceFile = "Program.hy";
+            if (kind == "lib") {
+                projectType = "lib";
+                sourceFile = "Library.hy";
+            } else if (kind == "test") {
+                projectType = "test";
+            }
+            string manifestPath = PathUtils.Join(destination, name + ".hyproj");
+            string manifestText = RenderManifest(name, projectType, sourceFile, false);
+            System.IO.File.WriteAllText(manifestPath, manifestText);
+            string sourcePath = PathUtils.Join(destination, sourceFile);
+            string sourceText = RenderSource(kind, name);
+            System.IO.File.WriteAllText(sourcePath, sourceText);
+            return 0;
+        }
+
+        private static string RenderManifest(string name, string type, string source, bool workspace) {
+            string text = "format = 2\n";
+            text = text + "name = \"" + name + "\"\n";
+            text = text + "version = \"0.1.0\"\n";
+            text = text + "type = \"" + type + "\"\n";
+            if (workspace) {
+                text = text + "members = []\n";
+            } else {
+                text = text + "sources = [\"" + source + "\"]\n";
+                text = text + "project_references = []\n";
+            }
+            text = text + "\n[package]\n";
+            text = text + "id = \"" + name + "\"\n";
+            text = text + "description = \"\"\n";
+            text = text + "authors = []\n";
+            text = text + "license = \"\"\n";
+            return text;
+        }
+
+        private static string RenderSource(string kind, string name) {
+            if (kind == "lib") {
+                return "namespace " + name + " {\n" +
+                    "    public class Library {\n" +
+                    "        public static string Name() {\n" +
+                    "            return \"" + name + "\";\n" +
+                    "        }\n" +
+                    "    }\n" +
+                    "}\n";
+            }
+            if (kind == "test") {
+                return "using System.Testing;\n\n" +
+                    "public class Program {\n" +
+                    "    public static int Main(string[] args) {\n" +
+                    "        Assert.True(true, \"scaffolded test should pass\");\n" +
+                    "        return 0;\n" +
+                    "    }\n" +
+                    "}\n";
+            }
+            return "public class Program {\n" +
+                "    public static void Main(string[] args) {\n" +
+                "        System.Console.WriteLine(\"Hello from " + name + "!\");\n" +
+                "    }\n" +
+                "}\n";
+        }
+
         private static int Check(string path, bool emitIr) {
             NativeCompiler compiler = new NativeCompiler();
             if (emitIr) {
@@ -95,8 +188,8 @@ namespace Hydrogen.Compiler.Cli {
                 uefi = true;
                 output = args[5];
             } else {
-                System.Console.WriteLine("usage: hydrogen-compiler compile <file.hy> -o <output>");
-                System.Console.WriteLine("   or: hydrogen-compiler compile <file.hy> --target uefi-x64 -o <output>");
+                System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");
+                System.Console.WriteLine("   or: hy compile <file.hy> --target uefi-x64 -o <output>");
                 return 1;
             }
 
@@ -114,11 +207,11 @@ namespace Hydrogen.Compiler.Cli {
 
         private static int Build(string[] args) {
             if (args.Length != 4) {
-                System.Console.WriteLine("usage: hydrogen-compiler build <project.hyproj> -o <output>");
+                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output>");
                 return 1;
             }
             if (args[2] != "-o") {
-                System.Console.WriteLine("usage: hydrogen-compiler build <project.hyproj> -o <output>");
+                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output>");
                 return 1;
             }
 
@@ -134,7 +227,7 @@ namespace Hydrogen.Compiler.Cli {
                 return 1;
             }
             if (manifest.Type() != "exe") {
-                System.Console.WriteLine("error: only type = \"exe\" is supported by hydrogen-compiler build in this phase");
+                System.Console.WriteLine("error: only type = \"exe\" is supported by hy build in this phase");
                 return 1;
             }
 
@@ -206,12 +299,13 @@ namespace Hydrogen.Compiler.Cli {
         }
 
         private static void PrintUsage() {
-            System.Console.WriteLine("usage: hydrogen-compiler <tokens|parse|check|build> <file.hy|project.hyproj>");
-            System.Console.WriteLine("usage: hydrogen-compiler check <file.hy> --emit-ir");
-            System.Console.WriteLine("usage: hydrogen-compiler compile <file.hy> -o <output>");
-            System.Console.WriteLine("usage: hydrogen-compiler compile <file.hy> --target uefi-x64 -o <output>");
-            System.Console.WriteLine("usage: hydrogen-compiler build <project.hyproj> -o <output>");
-            System.Console.WriteLine("usage: hydrogen-compiler stage-compare <project.hyproj> --stage1 <path> --stage2 <path>");
+            System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace <name>");
+            System.Console.WriteLine("usage: hy <tokens|parse|check|build> <file.hy|project.hyproj>");
+            System.Console.WriteLine("usage: hy check <file.hy> --emit-ir");
+            System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");
+            System.Console.WriteLine("usage: hy compile <file.hy> --target uefi-x64 -o <output>");
+            System.Console.WriteLine("usage: hy build <project.hyproj> -o <output>");
+            System.Console.WriteLine("usage: hy stage-compare <project.hyproj> --stage1 <path> --stage2 <path>");
         }
     }
 }

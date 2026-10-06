@@ -31,6 +31,43 @@ set(NATIVE_COMMAND build)
 set(EXPECTED_OUTPUT "project static calls ok\n")
 include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
 
+set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_overloads.hy")
+set(OUTPUT_FILE "${TEMP_DIR}/overloads")
+set(NATIVE_COMMAND compile)
+set(EXPECTED_OUTPUT "overloads ok\n")
+set(EXPECTED_EXIT_CODE 42)
+include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
+
+set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_static_fields.hy")
+set(OUTPUT_FILE "${TEMP_DIR}/static_fields")
+set(EXPECTED_OUTPUT "static fields ok\n")
+include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
+
+set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_integral_widths.hy")
+set(OUTPUT_FILE "${TEMP_DIR}/integral_widths")
+set(EXPECTED_OUTPUT "-1\n255\n-1\n65535\n4294967295\n-1\n18446744073709551615\n1\n2\n4\n8\n")
+include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
+
+set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_structs.hy")
+set(OUTPUT_FILE "${TEMP_DIR}/structs")
+set(EXPECTED_OUTPUT "structs ok\n")
+include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
+
+set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_inheritance.hy")
+set(OUTPUT_FILE "${TEMP_DIR}/inheritance")
+set(EXPECTED_OUTPUT "inheritance ok\n")
+include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
+
+set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_virtual_dispatch.hy")
+set(OUTPUT_FILE "${TEMP_DIR}/virtual_dispatch")
+set(EXPECTED_OUTPUT "virtual dispatch ok\n")
+include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
+
+set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_interfaces.hy")
+set(OUTPUT_FILE "${TEMP_DIR}/interfaces")
+set(EXPECTED_OUTPUT "interfaces ok\n")
+include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
+
 # Invalid programs must fail before emission, including qualified member calls.
 set(source_wrong_arity [=[
 public class Program {
@@ -38,14 +75,14 @@ public class Program {
     public static int Id(int value) { return value; }
 }
 ]=])
-set(reason_wrong_arity "wrong argument count calling 'Id'")
+set(reason_wrong_arity "no overload of 'Id' matches the provided arguments")
 set(source_wrong_type [=[
 public class Program {
     public static int Main() { return Program.Id(true); }
     public static int Id(int value) { return value; }
 }
 ]=])
-set(reason_wrong_type "argument type mismatch calling 'Id'")
+set(reason_wrong_type "no overload of 'Id' matches the provided arguments")
 set(source_instance [=[
 public class Program {
     public static int Main() { return Program.Id(7); }
@@ -53,21 +90,6 @@ public class Program {
 }
 ]=])
 set(reason_instance "method receiver does not match static or instance declaration")
-set(source_signature [=[
-public class Program {
-    public static int Main() { return Program.Length(0); }
-    public static int Length(long text) { return 1; }
-}
-]=])
-set(reason_signature "Program.Main: unsupported native method parameter type")
-set(source_overload [=[
-public class Program {
-    public static int Main() { return Program.Id(7); }
-    public static int Id(int value) { return value; }
-    public static int Id(bool value) { return 1; }
-}
-]=])
-set(reason_overload "Program.Main: overloaded native calls are not supported: Program.Id")
 set(source_missing_return [=[
 public class Program {
     public static int Main() { return Program.Id(7); }
@@ -95,7 +117,7 @@ public class Program {
     public static void Say() { return; }
 }
 ]=])
-set(reason_void_argument "argument type mismatch calling 'Id'")
+set(reason_void_argument "no overload of 'Id' matches the provided arguments")
 set(source_intrinsic_arity [=[
 public class Program {
     public static int Main() { System.Console.WriteLine(1, 2); return 0; }
@@ -103,7 +125,7 @@ public class Program {
 ]=])
 set(reason_intrinsic_arity "console output requires one value")
 
-foreach(case wrong_arity wrong_type instance signature overload missing_return unsupported_body undefined void_argument intrinsic_arity)
+foreach(case wrong_arity wrong_type instance missing_return unsupported_body undefined void_argument intrinsic_arity)
     set(input "${TEMP_DIR}/${case}.hy")
     file(WRITE "${input}" "${source_${case}}")
     foreach(existing FALSE TRUE)
@@ -117,12 +139,17 @@ foreach(case wrong_arity wrong_type instance signature overload missing_return u
             RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 30
         )
         set(expected "${input}: error: native compilation failed: ${reason_${case}}\n")
+        set(output_matches FALSE)
         if(case MATCHES "^(wrong_arity|wrong_type|instance|missing_return|undefined|void_argument|intrinsic_arity)$")
-            set(expected "${input}:\n1:1 error ${reason_${case}}\n")
-        elseif(case STREQUAL "overload")
-            set(expected "${input}:\n1:1 error duplicate method in type 'Program': Id\n")
+            string(FIND "${stdout}" "${input}:\n" header_index)
+            string(FIND "${stdout}" " error ${reason_${case}}\n" reason_index)
+            if(header_index EQUAL 0 AND reason_index GREATER 0)
+                set(output_matches TRUE)
+            endif()
+        elseif(stdout STREQUAL expected)
+            set(output_matches TRUE)
         endif()
-        if(NOT result STREQUAL "1" OR NOT stdout STREQUAL expected OR NOT stderr STREQUAL "")
+        if(NOT result STREQUAL "1" OR NOT output_matches OR NOT stderr STREQUAL "")
             message(FATAL_ERROR "${case}: expected clean exit 1\nexpected:\n${expected}\nresult: ${result}\nstdout:\n${stdout}\nstderr:\n${stderr}")
         endif()
         if(existing)

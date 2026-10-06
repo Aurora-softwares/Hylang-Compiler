@@ -14,14 +14,31 @@ namespace Hydrogen.Compiler.Binding {
         private int count;
         private int scope;
         private int loops;
+        private int diagnosticLine;
+        private int diagnosticColumn;
+        private bool overloadAmbiguous;
         public void Check(IrModule input, DiagnosticBag bag) {
-            module = input; diagnostics = bag;
+            module = input; diagnostics = bag; diagnosticLine = 1; diagnosticColumn = 1;
             IrClass[] classes = module.Root().Classes(); int c = 0;
             while (c < classes.Length) {
                 owner = classes[c].Name();
                 int previous = 0;
                 while (previous < c) { if (classes[previous].Name() == owner) { Error("duplicate type: " + owner); } previous = previous + 1; }
                 if (module.FindEnum(owner) != null) { Error("duplicate type: " + owner); }
+                string[] declaredBases = classes[c].InterfaceTypes(); string[] resolvedInterfaces = new string[0]; int interfaceCount = 0;
+                classes[c].SetBaseType(""); int db = 0;
+                while (db < declaredBases.Length) {
+                    string resolvedBase = module.ResolveType(declaredBases[db], owner);
+                    IrClass baseClass = module.FindClass(resolvedBase);
+                    if (baseClass == null) { Error("invalid base type for " + owner); }
+                    else if (baseClass.IsInterface()) {
+                        resolvedInterfaces = AppendString(resolvedInterfaces, interfaceCount, resolvedBase); interfaceCount = interfaceCount + 1;
+                    } else if (classes[c].IsInterface() || classes[c].IsStruct() || classes[c].BaseType() != "") { Error("invalid base type for " + owner); }
+                    else if (resolvedBase == owner || module.IsDerivedFrom(resolvedBase, owner)) { Error("inheritance cycle involving " + owner); }
+                    else { classes[c].SetBaseType(resolvedBase); }
+                    db = db + 1;
+                }
+                classes[c].SetInterfaceTypes(resolvedInterfaces);
                 IrField[] fields = classes[c].Fields(); int f = 0;
                 while (f < fields.Length) {
                     DeclareType(fields[f].Type(), false); int p = 0;
@@ -30,9 +47,9 @@ namespace Hydrogen.Compiler.Binding {
                 IrMethod[] methods = classes[c].Methods(); int m = 0;
                 while (m < methods.Length) {
                     DeclareType(methods[m].ReturnType(), true); int p = 0;
-                    while (p < m) { if (methods[p].Name() == methods[m].Name()) { Error("duplicate method in type '" + owner + "': " + methods[m].Name()); } p = p + 1; }
-                    p = 0;
                     while (p < methods[m].Parameters().Length) { DeclareType(methods[m].Parameters()[p].Type(), false); p = p + 1; }
+                    p = 0;
+                    while (p < m) { if (Signature(methods[p]) == Signature(methods[m])) { Error("duplicate method in type '" + owner + "': " + methods[m].Name()); } p = p + 1; }
                     m = m + 1;
                 }
                 c = c + 1;
@@ -64,6 +81,7 @@ namespace Hydrogen.Compiler.Binding {
                     method = methods[m]; Reset();
                     IrParameter[] parameters = method.Parameters(); int p = 0;
                     while (p < parameters.Length) { Add(parameters[p].Name(), parameters[p].Type().DisplayName()); p = p + 1; }
+                    if (method.Name() == module.SimpleName(owner)) { CheckConstructorInitializer(classes[c], method); }
                     Statement(method.Body());
                     if (method.Body() != null && method.ReturnType().DisplayName() != "void") {
                         if (!Returns(method.Body())) { Error("not all paths return a value in " + owner + "." + method.Name()); }
@@ -79,8 +97,8 @@ namespace Hydrogen.Compiler.Binding {
             }
             module.SetFunctions(functions);
         }
-        private void Reset() { names = new string[0]; types = new string[0]; count = 0; scope = 0; loops = 0; }
-        private void Error(string text) { diagnostics.Report(1, 1, text); }
+        private void Reset() { names = new string[0]; types = new string[0]; count = 0; scope = 0; loops = 0; diagnosticLine = 1; diagnosticColumn = 1; }
+        private void Error(string text) { diagnostics.Report(diagnosticLine, diagnosticColumn, text); }
         private void DeclareType(IrType type, bool allowVoid) {
             string name = type.DisplayName(); string resolved = module.ResolveType(name, owner);
             if (resolved == "<unknown>") { Error("unknown type '" + name + "' in " + owner); }
@@ -98,6 +116,8 @@ namespace Hydrogen.Compiler.Binding {
             if (actual == "<error>" || expected == "<error>") { return true; }
             if (actual == expected && actual != "void") { return true; }
             if (actual == "null" && module.Reference(expected)) { return true; }
+            if (module.IsDerivedFrom(actual, expected)) { return true; }
+            if (module.Implements(actual, expected)) { return true; }
             return module.Numeric(actual) && module.Numeric(expected);
         }
         // Evaluate recursive checks before passing literal arguments to Require:
@@ -105,6 +125,13 @@ namespace Hydrogen.Compiler.Binding {
         private void Require(string actual, string expected, string text) { if (!Assignable(actual, expected)) { Error(text); } }
         private void Scoped(IrStatement s) { int saved = count; int savedScope = scope; scope = count; Statement(s); count = saved; scope = savedScope; }
         private void Statement(IrStatement s) {
+            if (s == null) { return; }
+            int previousLine = diagnosticLine; int previousColumn = diagnosticColumn;
+            if (s.Line() > 0) { diagnosticLine = s.Line(); diagnosticColumn = s.Column(); }
+            StatementCore(s);
+            diagnosticLine = previousLine; diagnosticColumn = previousColumn;
+        }
+        private void StatementCore(IrStatement s) {
             if (s == null) { return; }
             int k = s.Kind();
             if (k == IrStatement.KindBlock()) {
@@ -128,6 +155,13 @@ namespace Hydrogen.Compiler.Binding {
             if (k == IrStatement.KindExpressionStatement() || k == IrStatement.KindThrowStatement()) { Expression(s.Expression()); return; }
             if (k == IrStatement.KindIfStatement()) { string condition = Expression(s.Condition()); Require(condition, "bool", "condition must be bool"); Scoped(s.ThenStatement()); Scoped(s.ElseStatement()); return; }
             if (k == IrStatement.KindWhileStatement()) { string condition = Expression(s.Condition()); Require(condition, "bool", "condition must be bool"); loops = loops + 1; Scoped(s.Body()); loops = loops - 1; return; }
+            if (k == IrStatement.KindForStatement()) {
+                int saved = count; int savedScope = scope; scope = count;
+                Statement(s.ForInitializer()); string condition = Expression(s.Condition()); Require(condition, "bool", "condition must be bool");
+                loops = loops + 1; Scoped(s.Body()); loops = loops - 1;
+                if (s.ForIncrement() != null) { Expression(s.ForIncrement()); }
+                count = saved; scope = savedScope; return;
+            }
             if (k == IrStatement.KindBreakStatement() || k == IrStatement.KindContinueStatement()) { if (loops == 0) { Error("break or continue outside loop"); } return; }
             if (k == IrStatement.KindTryStatement()) {
                 Scoped(s.Body()); int saved = count; int savedScope = scope; scope = count;
@@ -144,11 +178,93 @@ namespace Hydrogen.Compiler.Binding {
         }
         private IrField Field(string type, string name) {
             IrClass cl = module.FindClass(type); if (cl == null) { return null; }
-            int i = 0; while (i < cl.Fields().Length) { if (cl.Fields()[i].Name() == name) { return cl.Fields()[i]; } i = i + 1; } return null;
+            int i = 0; while (i < cl.Fields().Length) { if (cl.Fields()[i].Name() == name) { return cl.Fields()[i]; } i = i + 1; }
+            if (cl.BaseType() != "") { return Field(cl.BaseType(), name); }
+            return null;
         }
-        private IrMethod Method(string type, string name) {
+        private string Signature(IrMethod candidate) {
+            string result = candidate.Name() + "("; int i = 0;
+            while (i < candidate.Parameters().Length) {
+                if (i > 0) { result = result + ","; }
+                result = result + candidate.Parameters()[i].Type().DisplayName(); i = i + 1;
+            }
+            return result + ")";
+        }
+        private int MatchScore(IrMethod candidate, string[] actualTypes) {
+            if (candidate.Parameters().Length != actualTypes.Length) { return -1; }
+            int score = 0; int i = 0;
+            while (i < actualTypes.Length) {
+                string expected = candidate.Parameters()[i].Type().DisplayName();
+                if (actualTypes[i] == expected) {
+                    // Exact matches win.
+                } else if (Assignable(actualTypes[i], expected)) {
+                    score = score + 1;
+                } else { return -1; }
+                i = i + 1;
+            }
+            return score;
+        }
+        private IrMethod Method(string type, string name, string[] actualTypes) {
+            overloadAmbiguous = false;
             IrClass cl = module.FindClass(type); if (cl == null) { return null; }
-            int i = 0; while (i < cl.Methods().Length) { if (cl.Methods()[i].Name() == name) { return cl.Methods()[i]; } i = i + 1; } return null;
+            IrMethod selected = null; int selectedScore = -1; bool ambiguous = false; int i = 0;
+            while (i < cl.Methods().Length) {
+                if (cl.Methods()[i].Name() == name) {
+                    int score = MatchScore(cl.Methods()[i], actualTypes);
+                    if (score >= 0 && (selected == null || score < selectedScore)) { selected = cl.Methods()[i]; selectedScore = score; ambiguous = false; }
+                    else if (score >= 0 && score == selectedScore) { ambiguous = true; }
+                }
+                i = i + 1;
+            }
+            if (ambiguous) { overloadAmbiguous = true; Error("call is ambiguous: " + type + "." + name); return null; }
+            if (selected == null && cl.BaseType() != "") { return Method(cl.BaseType(), name, actualTypes); }
+            if (selected == null) {
+                int inherited = 0;
+                while (inherited < cl.InterfaceTypes().Length) {
+                    IrMethod interfaceMethod = Method(cl.InterfaceTypes()[inherited], name, actualTypes);
+                    if (interfaceMethod != null) { return interfaceMethod; }
+                    inherited = inherited + 1;
+                }
+            }
+            return selected;
+        }
+        private bool HasMethod(string type, string name) {
+            IrClass cl = module.FindClass(type); if (cl == null) { return false; }
+            int i = 0; while (i < cl.Methods().Length) { if (cl.Methods()[i].Name() == name) { return true; } i = i + 1; }
+            if (cl.BaseType() != "") { return HasMethod(cl.BaseType(), name); }
+            int inherited = 0; while (inherited < cl.InterfaceTypes().Length) { if (HasMethod(cl.InterfaceTypes()[inherited], name)) { return true; } inherited = inherited + 1; }
+            return false;
+        }
+        private string[] AppendString(string[] items, int count, string item) {
+            string[] result = new string[count + 1]; int i = 0;
+            while (i < count) { result[i] = items[i]; i = i + 1; }
+            result[count] = item; return result;
+        }
+        private void CheckConstructorInitializer(IrClass cl, IrMethod constructor) {
+            string kind = constructor.ConstructorInitializerKind();
+            IrExpression[] arguments = constructor.ConstructorInitializerArguments();
+            string targetType = owner;
+            if (kind == "") {
+                if (cl.BaseType() == "") { return; }
+                kind = "base"; targetType = cl.BaseType(); arguments = new IrExpression[0];
+                constructor.SetConstructorInitializer(kind, arguments);
+            } else if (kind == "base") {
+                if (cl.BaseType() == "") { Error("base constructor initializer requires a base class"); return; }
+                targetType = cl.BaseType();
+            } else if (kind == "this") { targetType = owner; }
+            string[] actualTypes = ArgumentTypes(arguments);
+            string constructorName = module.SimpleName(targetType);
+            IrMethod target = Method(targetType, constructorName, actualTypes);
+            if (target == null) {
+                if (!overloadAmbiguous && HasMethod(targetType, constructorName)) { Error("no constructor overload matches for " + targetType); }
+                else if (!overloadAmbiguous && arguments.Length != 0) { Error("default constructor takes no arguments"); }
+                else if (!overloadAmbiguous) { constructor.SetConstructorInitializerSignature(constructorName + "()"); }
+                return;
+            }
+            string signature = Signature(target);
+            if (kind == "this" && signature == Signature(constructor)) { Error("constructor initializer cannot call itself"); }
+            if (target.IsPrivate() && targetType != owner) { Error("private constructor is inaccessible: " + targetType); }
+            constructor.SetConstructorInitializerSignature(signature);
         }
         private string Qualified(IrExpression e) {
             if (e == null) { return ""; }
@@ -159,18 +275,28 @@ namespace Hydrogen.Compiler.Binding {
         private string RootName(string name) { string result = ""; int i = 0; while (i < name.Length) { if (name[i] == ".") { return result; } result = result + name[i]; i = i + 1; } return result; }
         private bool TypeReceiver(IrExpression e) {
             string name = Qualified(e); if (name == "") { return false; }
-            if (Local(RootName(name)) >= 0 || Field(owner, RootName(name)) != null || RootName(name) == "this") { return false; }
+            if (Local(RootName(name)) >= 0 || Field(owner, RootName(name)) != null || RootName(name) == "this" || RootName(name) == "base") { return false; }
             return module.HasType(module.ResolveType(name, owner));
         }
         private string Expression(IrExpression e) {
             if (e == null) { return "void"; }
-            string result = ExpressionType(e); e.SetResultType(result); return result;
+            int previousLine = diagnosticLine; int previousColumn = diagnosticColumn;
+            if (e.Line() > 0) { diagnosticLine = e.Line(); diagnosticColumn = e.Column(); }
+            string result = ExpressionType(e); e.SetResultType(result);
+            diagnosticLine = previousLine; diagnosticColumn = previousColumn;
+            return result;
         }
         private string ExpressionType(IrExpression e) {
             int k = e.Kind();
             if (k == IrExpression.KindLiteral()) { if (e.LiteralKind() == "number") { return "int"; } return e.LiteralKind(); }
             if (k == IrExpression.KindName()) {
                 if (e.Name() == "this") { if (method.IsStatic()) { Error("this is unavailable in a static method"); return "<error>"; } return owner; }
+                if (e.Name() == "base") {
+                    if (method.IsStatic()) { Error("base is unavailable in a static method"); return "<error>"; }
+                    IrClass declaring = module.FindClass(owner);
+                    if (declaring == null || declaring.BaseType() == "") { Error("base is unavailable without a base class"); return "<error>"; }
+                    return declaring.BaseType();
+                }
                 int i = Local(e.Name()); if (i >= 0) { return types[i]; }
                 IrField field = Field(owner, e.Name());
                 if (field != null) { if (!field.IsStatic() && method.IsStatic()) { Error("instance field requires an object receiver"); } e.SetResolvedOwner(owner); return field.Type().DisplayName(); }
@@ -197,9 +323,18 @@ namespace Hydrogen.Compiler.Binding {
                 DeclareType(e.Type(), false); string type = e.Type().DisplayName(); e.SetResolvedOwner(type);
                 IrClass cl = module.FindClass(type); if (cl == null) { Error("object creation requires a class type"); return "<error>"; }
                 if (cl.IsInterface()) { Error("cannot instantiate an interface: " + type); return "<error>"; }
-                IrMethod constructor = Method(type, module.SimpleName(type));
-                if (constructor == null) { if (e.Arguments().Length != 0) { Error("default constructor takes no arguments"); } Arguments(e.Arguments()); }
-                else { if (constructor.IsPrivate() && type != owner) { Error("private constructor is inaccessible: " + type); } CheckArguments(e.Arguments(), constructor.Parameters(), constructor.Name()); }
+                string[] actualTypes = ArgumentTypes(e.Arguments());
+                string constructorName = module.SimpleName(type);
+                IrMethod constructor = Method(type, constructorName, actualTypes);
+                if (constructor == null) {
+                    if (overloadAmbiguous) { }
+                    else if (HasMethod(type, constructorName)) { Error("no constructor overload matches for " + type); }
+                    else if (e.Arguments().Length != 0) { Error("default constructor takes no arguments"); }
+                    else { e.SetResolvedSignature(constructorName + "()"); }
+                } else {
+                    if (constructor.IsPrivate() && type != owner) { Error("private constructor is inaccessible: " + type); }
+                    e.SetResolvedSignature(Signature(constructor));
+                }
                 return type;
             }
             if (k == IrExpression.KindArrayCreation()) { DeclareType(e.Type(), false); string size = Expression(e.Size()); Require(size, "int", "array size must be int"); return e.Type().DisplayName() + "[]"; }
@@ -217,7 +352,14 @@ namespace Hydrogen.Compiler.Binding {
                 DeclareType(e.CastType(), false); string actual = Expression(e.CastExpression()); string expected = e.CastType().DisplayName();
                 if (!(Numeric(actual) && Numeric(expected)) && actual != expected && actual != "<error>") { Error("invalid cast"); } return expected;
             }
-            if (k == IrExpression.KindSizeOf()) { DeclareType(e.SizeOfType(), false); return "int"; }
+            if (k == IrExpression.KindSizeOf()) {
+                DeclareType(e.SizeOfType(), false);
+                string sizeType = e.SizeOfType().DisplayName();
+                if (!Unmanaged(sizeType, 0) && sizeType != "<error>") {
+                    Error("sizeof requires an unmanaged primitive, enum, or unmanaged struct type");
+                }
+                return "nuint";
+            }
             if (k == IrExpression.KindUnary()) {
                 string actual = Expression(e.UnaryOperand());
                 if (e.UnaryOperatorKind() == IrOperator.BangToken()) { Require(actual, "bool", "logical operand must be bool"); return "bool"; }
@@ -233,9 +375,21 @@ namespace Hydrogen.Compiler.Binding {
             }
             if ((!Numeric(left) || !Numeric(right)) && left != "<error>" && right != "<error>") { Error("arithmetic or comparison operands must be numeric"); }
             if (op == IrOperator.LessToken() || op == IrOperator.LessEqualsToken() || op == IrOperator.GreaterToken() || op == IrOperator.GreaterEqualsToken()) { return "bool"; }
-            return "int";
+            return left;
         }
         private bool Numeric(string type) { return module.Numeric(type) || module.FindEnum(type) != null; }
+        private bool Unmanaged(string type, int depth) {
+            if (depth > 32) { return false; }
+            if (module.Numeric(type) || type == "bool" || module.FindEnum(type) != null) { return true; }
+            IrClass cl = module.FindClass(type);
+            if (cl == null || !cl.IsStruct()) { return false; }
+            IrField[] fields = cl.Fields(); int i = 0;
+            while (i < fields.Length) {
+                if (!fields[i].IsStatic() && !Unmanaged(fields[i].Type().DisplayName(), depth + 1)) { return false; }
+                i = i + 1;
+            }
+            return true;
+        }
         private bool Printable(string type) { return type == "string" || type == "bool" || Numeric(type) || type == "<error>"; }
         private bool Writable(IrExpression e) {
             if (e.Kind() == IrExpression.KindName()) { return e.Name() != "this"; }
@@ -244,6 +398,11 @@ namespace Hydrogen.Compiler.Binding {
             return false;
         }
         private void Arguments(IrExpression[] args) { int i = 0; while (i < args.Length) { Expression(args[i]); i = i + 1; } }
+        private string[] ArgumentTypes(IrExpression[] args) {
+            string[] result = new string[args.Length]; int i = 0;
+            while (i < args.Length) { result[i] = Expression(args[i]); i = i + 1; }
+            return result;
+        }
         private void CheckArguments(IrExpression[] args, IrParameter[] parameters, string name) {
             if (args.Length != parameters.Length) { Error("wrong argument count calling '" + name + "'"); }
             int i = 0; while (i < args.Length) { string type = Expression(args[i]); if (i < parameters.Length) { Require(type, parameters[i].Type().DisplayName(), "argument type mismatch calling '" + name + "'"); } i = i + 1; }
@@ -279,13 +438,20 @@ namespace Hydrogen.Compiler.Binding {
                 if (typeReceiver) { type = module.ResolveType(Qualified(target.Receiver()), owner); target.Receiver().SetResultType(type); }
                 else { type = Expression(target.Receiver()); }
             } else { Error("invalid call target"); Arguments(e.Arguments()); return "<error>"; }
-            IrMethod callee = Method(type, name);
-            if (callee == null) { if (type != "<error>") { Error("undefined method: " + type + "." + name); } Arguments(e.Arguments()); return "<error>"; }
+            string[] actualTypes = ArgumentTypes(e.Arguments());
+            IrMethod callee = Method(type, name, actualTypes);
+            if (callee == null) {
+                if (type != "<error>" && !overloadAmbiguous) {
+                    if (HasMethod(type, name)) { Error("no overload of '" + name + "' matches the provided arguments"); }
+                    else { Error("undefined method: " + type + "." + name); }
+                }
+                return "<error>";
+            }
             if (callee.IsPrivate() && type != owner) { Error("private method is inaccessible: " + type + "." + name); }
             if (explicitReceiver) { if (callee.IsStatic() != typeReceiver) { Error("method receiver does not match static or instance declaration"); } }
             else if (!callee.IsStatic() && method.IsStatic()) { Error("instance method requires an object receiver"); }
-            e.SetResolvedOwner(type); target.SetResolvedOwner(type); target.SetResultType(callee.ReturnType().DisplayName());
-            CheckArguments(e.Arguments(), callee.Parameters(), name); return callee.ReturnType().DisplayName();
+            e.SetResolvedOwner(type); e.SetResolvedSignature(Signature(callee)); target.SetResolvedOwner(type); target.SetResultType(callee.ReturnType().DisplayName());
+            return callee.ReturnType().DisplayName();
         }
     }
 }

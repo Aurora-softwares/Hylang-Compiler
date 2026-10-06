@@ -1,3 +1,5 @@
+using Hydrogen.Compiler.Text;
+
 namespace Hydrogen.Compiler.IR {
 	public class IrUnit {
 		private IrImport[] usings;
@@ -79,6 +81,15 @@ namespace Hydrogen.Compiler.IR {
         private bool isInterface;
         public bool IsInterface() { return isInterface; }
         public void SetInterface(bool value) { isInterface = value; }
+        private bool isStruct;
+        public bool IsStruct() { return isStruct; }
+        public void SetStruct(bool value) { isStruct = value; }
+        private string baseType;
+        public string BaseType() { return baseType; }
+        public void SetBaseType(string value) { baseType = value; }
+        private string[] interfaceTypes;
+        public string[] InterfaceTypes() { return interfaceTypes; }
+        public void SetInterfaceTypes(string[] value) { interfaceTypes = value; }
         private IrImport[] imports;
         public void SetImports(IrImport[] value) { imports = value; }
         public IrImport[] Imports() { return imports; }
@@ -88,6 +99,8 @@ namespace Hydrogen.Compiler.IR {
 
 		public IrClass(string inputName, IrField[] inputFields, IrMethod[] inputMethods) {
 			name = inputName;
+			baseType = "";
+			interfaceTypes = new string[0];
 			fields = inputFields;
 			methods = inputMethods;
 		}
@@ -147,6 +160,9 @@ namespace Hydrogen.Compiler.IR {
 
 		private IrParameter[] parameters;
 		private IrStatement body;
+		private string constructorInitializerKind;
+		private IrExpression[] constructorInitializerArguments;
+		private string constructorInitializerSignature;
 
 		public IrMethod(string inputName, bool inputIsStatic, bool inputIsVirtual, bool inputIsOverride, IrType inputReturnType, IrParameter[] inputParameters, IrStatement inputBody) {
 			name = inputName;
@@ -156,6 +172,9 @@ namespace Hydrogen.Compiler.IR {
 			returnType = inputReturnType;
 			parameters = inputParameters;
 			body = inputBody;
+			constructorInitializerKind = "";
+			constructorInitializerArguments = new IrExpression[0];
+			constructorInitializerSignature = "";
 		}
 
 		public string Name() { return name; }
@@ -174,6 +193,13 @@ namespace Hydrogen.Compiler.IR {
 
 		public IrStatement Body() { return body; }
         public void SetBody(IrStatement value) { body = value; }
+		public string ConstructorInitializerKind() { return constructorInitializerKind; }
+		public IrExpression[] ConstructorInitializerArguments() { return constructorInitializerArguments; }
+		public string ConstructorInitializerSignature() { return constructorInitializerSignature; }
+		public void SetConstructorInitializer(string kind, IrExpression[] arguments) {
+			constructorInitializerKind = kind; constructorInitializerArguments = arguments;
+		}
+		public void SetConstructorInitializerSignature(string value) { constructorInitializerSignature = value; }
 	}
 
 	public class IrInterface {
@@ -210,6 +236,9 @@ namespace Hydrogen.Compiler.IR {
 
 	public class IrType {
 		private string displayName;
+		private int line;
+		private int column;
+		private TextSpan span;
 
 		public IrType(string inputDisplayName) {
 			displayName = inputDisplayName;
@@ -217,6 +246,12 @@ namespace Hydrogen.Compiler.IR {
 
 		public string DisplayName() { return displayName; }
         public void SetName(string value) { displayName = value; }
+		public int Line() { return line; }
+		public int Column() { return column; }
+		public TextSpan Span() { return span; }
+		public void SetLocation(int inputLine, int inputColumn, int start, int length) {
+			line = inputLine; column = inputColumn; span = new TextSpan(start, length);
+		}
 	}
 
 	public class IrStatement {
@@ -230,6 +265,7 @@ namespace Hydrogen.Compiler.IR {
 		public static int KindContinueStatement() { return 8; }
 		public static int KindTryStatement() { return 9; }
 		public static int KindThrowStatement() { return 10; }
+		public static int KindForStatement() { return 11; }
 
 		private int kind;
 		private IrStatement[] statements;
@@ -244,6 +280,11 @@ namespace Hydrogen.Compiler.IR {
 		private IrStatement catchBlock;
 		private IrType catchType;
 		private string catchName;
+		private IrStatement forInitializer;
+		private IrExpression forIncrement;
+		private int line;
+		private int column;
+		private TextSpan span;
 
 		public IrStatement(int inputKind) {
 			kind = inputKind;
@@ -263,6 +304,14 @@ namespace Hydrogen.Compiler.IR {
 		public IrStatement CatchBlock() { return catchBlock; }
 		public IrType CatchType() { return catchType; }
 		public string CatchName() { return catchName; }
+		public IrStatement ForInitializer() { return forInitializer; }
+		public IrExpression ForIncrement() { return forIncrement; }
+		public int Line() { return line; }
+		public int Column() { return column; }
+		public TextSpan Span() { return span; }
+		public void SetLocation(int inputLine, int inputColumn, int start, int length) {
+			line = inputLine; column = inputColumn; span = new TextSpan(start, length);
+		}
 
 		public static IrStatement Block(IrStatement[] items) {
 			IrStatement node = new IrStatement(KindBlock());
@@ -305,6 +354,15 @@ namespace Hydrogen.Compiler.IR {
 			return node;
 		}
 
+		public static IrStatement For(IrStatement inputInitializer, IrExpression inputCondition, IrExpression inputIncrement, IrStatement inputBody) {
+			IrStatement node = new IrStatement(KindForStatement());
+			node.forInitializer = inputInitializer;
+			node.condition = inputCondition;
+			node.forIncrement = inputIncrement;
+			node.body = inputBody;
+			return node;
+		}
+
 		public static IrStatement Break() {
 			return new IrStatement(KindBreakStatement());
 		}
@@ -332,10 +390,13 @@ namespace Hydrogen.Compiler.IR {
 	public class IrExpression {
         private string resultType;
         private string resolvedOwner;
+        private string resolvedSignature;
         public string ResultType() { return resultType; }
         public void SetResultType(string value) { resultType = value; }
         public string ResolvedOwner() { return resolvedOwner; }
         public void SetResolvedOwner(string value) { resolvedOwner = value; }
+        public string ResolvedSignature() { return resolvedSignature; }
+        public void SetResolvedSignature(string value) { resolvedSignature = value; }
 		public static int KindName() { return 1; }
 		public static int KindLiteral() { return 2; }
 		public static int KindMemberAccess() { return 3; }
@@ -369,6 +430,9 @@ namespace Hydrogen.Compiler.IR {
 		private int unaryOp;
 		private IrExpression unaryOperand;
 		private IrType sizeOfType;
+		private int line;
+		private int column;
+		private TextSpan span;
 
 		public IrExpression(int inputKind) {
 			kind = inputKind;
@@ -394,6 +458,12 @@ namespace Hydrogen.Compiler.IR {
 		public int UnaryOperatorKind() { return unaryOp; }
 		public IrExpression UnaryOperand() { return unaryOperand; }
 		public IrType SizeOfType() { return sizeOfType; }
+		public int Line() { return line; }
+		public int Column() { return column; }
+		public TextSpan Span() { return span; }
+		public void SetLocation(int inputLine, int inputColumn, int start, int length) {
+			line = inputLine; column = inputColumn; span = new TextSpan(start, length);
+		}
 
 		public static IrExpression NameExpr(string inputName) {
 			IrExpression node = new IrExpression(KindName());
