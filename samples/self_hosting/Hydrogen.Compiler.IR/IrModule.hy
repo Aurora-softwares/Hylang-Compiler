@@ -47,7 +47,33 @@ namespace Hydrogen.Compiler.IR {
         public bool Numeric(string name) {
             return name == "byte" || name == "sbyte" || name == "short" || name == "ushort" || name == "int" || name == "uint" || name == "long" || name == "ulong" || name == "nint" || name == "nuint";
         }
-        public bool Reference(string name) { return name == "string" || IsArray(name) || FindClass(name) != null; }
+        public bool Reference(string name) {
+            IrClass cl = FindClass(name);
+            return name == "string" || IsArray(name) || (cl != null && !cl.IsStruct());
+        }
+        public bool IsDerivedFrom(string actual, string expected) {
+            string current = actual; int depth = 0;
+            while (current != "" && depth < 64) {
+                if (current == expected) { return true; }
+                IrClass cl = FindClass(current);
+                if (cl == null) { return false; }
+                current = cl.BaseType(); depth = depth + 1;
+            }
+            return false;
+        }
+        public bool Implements(string actual, string expected) { return ImplementsCore(actual, expected, 0); }
+        private bool ImplementsCore(string actual, string expected, int depth) {
+            if (depth > 64) { return false; }
+            IrClass cl = FindClass(actual); if (cl == null) { return false; }
+            if (actual == expected && cl.IsInterface()) { return true; }
+            string[] interfaces = cl.InterfaceTypes(); int i = 0;
+            while (i < interfaces.Length) {
+                if (interfaces[i] == expected || ImplementsCore(interfaces[i], expected, depth + 1)) { return true; }
+                i = i + 1;
+            }
+            if (cl.BaseType() != "") { return ImplementsCore(cl.BaseType(), expected, depth + 1); }
+            return false;
+        }
         public string ResolveType(string name, string owner) {
             if (IsArray(name)) {
                 string element = ResolveType(Element(name), owner);
@@ -97,6 +123,11 @@ namespace Hydrogen.Compiler.IR {
             if (k == IrStatement.KindWhileStatement()) { string condition = Expression(s.Condition());
                 string bodyText = Statement(s.Body(), indent + "  ");
                 return indent + "while " + condition + "\n" + bodyText; }
+            if (k == IrStatement.KindForStatement()) { string condition = Expression(s.Condition());
+                string initializerText = Statement(s.ForInitializer(), indent + "  ");
+                string bodyText = Statement(s.Body(), indent + "  ");
+                string incrementText = Expression(s.ForIncrement());
+                return indent + "for\n" + initializerText + indent + "  condition " + condition + "\n" + bodyText + indent + "  increment " + incrementText + "\n"; }
             if (k == IrStatement.KindBreakStatement()) { return indent + "break\n"; }
             if (k == IrStatement.KindContinueStatement()) { return indent + "continue\n"; }
             if (k == IrStatement.KindTryStatement()) { string bodyText = Statement(s.Body(), indent + "  ");

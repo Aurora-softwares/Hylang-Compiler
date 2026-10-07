@@ -1,4 +1,6 @@
-namespace Hydrogen.Compiler.Syntax {
+using Hydrogen.Compiler.Text;
+
+	namespace Hydrogen.Compiler.Syntax {
 	public class CompilationUnitSyntax {
 		private UsingDirectiveSyntax[] usings;
 		private NamespaceDeclarationSyntax[] namespaces;
@@ -76,17 +78,28 @@ namespace Hydrogen.Compiler.Syntax {
 	}
 
 	public class ClassDeclarationSyntax {
+		private bool isStruct;
+		private string baseType;
+		private string[] declaredBases;
 		private string name;
 		private FieldDeclarationSyntax[] fields;
 		private MethodDeclarationSyntax[] methods;
 
 		public ClassDeclarationSyntax(string inputName, FieldDeclarationSyntax[] inputFields, MethodDeclarationSyntax[] inputMethods) {
 			name = inputName;
+			baseType = "";
+			declaredBases = new string[0];
 			fields = inputFields;
 			methods = inputMethods;
 		}
 
 		public string Name() { return name; }
+		public bool IsStruct() { return isStruct; }
+		public void SetStruct(bool value) { isStruct = value; }
+		public string BaseType() { return baseType; }
+		public void SetBaseType(string value) { baseType = value; }
+		public string[] DeclaredBases() { return declaredBases; }
+		public void SetDeclaredBases(string[] value) { declaredBases = value; }
 
 		public FieldDeclarationSyntax[] Fields() { return fields; }
 
@@ -141,6 +154,8 @@ namespace Hydrogen.Compiler.Syntax {
 		private TypeSyntax sizeOfType;
 		private ParameterSyntax[] parameters;
 		private StatementSyntax body;
+		private string constructorInitializerKind;
+		private ExpressionSyntax[] constructorInitializerArguments;
 
 		public MethodDeclarationSyntax(string inputName, bool inputIsStatic, bool inputIsVirtual, bool inputIsOverride, TypeSyntax inputReturnType, ParameterSyntax[] inputParameters, StatementSyntax inputBody) {
 			name = inputName;
@@ -150,6 +165,8 @@ namespace Hydrogen.Compiler.Syntax {
 			returnType = inputReturnType;
 			parameters = inputParameters;
 			body = inputBody;
+			constructorInitializerKind = "";
+			constructorInitializerArguments = new ExpressionSyntax[0];
 		}
 
 		public string Name() { return name; }
@@ -167,15 +184,22 @@ namespace Hydrogen.Compiler.Syntax {
 		public ParameterSyntax[] Parameters() { return parameters; }
 
 		public StatementSyntax Body() { return body; }
+		public string ConstructorInitializerKind() { return constructorInitializerKind; }
+		public ExpressionSyntax[] ConstructorInitializerArguments() { return constructorInitializerArguments; }
+		public void SetConstructorInitializer(string kind, ExpressionSyntax[] arguments) {
+			constructorInitializerKind = kind; constructorInitializerArguments = arguments;
+		}
 	}
 
 	public class InterfaceDeclarationSyntax {
 		private string name;
 		private MethodDeclarationSyntax[] methods;
+		private string[] declaredBases;
 
 		public InterfaceDeclarationSyntax(string inputName, MethodDeclarationSyntax[] inputMethods) {
 			name = inputName;
 			methods = inputMethods;
+			declaredBases = new string[0];
 		}
 
 		public string Name() {
@@ -185,6 +209,8 @@ namespace Hydrogen.Compiler.Syntax {
 		public MethodDeclarationSyntax[] Methods() {
 			return methods;
 		}
+		public string[] DeclaredBases() { return declaredBases; }
+		public void SetDeclaredBases(string[] value) { declaredBases = value; }
 	}
 
 	public class ParameterSyntax {
@@ -203,12 +229,21 @@ namespace Hydrogen.Compiler.Syntax {
 
 	public class TypeSyntax {
 		private string displayName;
+		private int line;
+		private int column;
+		private TextSpan span;
 
 		public TypeSyntax(string inputDisplayName) {
 			displayName = inputDisplayName;
 		}
 
 		public string DisplayName() { return displayName; }
+		public int Line() { return line; }
+		public int Column() { return column; }
+		public TextSpan Span() { return span; }
+		public void SetLocation(int inputLine, int inputColumn, int start, int length) {
+			line = inputLine; column = inputColumn; span = new TextSpan(start, length);
+		}
 	}
 
 	public class StatementSyntax {
@@ -222,6 +257,7 @@ namespace Hydrogen.Compiler.Syntax {
 		public static int KindContinueStatement() { return 8; }
 		public static int KindTryStatement() { return 9; }
 		public static int KindThrowStatement() { return 10; }
+		public static int KindForStatement() { return 11; }
 
 		private int kind;
 		private StatementSyntax[] statements;
@@ -236,6 +272,11 @@ namespace Hydrogen.Compiler.Syntax {
 		private StatementSyntax catchBlock;
 		private TypeSyntax catchType;
 		private string catchName;
+		private StatementSyntax forInitializer;
+		private ExpressionSyntax forIncrement;
+		private int line;
+		private int column;
+		private TextSpan span;
 
 		public StatementSyntax(int inputKind) {
 			kind = inputKind;
@@ -254,6 +295,14 @@ namespace Hydrogen.Compiler.Syntax {
 		public StatementSyntax CatchBlock() { return catchBlock; }
 		public TypeSyntax CatchType() { return catchType; }
 		public string CatchName() { return catchName; }
+		public StatementSyntax ForInitializer() { return forInitializer; }
+		public ExpressionSyntax ForIncrement() { return forIncrement; }
+		public int Line() { return line; }
+		public int Column() { return column; }
+		public TextSpan Span() { return span; }
+		public void SetLocation(int inputLine, int inputColumn, int start, int length) {
+			line = inputLine; column = inputColumn; span = new TextSpan(start, length);
+		}
 
 		public static StatementSyntax Block(StatementSyntax[] items) {
 			StatementSyntax node = new StatementSyntax(KindBlock());
@@ -292,6 +341,15 @@ namespace Hydrogen.Compiler.Syntax {
 		public static StatementSyntax While(ExpressionSyntax inputCondition, StatementSyntax inputBody) {
 			StatementSyntax node = new StatementSyntax(KindWhileStatement());
 			node.condition = inputCondition;
+			node.body = inputBody;
+			return node;
+		}
+
+		public static StatementSyntax For(StatementSyntax inputInitializer, ExpressionSyntax inputCondition, ExpressionSyntax inputIncrement, StatementSyntax inputBody) {
+			StatementSyntax node = new StatementSyntax(KindForStatement());
+			node.forInitializer = inputInitializer;
+			node.condition = inputCondition;
+			node.forIncrement = inputIncrement;
 			node.body = inputBody;
 			return node;
 		}
@@ -354,6 +412,9 @@ namespace Hydrogen.Compiler.Syntax {
 		private SyntaxKind unaryOp;
 		private ExpressionSyntax unaryOperand;
 		private TypeSyntax sizeOfType;
+		private int line;
+		private int column;
+		private TextSpan span;
 
 		public ExpressionSyntax(int inputKind) {
 			kind = inputKind;
@@ -379,6 +440,12 @@ namespace Hydrogen.Compiler.Syntax {
 		public SyntaxKind UnaryOperatorKind() { return unaryOp; }
 		public ExpressionSyntax UnaryOperand() { return unaryOperand; }
 		public TypeSyntax SizeOfType() { return sizeOfType; }
+		public int Line() { return line; }
+		public int Column() { return column; }
+		public TextSpan Span() { return span; }
+		public void SetLocation(int inputLine, int inputColumn, int start, int length) {
+			line = inputLine; column = inputColumn; span = new TextSpan(start, length);
+		}
 
 		public static ExpressionSyntax NameExpr(string inputName) {
 			ExpressionSyntax node = new ExpressionSyntax(KindName());

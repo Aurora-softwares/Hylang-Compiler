@@ -72,10 +72,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private int[] runtimePatches;
         private int runtimePatchCount;
         private bool receiverPushed;
+        private bool directBaseCall;
         private bool addressReadOnly;
         private int loopStart;
         private int[] breakPatches;
         private int breakCount;
+        private int[] continuePatches;
+        private int continueCount;
+        private string[] staticOwners;
+        private string[] staticNames;
+        private int staticCount;
+        private string currentStaticOwner;
 
         public DirectImageResult Compile(IrModule input) {
             module = input;
@@ -99,6 +106,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             runtimeTargets = new string[0];
             runtimePatches = new int[0];
             runtimePatchCount = 0;
+            continuePatches = new int[0];
+            continueCount = 0;
+            staticOwners = new string[0];
+            staticNames = new string[0];
+            staticCount = 0;
+            currentStaticOwner = "";
             functions = new NativeFunction[0];
             functionCount = 0;
             callPatchOffsets = new int[0];
@@ -114,6 +127,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 CollectEnums(namespaces[n].Enums(), namespaces[n].Name());
                 n = n + 1;
             }
+            CollectStaticFields();
             mainFunction = -1;
             int i = 0;
             while (i < functionCount) {
@@ -136,6 +150,29 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             // Linux entry stub: call Main, then turn its result into the process exit status.
             code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xe6); // mov r14, rsp: Linux initial stack
             EmitRuntime("rt_init"); // r15 owns heap state for the lifetime of the process
+            if (staticCount > 0) {
+                code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc7); code.Emit32(staticCount * 8);
+                EmitRuntime("rt_alloc");
+                code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc5); // mov r13, rax: rooted static storage
+            } else {
+                code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xed); // xor r13d, r13d
+            }
+            currentFunction = mainFunction;
+            localNames = new string[0]; localTypes = new string[0]; localCount = 0; scopeStart = 0; loopStart = -1;
+            int si = 0;
+            while (si < staticCount) {
+                IrField staticField = StaticDeclaration(si);
+                if (staticField.Initializer() != null) {
+                    currentStaticOwner = staticOwners[si];
+                    if (!CompileExpression(staticField.Initializer())) { return Failed("static field " + staticOwners[si] + "." + staticNames[si] + ": " + failure); }
+                    string staticType = ResolveType(staticField.Type().DisplayName(), staticOwners[si]);
+                    if (!Assignable(valueType, staticType)) { return Failed("static field initializer type mismatch"); }
+                    PrepareValue(staticType);
+                    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x85); code.Emit32(si * 8); // mov [r13+offset], rax
+                }
+                si = si + 1;
+            }
+            currentStaticOwner = "";
             if (mainParameters.Length == 1) {
                 EmitRuntime("rt_args");
                 code.EmitByte(0x50);
@@ -243,8 +280,30 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
         }
 
+        private void CollectStaticFields() {
+            int c = 0;
+            while (c < classCount) {
+                IrField[] fields = classDeclarations[c].Fields(); int f = 0;
+                while (f < fields.Length) {
+                    if (fields[f].IsStatic()) {
+                        staticOwners = AppendString(staticOwners, staticCount, classNames[c]);
+                        staticNames = AppendString(staticNames, staticCount, fields[f].Name());
+                        staticCount = staticCount + 1;
+                    }
+                    f = f + 1;
+                }
+                c = c + 1;
+            }
+        }
+
+        private IrField StaticDeclaration(int index) {
+            int ci = ClassIndex(staticOwners[index]);
+            IrField[] fields = classDeclarations[ci].Fields(); int i = 0;
+            while (i < fields.Length) { if (fields[i].Name() == staticNames[index]) { return fields[i]; } i = i + 1; }
+            return null;
+        }
+
         private bool ValidateSignature(IrMethod method) {
-            if (method.IsVirtual() || method.IsOverride()) { failure = "virtual dispatch is not supported by the native backend"; return false; }
             string owner = functions[currentFunction].Owner();
             if (!SupportedType(ResolveType(method.ReturnType().DisplayName(), owner), true)) {
                 failure = "unsupported native method return type"; return false;
@@ -264,12 +323,6 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             NativeFunction function = functions[currentFunction];
             IrMethod method = function.Declaration();
             if (method.Body() == null) { failure = "interface dispatch is not supported by the native backend"; return false; }
-            IrField[] ownerFields = classDeclarations[ClassIndex(function.Owner())].Fields();
-            int fieldIndex = 0;
-            while (fieldIndex < ownerFields.Length) {
-                if (ownerFields[fieldIndex].IsStatic()) { failure = "static fields are not supported by the native backend"; return false; }
-                fieldIndex = fieldIndex + 1;
-            }
             // Main receives the managed argv array created by the Linux entry stub.
             if (currentFunction != mainFunction) {
                 if (!ValidateSignature(method)) { return false; }
@@ -321,21 +374,25 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
             }
             if (method.Name() == SimpleName(function.Owner()) && !method.IsStatic()) {
+                if (!CompileConstructorInitializer(function.Owner(), method)) { return false; }
                 int typeIndex = ClassIndex(function.Owner());
                 IrField[] fields = classDeclarations[typeIndex].Fields();
                 int fi = 0;
-                while (fi < fields.Length) {
-                    if (fields[fi].IsStatic()) { failure = "static fields are not supported by the native backend"; return false; }
-                    if (fields[fi].Initializer() != null) {
+                int instanceField = 0;
+                if (classDeclarations[typeIndex].BaseType() != "") { instanceField = InstanceFieldCount(classDeclarations[typeIndex].BaseType()); }
+                while (fi < fields.Length && method.ConstructorInitializerKind() != "this") {
+                    if (!fields[fi].IsStatic() && fields[fi].Initializer() != null) {
                         EmitLoadLocal(FindLocal("this"));
                         code.EmitByte(0x50);
                         if (!CompileExpression(fields[fi].Initializer())) { return false; }
                         if (!Assignable(valueType, ResolveType(fields[fi].Type().DisplayName(), function.Owner()))) {
                             failure = "native field initializer type mismatch"; return false;
                         }
+                        PrepareValue(ResolveType(fields[fi].Type().DisplayName(), function.Owner()));
                         code.EmitByte(0x59);
-                        EmitFieldStore(fi);
+                        EmitFieldStore(instanceField);
                     }
+                    if (!fields[fi].IsStatic()) { instanceField = instanceField + 1; }
                     fi = fi + 1;
                 }
             }
@@ -412,6 +469,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     failure = "unsupported native local type: " + type; return false;
                 }
                 if (!Assignable(valueType, type)) { failure = "native local initializer type mismatch"; return false; }
+                PrepareValue(type);
                 int slot = AddLocal(statement.Name(), type);
                 if (slot < 0) { return false; }
                 EmitStoreLocal(slot);
@@ -430,6 +488,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     if (!Assignable(valueType, returnType) || returnType == "void") {
                         failure = "native return type mismatch"; return false;
                     }
+                    PrepareValue(returnType);
                 }
                 EmitReturn();
                 return true;
@@ -463,10 +522,50 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 loopStart = previousLoop;
                 return true;
             }
+            if (kind == IrStatement.KindForStatement()) {
+                int savedCount = localCount;
+                int savedScope = scopeStart;
+                scopeStart = localCount;
+                if (!CompileStatement(statement.ForInitializer())) { return false; }
+
+                int previousLoop = loopStart;
+                int savedBreaks = breakCount;
+                int savedContinues = continueCount;
+                int conditionPosition = code.Position();
+                loopStart = -2;
+                if (!CompileExpression(statement.Condition())) { return false; }
+                if (valueType != "bool") { failure = "native condition must be bool"; return false; }
+                int exitPatch = EmitJumpIfZero();
+                if (!CompileStatement(statement.Body())) { return false; }
+
+                int incrementPosition = code.Position();
+                int ci = savedContinues;
+                while (ci < continueCount) { PatchRelative(continuePatches[ci], incrementPosition); ci = ci + 1; }
+                continueCount = savedContinues;
+                if (statement.ForIncrement() != null) {
+                    if (!CompileExpression(statement.ForIncrement())) { return false; }
+                }
+                int backPatch = EmitJump();
+                PatchRelative(backPatch, conditionPosition);
+                PatchRelative(exitPatch, code.Position());
+                int bi = savedBreaks;
+                while (bi < breakCount) { PatchRelative(breakPatches[bi], code.Position()); bi = bi + 1; }
+                breakCount = savedBreaks;
+                loopStart = previousLoop;
+
+                int clear = savedCount;
+                while (clear < localCount) { EmitMoveRaxImmediate(0); EmitStoreLocal(clear); clear = clear + 1; }
+                localCount = savedCount;
+                scopeStart = savedScope;
+                return true;
+            }
             if (kind == IrStatement.KindBreakStatement() || kind == IrStatement.KindContinueStatement()) {
-                if (loopStart < 0) { failure = "break or continue outside native loop"; return false; }
+                if (loopStart == -1) { failure = "break or continue outside native loop"; return false; }
                 int patch = EmitJump();
-                if (kind == IrStatement.KindContinueStatement()) { PatchRelative(patch, loopStart); }
+                if (kind == IrStatement.KindContinueStatement() && loopStart == -2) {
+                    continuePatches = AppendInt(continuePatches, continueCount, patch);
+                    continueCount = continueCount + 1;
+                } else if (kind == IrStatement.KindContinueStatement()) { PatchRelative(patch, loopStart); }
                 else { breakPatches = AppendInt(breakPatches, breakCount, patch); breakCount = breakCount + 1; }
                 return true;
             }
@@ -503,9 +602,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 failure = "unsupported native literal"; return false;
             }
             if (kind == IrExpression.KindName()) {
+                if (expression.Name() == "base") {
+                    int thisSlot = FindLocal("this");
+                    if (thisSlot < 0) { failure = "base requires an instance receiver"; return false; }
+                    EmitLoadLocal(thisSlot);
+                    int ownerIndex = ClassIndex(functions[currentFunction].Owner());
+                    if (ownerIndex < 0 || classDeclarations[ownerIndex].BaseType() == "") { failure = "base requires a base class"; return false; }
+                    valueType = classDeclarations[ownerIndex].BaseType(); return true;
+                }
                 int slot = FindLocal(expression.Name());
                 if (slot < 0) {
-                    if (CompileFieldAddress(null, expression.Name())) {
+                    if (CompileFieldAddress(null, expression.Name(), expression.ResolvedOwner())) {
                         code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x00);
                         return true;
                     }
@@ -521,7 +628,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             if (kind == IrExpression.KindMemberAccess()) {
                 if (CompileEnum(expression)) { return true; }
-                if (!CompileFieldAddress(expression.Receiver(), expression.MemberName())) { return false; }
+                if (!CompileFieldAddress(expression.Receiver(), expression.MemberName(), expression.ResolvedOwner())) { return false; }
                 code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x00);
                 return true;
             }
@@ -530,7 +637,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 string receiverType = valueType;
                 code.EmitByte(0x50);
                 if (!CompileExpression(expression.Index())) { return false; }
-                if (valueType != "int") { failure = "native index must be int"; return false; }
+                if (!Numeric(valueType)) { failure = "native index must be integral"; return false; }
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc6);
                 code.EmitByte(0x5f);
                 if (receiverType == "string") { EmitRuntime("rt_char"); valueType = "string"; return true; }
@@ -544,7 +651,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 string type = ResolveType(expression.Type().DisplayName(), functions[currentFunction].Owner());
                 if (!SupportedType(type, false)) { failure = "unsupported native array element type"; return false; }
                 if (!CompileExpression(expression.Size())) { return false; }
-                if (valueType != "int") { failure = "native array size must be int"; return false; }
+                if (!Numeric(valueType)) { failure = "native array size must be integral"; return false; }
                 MoveRdiRax(); EmitRuntime("rt_array"); valueType = type + "[]"; return true;
             }
             if (kind == IrExpression.KindObjectCreation()) { return CompileObject(expression); }
@@ -552,14 +659,25 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 string castType = ResolveType(expression.CastType().DisplayName(), functions[currentFunction].Owner());
                 if (!CompileExpression(expression.CastExpression())) { return false; }
                 if (!Numeric(valueType) || !Numeric(castType)) { failure = "unsupported native cast"; return false; }
-                if (castType == "byte") { code.EmitByte(0x48); code.EmitByte(0x25); code.Emit32(255); }
+                NormalizeRax(castType);
                 valueType = castType; return true;
+            }
+            if (kind == IrExpression.KindSizeOf()) {
+                string sizedType = ResolveType(expression.SizeOfType().DisplayName(), functions[currentFunction].Owner());
+                int size = TypeSize(sizedType);
+                if (size < 0) { failure = "sizeof requires an unmanaged primitive, enum, or unmanaged struct type"; return false; }
+                EmitMoveRaxImmediate(size); valueType = "nuint"; return true;
             }
             if (kind == IrExpression.KindUnary()) {
                 if (!CompileExpression(expression.UnaryOperand())) { return false; }
                 if (expression.UnaryOperatorKind() == IrOperator.MinusToken()) {
-                    if (valueType != "int") { failure = "native unary minus requires int"; return false; }
+                    if (!Numeric(valueType)) { failure = "native unary minus requires an integral operand"; return false; }
                     code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xd8); // neg rax
+                    NormalizeRax(valueType);
+                    return true;
+                }
+                if (expression.UnaryOperatorKind() == IrOperator.PlusToken()) {
+                    if (!Numeric(valueType)) { failure = "native unary plus requires an integral operand"; return false; }
                     return true;
                 }
                 if (expression.UnaryOperatorKind() == IrOperator.BangToken()) {
@@ -591,9 +709,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             string leftType = valueType;
             code.EmitByte(0x50); // push rax
             if (!CompileExpression(expression.Right())) { return false; }
+            string rightType = valueType;
             code.EmitByte(0x59); // pop rcx (left), rax is right
             if (op == IrOperator.PlusToken() && (leftType == "string" || valueType == "string")) {
-                string rightType = valueType;
                 if (leftType != "string") {
                     code.EmitByte(0x50);
                     code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xcf);
@@ -616,33 +734,44 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (op == IrOperator.BangEqualsToken()) { code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xf0); code.EmitByte(1); }
                 valueType = "bool"; return true;
             }
-            if (!Assignable(leftType, valueType) && !Assignable(valueType, leftType)) {
+            if (!Assignable(leftType, rightType) && !Assignable(rightType, leftType)) {
                 failure = "native binary operand type mismatch"; return false;
             }
-            if (op != IrOperator.EqualsEqualsToken() && op != IrOperator.BangEqualsToken() && !Numeric(valueType)) {
-                failure = "native arithmetic and ordering require int"; return false;
+            if (op != IrOperator.EqualsEqualsToken() && op != IrOperator.BangEqualsToken() && !Numeric(rightType)) {
+                failure = "native arithmetic and ordering require integral operands"; return false;
             }
+            string resultType = expression.ResultType();
+            if (resultType == "") { resultType = leftType; }
             if (op == IrOperator.PlusToken()) {
                 code.EmitByte(0x48); code.EmitByte(0x01); code.EmitByte(0xc8); // add rax, rcx
+                NormalizeRax(resultType); valueType = resultType;
                 return true;
             }
             if (op == IrOperator.MinusToken()) {
                 code.EmitByte(0x48); code.EmitByte(0x29); code.EmitByte(0xc1); // sub rcx, rax
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
+                NormalizeRax(resultType); valueType = resultType;
                 return true;
             }
             if (op == IrOperator.StarToken()) {
                 code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xaf); code.EmitByte(0xc8); // imul rcx, rax
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
+                NormalizeRax(resultType); valueType = resultType;
                 return true;
             }
             if (op == IrOperator.SlashToken() || op == IrOperator.PercentToken()) {
                 code.EmitByte(0x48); code.EmitByte(0x91); // xchg rax, rcx
-                code.EmitByte(0x48); code.EmitByte(0x99); // cqo: signed dividend rdx:rax
-                code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xf9); // idiv rcx
+                if (UnsignedOperation(leftType, rightType)) {
+                    code.EmitByte(0x31); code.EmitByte(0xd2); // xor edx, edx
+                    code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xf1); // div rcx
+                } else {
+                    code.EmitByte(0x48); code.EmitByte(0x99); // cqo: signed dividend rdx:rax
+                    code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xf9); // idiv rcx
+                }
                 if (op == IrOperator.PercentToken()) {
                     code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd0); // mov rax, rdx
                 }
+                NormalizeRax(resultType); valueType = resultType;
                 return true;
             }
             if (op == IrOperator.EqualsEqualsToken() || op == IrOperator.BangEqualsToken() ||
@@ -652,10 +781,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.EmitByte(0x0f);
                 if (op == IrOperator.EqualsEqualsToken()) { code.EmitByte(0x94); }
                 if (op == IrOperator.BangEqualsToken()) { code.EmitByte(0x95); }
-                if (op == IrOperator.LessToken()) { code.EmitByte(0x9c); }
-                if (op == IrOperator.LessEqualsToken()) { code.EmitByte(0x9e); }
-                if (op == IrOperator.GreaterToken()) { code.EmitByte(0x9f); }
-                if (op == IrOperator.GreaterEqualsToken()) { code.EmitByte(0x9d); }
+                if (op == IrOperator.LessToken()) { if (UnsignedOperation(leftType, rightType)) { code.EmitByte(0x92); } else { code.EmitByte(0x9c); } }
+                if (op == IrOperator.LessEqualsToken()) { if (UnsignedOperation(leftType, rightType)) { code.EmitByte(0x96); } else { code.EmitByte(0x9e); } }
+                if (op == IrOperator.GreaterToken()) { if (UnsignedOperation(leftType, rightType)) { code.EmitByte(0x97); } else { code.EmitByte(0x9f); } }
+                if (op == IrOperator.GreaterEqualsToken()) { if (UnsignedOperation(leftType, rightType)) { code.EmitByte(0x93); } else { code.EmitByte(0x9d); } }
                 valueType = "bool";
                 code.EmitByte(0xc0); // setcc al
                 code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0xc0); // movzx rax, al
@@ -713,11 +842,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (RootName(intrinsic) == "System") {
                 failure = "unsupported native runtime intrinsic: " + intrinsic; return false;
             }
-            int target = ResolveFunction(expression.Target());
+            int target = ResolveFunction(expression);
             if (target < 0) { return false; }
             bool hasReceiver = receiverPushed;
             IrMethod method = functions[target].Declaration();
-            if (method.IsVirtual() || method.IsOverride()) { failure = "virtual dispatch is not supported by the native backend"; return false; }
             IrParameter[] parameters = method.Parameters();
             if (parameters.Length != arguments.Length) { failure = "wrong argument count calling '" + method.Name() + "'"; return false; }
             int i = 0;
@@ -726,10 +854,14 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (!SupportedType(type, false)) { failure = "unsupported native method parameter type"; return false; }
                 if (!CompileExpression(arguments[i])) { return false; }
                 if (!Assignable(valueType, type)) { failure = "argument type mismatch calling '" + method.Name() + "'"; return false; }
+                PrepareValue(type);
                 code.EmitByte(0x50);
                 i = i + 1;
             }
-            EmitCall(target);
+            int targetOwnerIndex = ClassIndex(functions[target].Owner());
+            bool interfaceCall = targetOwnerIndex >= 0 && classDeclarations[targetOwnerIndex].IsInterface();
+            if ((method.IsVirtual() || method.IsOverride() || interfaceCall) && !directBaseCall) { EmitVirtualCall(target, arguments.Length); }
+            else { EmitCall(target); }
             int slots = arguments.Length;
             if (hasReceiver) { slots = slots + 1; }
             DropSlots(slots);
@@ -737,17 +869,21 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return true;
         }
 
-        private int ResolveFunction(IrExpression target) {
+        private int ResolveFunction(IrExpression call) {
             receiverPushed = false;
+            directBaseCall = false;
+            IrExpression target = call.Target();
             if (target == null) { failure = "unsupported native call target"; return -1; }
             string owner = functions[currentFunction].Owner();
+            if (target.ResolvedOwner() != "") { owner = target.ResolvedOwner(); }
             string name = "";
             bool explicitReceiver = false;
             if (target.Kind() == IrExpression.KindName()) { name = target.Name(); }
             else if (target.Kind() == IrExpression.KindMemberAccess()) {
                 IrExpression receiver = target.Receiver();
+                if (receiver.Kind() == IrExpression.KindName() && receiver.Name() == "base") { directBaseCall = true; }
                 owner = target.ResolvedOwner();
-                int declared = FindFunction(owner, target.MemberName());
+                int declared = FindFunction(owner, target.MemberName(), call.ResolvedSignature());
                 if (declared < 0) { return -1; }
                 if (!functions[declared].Declaration().IsStatic()) {
                     if (!CompileExpression(receiver)) { return -1; }
@@ -756,7 +892,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 name = target.MemberName();
             } else { failure = "unsupported native call target"; return -1; }
-            int found = FindFunction(owner, name);
+            int found = FindFunction(owner, name, call.ResolvedSignature());
             if (found < 0) { return -1; }
             IrMethod method = functions[found].Declaration();
             if (!method.IsStatic()) {
@@ -770,18 +906,124 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return found;
         }
 
-        private int FindFunction(string owner, string name) {
-            int found = -1;
+        private string Signature(IrMethod candidate) {
+            string result = candidate.Name() + "("; int i = 0;
+            while (i < candidate.Parameters().Length) {
+                if (i > 0) { result = result + ","; }
+                result = result + candidate.Parameters()[i].Type().DisplayName(); i = i + 1;
+            }
+            return result + ")";
+        }
+
+        private int FindFunction(string owner, string name, string signature) {
             int i = 0;
             while (i < functionCount) {
                 if (functions[i].Owner() == owner && functions[i].Declaration().Name() == name) {
-                    if (found >= 0) { failure = "overloaded native calls are not supported: " + owner + "." + name; return -1; }
-                    found = i;
+                    if (signature == "" || Signature(functions[i].Declaration()) == signature) { return i; }
                 }
                 i = i + 1;
             }
-            if (found < 0) { failure = "unsupported or undefined native method: " + owner + "." + name; }
-            return found;
+            int ci = ClassIndex(owner);
+            if (ci >= 0 && classDeclarations[ci].BaseType() != "") {
+                return FindFunction(classDeclarations[ci].BaseType(), name, signature);
+            }
+            if (ci >= 0) {
+                int ii = 0;
+                while (ii < classDeclarations[ci].InterfaceTypes().Length) {
+                    int inherited = FindFunction(classDeclarations[ci].InterfaceTypes()[ii], name, signature);
+                    if (inherited >= 0) { return inherited; }
+                    ii = ii + 1;
+                }
+            }
+            failure = "unsupported or undefined native method: " + owner + "." + name;
+            return -1;
+        }
+
+        private int FindDeclaredFunction(string owner, string name, string signature) {
+            int i = 0;
+            while (i < functionCount) {
+                if (functions[i].Owner() == owner && functions[i].Declaration().Name() == name &&
+                    Signature(functions[i].Declaration()) == signature) { return i; }
+                i = i + 1;
+            }
+            return -1;
+        }
+
+        private int DispatchTarget(string runtimeType, int fallback) {
+            string current = runtimeType; string name = functions[fallback].Declaration().Name();
+            string signature = Signature(functions[fallback].Declaration()); int depth = 0;
+            while (current != "" && depth < 64) {
+                int candidate = FindDeclaredFunction(current, name, signature);
+                if (candidate >= 0) {
+                    if (candidate == fallback || functions[candidate].Declaration().IsOverride()) { return candidate; }
+                }
+                int ci = ClassIndex(current); if (ci < 0) { break; }
+                current = classDeclarations[ci].BaseType(); depth = depth + 1;
+            }
+            return fallback;
+        }
+
+        private int InterfaceDispatchTarget(string runtimeType, int fallback) {
+            string current = runtimeType; string name = functions[fallback].Declaration().Name();
+            string signature = Signature(functions[fallback].Declaration()); int depth = 0;
+            while (current != "" && depth < 64) {
+                int candidate = FindDeclaredFunction(current, name, signature);
+                if (candidate >= 0) { return candidate; }
+                int ci = ClassIndex(current); if (ci < 0) { break; }
+                current = classDeclarations[ci].BaseType(); depth = depth + 1;
+            }
+            return -1;
+        }
+
+        private void EmitVirtualCall(int fallback, int argumentCount) {
+            int[] endPatches = new int[0]; int endCount = 0; int ci = 0;
+            int ownerIndex = ClassIndex(functions[fallback].Owner());
+            bool interfaceCall = ownerIndex >= 0 && classDeclarations[ownerIndex].IsInterface();
+            while (ci < classCount) {
+                bool candidateType = classNames[ci] != functions[fallback].Owner() && DerivedFrom(classNames[ci], functions[fallback].Owner());
+                if (interfaceCall) { candidateType = !classDeclarations[ci].IsInterface() && Implements(classNames[ci], functions[fallback].Owner(), 0); }
+                if (candidateType) {
+                    int target = DispatchTarget(classNames[ci], fallback);
+                    if (interfaceCall) { target = InterfaceDispatchTarget(classNames[ci], fallback); }
+                    if (target >= 0 && target != fallback) {
+                        code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(argumentCount * 8); // receiver
+                        code.EmitByte(0x48); code.EmitByte(0x81); code.EmitByte(0x38); code.Emit32(ci + 1); // cmp [rax], type id
+                        code.EmitByte(0x0f); code.EmitByte(0x85); int nextPatch = code.Position(); code.Emit32(0); // jne next
+                        EmitCall(target);
+                        int endPatch = EmitJump(); endPatches = AppendInt(endPatches, endCount, endPatch); endCount = endCount + 1;
+                        PatchRelative(nextPatch, code.Position());
+                    }
+                }
+                ci = ci + 1;
+            }
+            if (interfaceCall) { EmitRuntime("rt_null_error"); }
+            else { EmitCall(fallback); }
+            int i = 0; while (i < endCount) { PatchRelative(endPatches[i], code.Position()); i = i + 1; }
+        }
+
+        private bool CompileConstructorInitializer(string owner, IrMethod constructor) {
+            int ci = ClassIndex(owner); if (ci < 0) { return true; }
+            string kind = constructor.ConstructorInitializerKind();
+            string targetOwner = owner;
+            IrExpression[] arguments = constructor.ConstructorInitializerArguments();
+            string signature = constructor.ConstructorInitializerSignature();
+            if (kind == "") {
+                if (classDeclarations[ci].BaseType() == "") { return true; }
+                kind = "base"; targetOwner = classDeclarations[ci].BaseType(); arguments = new IrExpression[0];
+                signature = SimpleName(targetOwner) + "()";
+            } else if (kind == "base") { targetOwner = classDeclarations[ci].BaseType(); }
+            if (signature == "") { signature = SimpleName(targetOwner) + "()"; }
+            int target = FindFunction(targetOwner, SimpleName(targetOwner), signature);
+            if (target < 0) { return false; }
+            EmitLoadLocal(FindLocal("this")); code.EmitByte(0x50);
+            IrParameter[] parameters = functions[target].Declaration().Parameters(); int i = 0;
+            while (i < arguments.Length) {
+                if (!CompileExpression(arguments[i])) { return false; }
+                string expected = ResolveType(parameters[i].Type().DisplayName(), targetOwner);
+                if (!Assignable(valueType, expected)) { failure = "native constructor initializer argument type mismatch"; return false; }
+                PrepareValue(expected); code.EmitByte(0x50); i = i + 1;
+            }
+            EmitCall(target); DropSlots(arguments.Length + 1); return true;
         }
 
         private void EmitRuntime(string name) {
@@ -808,8 +1050,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private bool ConvertString(string type) {
             if (type == "string") { code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xf8); return true; }
             if (type == "bool") { EmitRuntime("rt_bool_string"); return true; }
-            if (Numeric(type)) { EmitRuntime("rt_int_string"); return true; }
-            failure = "native string conversion requires string, int, byte or bool"; return false;
+            if (Numeric(type)) {
+                if (Unsigned(type)) { EmitRuntime("rt_uint_string"); }
+                else { EmitRuntime("rt_int_string"); }
+                return true;
+            }
+            failure = "native string conversion requires a string, integral value, or bool"; return false;
         }
 
         private bool RuntimeCall(IrExpression expression, string runtime, string first, string second, string resultType) {
@@ -824,6 +1070,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 string expected = first;
                 if (i == 1) { expected = second; }
                 if (!Assignable(valueType, expected)) { failure = "argument type mismatch for native runtime intrinsic"; return false; }
+                NormalizeRax(expected);
                 code.EmitByte(0x50); i = i + 1;
             }
             if (count == 2) { code.EmitByte(0x5e); }
@@ -849,6 +1096,32 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             while (i < fields.Length) { if (fields[i].Name() == name) { return i; } i = i + 1; }
             return -1;
         }
+        private string FieldOwner(string owner, string name) {
+            int ci = ClassIndex(owner); if (ci < 0) { return ""; }
+            if (FieldIndex(owner, name) >= 0) { return owner; }
+            string baseType = classDeclarations[ci].BaseType();
+            if (baseType != "") { return FieldOwner(baseType, name); }
+            return "";
+        }
+        private int StaticFieldIndex(string owner, string name) {
+            int i = 0; while (i < staticCount) { if (staticOwners[i] == owner && staticNames[i] == name) { return i; } i = i + 1; }
+            return -1;
+        }
+        private int InstanceFieldCount(string owner) {
+            int ci = ClassIndex(owner); if (ci < 0) { return 0; }
+            int count = 0;
+            if (classDeclarations[ci].BaseType() != "") { count = InstanceFieldCount(classDeclarations[ci].BaseType()); }
+            IrField[] fields = classDeclarations[ci].Fields(); int i = 0;
+            while (i < fields.Length) { if (!fields[i].IsStatic()) { count = count + 1; } i = i + 1; }
+            return count;
+        }
+        private int InstanceFieldOffset(string owner, int fieldIndex) {
+            int ci = ClassIndex(owner); int offset = 0;
+            if (classDeclarations[ci].BaseType() != "") { offset = InstanceFieldCount(classDeclarations[ci].BaseType()); }
+            IrField[] fields = classDeclarations[ci].Fields(); int i = 0;
+            while (i < fieldIndex) { if (!fields[i].IsStatic()) { offset = offset + 1; } i = i + 1; }
+            return offset;
+        }
         private bool IsArray(string type) {
             if (type.Length < 2) { return false; }
             return type[type.Length - 2] == "[" && type[type.Length - 1] == "]";
@@ -868,19 +1141,134 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private string ResolveType(string name, string owner) {
             return module.ResolveType(name, owner);
         }
-        private bool Numeric(string type) { return type == "int" || type == "byte" || EnumIndex(type) >= 0; }
-        private bool Reference(string type) { return type == "string" || IsArray(type) || ClassIndex(type) >= 0; }
+        private bool PrimitiveNumeric(string type) {
+            return type == "byte" || type == "sbyte" || type == "short" || type == "ushort" ||
+                type == "int" || type == "uint" || type == "long" || type == "ulong" ||
+                type == "nint" || type == "nuint";
+        }
+        private bool Numeric(string type) { return PrimitiveNumeric(type) || EnumIndex(type) >= 0; }
+        private bool Unsigned(string type) {
+            return type == "byte" || type == "ushort" || type == "uint" || type == "ulong" || type == "nuint";
+        }
+        private int NumericBits(string type) {
+            if (type == "byte" || type == "sbyte") { return 8; }
+            if (type == "short" || type == "ushort") { return 16; }
+            if (type == "int" || type == "uint") { return 32; }
+            if (Numeric(type)) { return 64; }
+            return 0;
+        }
+        private bool UnsignedOperation(string left, string right) {
+            int leftBits = NumericBits(left); int rightBits = NumericBits(right);
+            bool leftUnsigned = Unsigned(left); bool rightUnsigned = Unsigned(right);
+            if (leftBits < 32) { leftBits = 32; leftUnsigned = false; }
+            if (rightBits < 32) { rightBits = 32; rightUnsigned = false; }
+            if (leftBits > rightBits) { return leftUnsigned; }
+            if (rightBits > leftBits) { return rightUnsigned; }
+            return leftUnsigned || rightUnsigned;
+        }
+        private int TypeSize(string type) {
+            int bits = NumericBits(type);
+            if (bits != 0) { return bits / 8; }
+            if (type == "bool") { return 1; }
+            if (EnumIndex(type) >= 0) { return 8; }
+            return StructSize(type, 0);
+        }
+        private int StructSize(string type, int depth) {
+            if (depth > 32) { return -1; }
+            int ci = ClassIndex(type);
+            if (ci < 0 || !classDeclarations[ci].IsStruct()) { return -1; }
+            IrField[] fields = classDeclarations[ci].Fields(); int total = 0; int i = 0;
+            while (i < fields.Length) {
+                if (!fields[i].IsStatic()) {
+                    string fieldType = ResolveType(fields[i].Type().DisplayName(), type);
+                    int size = NumericBits(fieldType);
+                    if (size != 0) { size = size / 8; }
+                    else if (fieldType == "bool") { size = 1; }
+                    else if (EnumIndex(fieldType) >= 0) { size = 8; }
+                    else { size = StructSize(fieldType, depth + 1); }
+                    if (size < 0) { return -1; }
+                    total = total + size;
+                }
+                i = i + 1;
+            }
+            return total;
+        }
+        private void NormalizeRax(string type) {
+            if (type == "sbyte") { code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xbe); code.EmitByte(0xc0); }
+            else if (type == "byte") { code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0xc0); }
+            else if (type == "short") { code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xbf); code.EmitByte(0xc0); }
+            else if (type == "ushort") { code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xb7); code.EmitByte(0xc0); }
+            else if (type == "int") { code.EmitByte(0x48); code.EmitByte(0x63); code.EmitByte(0xc0); }
+            else if (type == "uint") { code.EmitByte(0x89); code.EmitByte(0xc0); }
+        }
+        private void PrepareValue(string type) {
+            NormalizeRax(type);
+            int ci = ClassIndex(type);
+            if (ci < 0 || !classDeclarations[ci].IsStruct()) { return; }
+            int fields = InstanceFieldCount(type);
+            code.EmitByte(0x50); // root the source while allocation can collect
+            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc7); code.Emit32(8 * (fields + 1));
+            EmitRuntime("rt_alloc");
+            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0x00); code.Emit32(ci + 1); // object type id
+            code.EmitByte(0x59); // rcx = relocated source
+            int i = 0;
+            while (i < fields) {
+                code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x91); code.Emit32(8 * (i + 1)); // mov rdx,[rcx+field]
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0x90); code.Emit32(8 * (i + 1)); // mov [rax+field],rdx
+                i = i + 1;
+            }
+        }
+        private bool Reference(string type) {
+            int ci = ClassIndex(type);
+            return type == "string" || IsArray(type) || (ci >= 0 && !classDeclarations[ci].IsStruct());
+        }
         private bool SupportedType(string type, bool allowVoid) {
             if (allowVoid && type == "void") { return true; }
             if (IsArray(type)) { return SupportedType(ElementType(type), false); }
             return Numeric(type) || type == "bool" || type == "string" || ClassIndex(type) >= 0;
         }
         private bool Assignable(string actual, string expected) {
-            return actual == expected || (actual == "null" && Reference(expected));
+            return actual == expected || (PrimitiveNumeric(actual) && PrimitiveNumeric(expected)) ||
+                (actual == "null" && Reference(expected)) || DerivedFrom(actual, expected) || Implements(actual, expected, 0);
+        }
+        private bool DerivedFrom(string actual, string expected) {
+            string current = actual; int depth = 0;
+            while (current != "" && depth < 64) {
+                if (current == expected) { return true; }
+                int ci = ClassIndex(current); if (ci < 0) { return false; }
+                current = classDeclarations[ci].BaseType(); depth = depth + 1;
+            }
+            return false;
+        }
+        private bool Implements(string actual, string expected, int depth) {
+            if (depth > 64) { return false; }
+            int ci = ClassIndex(actual); if (ci < 0) { return false; }
+            if (actual == expected && classDeclarations[ci].IsInterface()) { return true; }
+            string[] interfaces = classDeclarations[ci].InterfaceTypes(); int i = 0;
+            while (i < interfaces.Length) {
+                if (interfaces[i] == expected || Implements(interfaces[i], expected, depth + 1)) { return true; }
+                i = i + 1;
+            }
+            if (classDeclarations[ci].BaseType() != "") { return Implements(classDeclarations[ci].BaseType(), expected, depth + 1); }
+            return false;
         }
 
-        private bool CompileFieldAddress(IrExpression receiver, string name) {
+        private bool CompileFieldAddress(IrExpression receiver, string name, string resolvedOwner) {
             string owner = functions[currentFunction].Owner();
+            if (currentStaticOwner != "") { owner = currentStaticOwner; }
+            if (resolvedOwner != "") { owner = resolvedOwner; }
+            string declaredOwner = FieldOwner(owner, name);
+            int declaredField = FieldIndex(declaredOwner, name);
+            if (declaredField >= 0) {
+                IrField possibleStatic = classDeclarations[ClassIndex(declaredOwner)].Fields()[declaredField];
+                if (possibleStatic.IsStatic()) {
+                    int staticIndex = StaticFieldIndex(declaredOwner, name);
+                    if (staticIndex < 0) { failure = "undefined native static field: " + declaredOwner + "." + name; return false; }
+                    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe8); // mov rax, r13
+                    if (staticIndex > 0) { code.EmitByte(0x48); code.EmitByte(0x05); code.Emit32(staticIndex * 8); }
+                    addressReadOnly = false; valueType = ResolveType(possibleStatic.Type().DisplayName(), declaredOwner); return true;
+                }
+            }
             if (receiver == null) {
                 int slot = FindLocal("this");
                 if (slot < 0) { failure = "instance field requires an object receiver"; return false; }
@@ -892,12 +1280,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             MoveRdiRax(); EmitRuntime("rt_check");
             addressReadOnly = false;
             if (name == "Length" && (owner == "string" || IsArray(owner))) { addressReadOnly = true; valueType = "int"; return true; }
-            int field = FieldIndex(owner, name);
+            declaredOwner = FieldOwner(owner, name);
+            int field = FieldIndex(declaredOwner, name);
             if (field < 0) { failure = "undefined native field: " + owner + "." + name; return false; }
-            IrField declaration = classDeclarations[ClassIndex(owner)].Fields()[field];
-            if (declaration.IsStatic()) { failure = "static fields are not supported by the native backend"; return false; }
-            code.EmitByte(0x48); code.EmitByte(0x05); code.Emit32(8 * (field + 1));
-            valueType = ResolveType(declaration.Type().DisplayName(), owner);
+            IrField declaration = classDeclarations[ClassIndex(declaredOwner)].Fields()[field];
+            if (declaration.IsStatic()) { failure = "static field requires a type receiver"; return false; }
+            code.EmitByte(0x48); code.EmitByte(0x05); code.Emit32(8 * (InstanceFieldOffset(declaredOwner, field) + 1));
+            valueType = ResolveType(declaration.Type().DisplayName(), declaredOwner);
             return true;
         }
         private void EmitFieldStore(int field) {
@@ -911,9 +1300,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (slot >= 0) { expected = localTypes[slot]; }
             else {
                 if (target.Kind() == IrExpression.KindName()) {
-                    if (!CompileFieldAddress(null, target.Name())) { return false; }
+                    if (!CompileFieldAddress(null, target.Name(), target.ResolvedOwner())) { return false; }
                 } else if (target.Kind() == IrExpression.KindMemberAccess()) {
-                    if (!CompileFieldAddress(target.Receiver(), target.MemberName())) { return false; }
+                    if (!CompileFieldAddress(target.Receiver(), target.MemberName(), target.ResolvedOwner())) { return false; }
                     if (addressReadOnly) { failure = "Length is read-only"; return false; }
                 } else if (target.Kind() == IrExpression.KindIndex()) {
                     if (!CompileExpression(target.Receiver())) { return false; }
@@ -921,7 +1310,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     expected = ElementType(valueType);
                     code.EmitByte(0x50);
                     if (!CompileExpression(target.Index())) { return false; }
-                    if (valueType != "int") { failure = "native index must be int"; return false; }
+                    if (!Numeric(valueType)) { failure = "native index must be integral"; return false; }
                     code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc6); code.EmitByte(0x5f);
                     EmitRuntime("rt_index"); valueType = expected;
                 } else { failure = "unsupported native assignment target"; return false; }
@@ -930,7 +1319,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             if (!CompileExpression(expression.Value())) { return false; }
             if (!Assignable(valueType, expected)) { failure = "native assignment type mismatch"; return false; }
-            if (expected == "byte") { code.EmitByte(0x48); code.EmitByte(0x25); code.Emit32(255); }
+            PrepareValue(expected);
             if (slot >= 0) { EmitStoreLocal(slot); }
             else { code.EmitByte(0x59); code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0x01); }
             valueType = expected; return true;
@@ -939,18 +1328,22 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             string owner = ResolveType(expression.Type().DisplayName(), functions[currentFunction].Owner());
             int ci = ClassIndex(owner);
             if (ci < 0) { failure = "unknown native class: " + owner; return false; }
-            int constructor = FindFunction(owner, SimpleName(owner));
+            int constructor = FindFunction(owner, SimpleName(owner), expression.ResolvedSignature());
             if (constructor < 0) { return false; }
             IrParameter[] parameters = functions[constructor].Declaration().Parameters();
             IrExpression[] arguments = expression.Arguments();
             if (parameters.Length != arguments.Length) { failure = "wrong native constructor argument count"; return false; }
-            int fields = classDeclarations[ci].Fields().Length;
+            int fields = InstanceFieldCount(owner);
             code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc7); code.Emit32(8 * (fields + 1));
-            EmitRuntime("rt_alloc"); code.EmitByte(0x50);
+            EmitRuntime("rt_alloc");
+            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0x00); code.Emit32(ci + 1); // object type id
+            code.EmitByte(0x50);
             int i = 0;
             while (i < arguments.Length) {
                 if (!CompileExpression(arguments[i])) { return false; }
-                if (!Assignable(valueType, ResolveType(parameters[i].Type().DisplayName(), owner))) { failure = "native constructor argument type mismatch"; return false; }
+                string parameterType = ResolveType(parameters[i].Type().DisplayName(), owner);
+                if (!Assignable(valueType, parameterType)) { failure = "native constructor argument type mismatch"; return false; }
+                PrepareValue(parameterType);
                 code.EmitByte(0x50); i = i + 1;
             }
             EmitCall(constructor);

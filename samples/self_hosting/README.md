@@ -30,17 +30,50 @@ hydrogen-stage1 stage-compare <project.hyproj> --stage1 <artifact> --stage2 <art
 
 `tokens` prints lexer tokens/locations. `parse` prints a syntax outline. `check` performs semantic checking; `--emit-ir` prints typed executable method-body IR. `compile` emits a Linux executable by default, or a constrained PE32+ UEFI application with `--target uefi-x64`; `build` emits a format-2 executable project's complete reference closure. `stage-compare` compares existing files exactly; it does not build or behaviorally test them.
 
-## UEFI hello-world target
+## UEFI console and chain-loading target
 
 ```bash
 ./build/self_hosting/hydrogen-stage1 compile tests/uefi_hello.hy --target uefi-x64 -o build/BOOTX64.EFI
 ```
 
-The UEFI target accepts static `Main(string[] args)` entry points containing
-`System.Console.WriteLine` ASCII string literals. It emits the PE32+ image in
-Hydrogen, encodes its console text as UTF-16, and invokes the firmware text
-output protocol through the UEFI x64 calling convention. It does not yet offer
-a general firmware runtime or arbitrary method compilation.
+The UEFI target accepts static `Main(string[] args)` entry points with
+`System.Uefi.ClearScreen()` before console output, `System.Uefi.Await()` to wait
+for and consume one keyboard event, and multiple `System.Console.WriteLine`
+ASCII string literals. It can also use
+`System.Uefi.StartImage` with an ASCII path to load and launch an EFI image from
+the boot volume. A kernel image can finish with
+`System.Uefi.ExitBootServices()`, `System.Kernel.MemoryMap.Initialize()`,
+`System.Kernel.Memory.Initialize()`,
+`System.Kernel.VirtualMemory.Initialize()`,
+`System.Kernel.VirtualMemory.ApplyPolicy()`, optional
+`System.Kernel.Memory.AllocatePage()` calls,
+`System.Kernel.Heap.Initialize()`, optional
+`System.Kernel.Heap.Allocate(<literal-byte-count>)` calls,
+`System.Kernel.Framebuffer.Initialize()`, literal
+`System.Kernel.Framebuffer.WriteLine(<text>)` calls, and
+`System.Kernel.Halt()`. The
+target captures a final memory map, selects the largest
+`EfiConventionalMemory` descriptor, reserves and clears its first 4 KiB page,
+publishes the remaining physical-page range, retries `ExitBootServices` with a
+fresh map key when needed, then copies every present PML4, PDPT, PD, and PT page
+into allocator-owned pages and loads the new root through `CR3`. Leaf mappings
+retain their current physical frames and attributes. The image has a zero image
+base and uses RIP-relative internal references. The `KernelBootInfo` record
+pointer is available in `RDI` to post-handoff Hydrogen code. Its state is `127`
+once the framebuffer console is active. Each `AllocatePage()` call reserves and clears one 4 KiB
+page and publishes its physical address at `KernelBootInfo + 72`. `Heap.Initialize()`
+creates a zeroed, 16-byte aligned bump heap, while `Heap.Allocate()` accepts a
+literal size from 1 through 1 MiB and publishes its address at `KernelBootInfo + 104`;
+the bootstrap heap does not free or reuse allocations. Framebuffer initialization
+captures GOP before services end, clears the framebuffer with direct stores, and
+renders literal printable-ASCII lines through an embedded 8x8 font; it accepts
+the standard RGB and BGR 32-bit GOP formats. It then disables interrupts and idles. It emits the PE32+ image in Hydrogen, encodes its console text as UTF-16,
+and invokes the firmware text
+output protocol through the UEFI x64 calling convention. The target does not
+offer a general firmware runtime or arbitrary method compilation.
+
+The paging walker handles standard four-level x86_64 paging. It detects an
+active LA57 five-level hierarchy and halts before changing `CR3`.
 
 The CLI returns nonzero on invalid or unsupported compilation and does not create or overwrite the output on failure. An older output may remain, so check status before running it. Checking does not guarantee emission support. Normal compilation never substitutes a debug IR executable. Semantic positions use `1:1` where AST spans are unavailable; lexer/parser diagnostics have source positions.
 

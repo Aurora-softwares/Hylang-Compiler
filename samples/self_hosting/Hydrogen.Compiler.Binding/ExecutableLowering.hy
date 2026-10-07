@@ -44,7 +44,8 @@ namespace Hydrogen.Compiler.Binding {
                 string fullName = prefix + input[i].Name();
                 IrMethod[] methods = Methods(input[i].Methods());
                 result[i] = new IrClass(fullName, new IrField[0], methods);
-                result[i].SetImports(imports); result[i].SetInterface(true); i = i + 1;
+                result[i].SetImports(imports); result[i].SetInterface(true);
+                result[i].SetInterfaceTypes(input[i].DeclaredBases()); i = i + 1;
             }
             return result;
         }
@@ -66,7 +67,10 @@ namespace Hydrogen.Compiler.Binding {
                 string fullName = prefix + input[i].Name();
                 IrMethod[] methods = Methods(input[i].Methods());
                 result[old.Length + i] = new IrClass(fullName, fields, methods);
-                result[old.Length + i].SetImports(imports); i = i + 1;
+                result[old.Length + i].SetImports(imports);
+                result[old.Length + i].SetStruct(input[i].IsStruct());
+                result[old.Length + i].SetBaseType(input[i].BaseType());
+                result[old.Length + i].SetInterfaceTypes(input[i].DeclaredBases()); i = i + 1;
             }
             return result;
         }
@@ -93,11 +97,20 @@ namespace Hydrogen.Compiler.Binding {
                 IrType returnType = Type(input[i].ReturnType());
                 IrStatement body = Statement(input[i].Body());
                 result[i] = new IrMethod(input[i].Name(), input[i].IsStatic(), input[i].IsVirtual(), input[i].IsOverride(), returnType, parameters, body);
-                result[i].SetPrivate(input[i].IsPrivate()); i = i + 1;
+                result[i].SetPrivate(input[i].IsPrivate());
+                if (input[i].ConstructorInitializerKind() != "") {
+                    result[i].SetConstructorInitializer(input[i].ConstructorInitializerKind(), Arguments(input[i].ConstructorInitializerArguments()));
+                }
+                i = i + 1;
             }
             return result;
         }
-        private IrType Type(TypeSyntax type) { if (type == null) { return null; } return new IrType(type.DisplayName()); }
+        private IrType Type(TypeSyntax type) {
+            if (type == null) { return null; }
+            IrType result = new IrType(type.DisplayName());
+            if (type.Span() != null) { result.SetLocation(type.Line(), type.Column(), type.Span().Start(), type.Span().Length()); }
+            return result;
+        }
         private IrExpression[] Arguments(ExpressionSyntax[] input) {
             IrExpression[] result = new IrExpression[input.Length]; int i = 0;
             while (i < input.Length) { result[i] = Expression(input[i]); i = i + 1; } return result;
@@ -105,35 +118,42 @@ namespace Hydrogen.Compiler.Binding {
         private IrStatement Statement(StatementSyntax s) {
             if (s == null) { return null; }
             int k = s.Kind();
+            IrStatement result;
             if (k == StatementSyntax.KindBlock()) {
                 IrStatement[] items = new IrStatement[s.Statements().Length]; int i = 0;
-                while (i < items.Length) { items[i] = Statement(s.Statements()[i]); i = i + 1; } return IrStatement.Block(items);
+                while (i < items.Length) { items[i] = Statement(s.Statements()[i]); i = i + 1; } result = IrStatement.Block(items);
             }
-            if (k == StatementSyntax.KindIfStatement()) { IrExpression condition = Expression(s.Condition()); IrStatement thenBody = Statement(s.ThenStatement()); IrStatement elseBody = Statement(s.ElseStatement()); return IrStatement.If(condition, thenBody, elseBody); }
-            if (k == StatementSyntax.KindReturnStatement()) { return IrStatement.Return(Expression(s.Expression())); }
-            if (k == StatementSyntax.KindExpressionStatement()) { return IrStatement.ExpressionStatement(Expression(s.Expression())); }
-            if (k == StatementSyntax.KindVariableDeclaration()) { IrType type = Type(s.Type()); IrExpression value = Expression(s.Initializer()); return IrStatement.VariableDeclaration(type, s.Name(), value); }
-            if (k == StatementSyntax.KindWhileStatement()) { IrExpression condition = Expression(s.Condition()); IrStatement body = Statement(s.Body()); return IrStatement.While(condition, body); }
-            if (k == StatementSyntax.KindBreakStatement()) { return IrStatement.Break(); }
-            if (k == StatementSyntax.KindContinueStatement()) { return IrStatement.Continue(); }
-            if (k == StatementSyntax.KindTryStatement()) { IrStatement body = Statement(s.Body()); IrType type = Type(s.CatchType()); IrStatement handler = Statement(s.CatchBlock()); return IrStatement.Try(body, type, s.CatchName(), handler); }
-            return IrStatement.Throw(Expression(s.Expression()));
+            else if (k == StatementSyntax.KindIfStatement()) { IrExpression condition = Expression(s.Condition()); IrStatement thenBody = Statement(s.ThenStatement()); IrStatement elseBody = Statement(s.ElseStatement()); result = IrStatement.If(condition, thenBody, elseBody); }
+            else if (k == StatementSyntax.KindReturnStatement()) { result = IrStatement.Return(Expression(s.Expression())); }
+            else if (k == StatementSyntax.KindExpressionStatement()) { result = IrStatement.ExpressionStatement(Expression(s.Expression())); }
+            else if (k == StatementSyntax.KindVariableDeclaration()) { IrType type = Type(s.Type()); IrExpression value = Expression(s.Initializer()); result = IrStatement.VariableDeclaration(type, s.Name(), value); }
+            else if (k == StatementSyntax.KindWhileStatement()) { IrExpression condition = Expression(s.Condition()); IrStatement body = Statement(s.Body()); result = IrStatement.While(condition, body); }
+            else if (k == StatementSyntax.KindForStatement()) { IrStatement initializer = Statement(s.ForInitializer()); IrExpression condition = Expression(s.Condition()); IrExpression increment = Expression(s.ForIncrement()); IrStatement body = Statement(s.Body()); result = IrStatement.For(initializer, condition, increment, body); }
+            else if (k == StatementSyntax.KindBreakStatement()) { result = IrStatement.Break(); }
+            else if (k == StatementSyntax.KindContinueStatement()) { result = IrStatement.Continue(); }
+            else if (k == StatementSyntax.KindTryStatement()) { IrStatement body = Statement(s.Body()); IrType type = Type(s.CatchType()); IrStatement handler = Statement(s.CatchBlock()); result = IrStatement.Try(body, type, s.CatchName(), handler); }
+            else { result = IrStatement.Throw(Expression(s.Expression())); }
+            if (s.Span() != null) { result.SetLocation(s.Line(), s.Column(), s.Span().Start(), s.Span().Length()); }
+            return result;
         }
         private IrExpression Expression(ExpressionSyntax e) {
             if (e == null) { return null; }
             int k = e.Kind();
-            if (k == ExpressionSyntax.KindName()) { return IrExpression.NameExpr(e.Name()); }
-            if (k == ExpressionSyntax.KindLiteral()) { return IrExpression.Literal(e.LiteralKind(), e.LiteralText()); }
-            if (k == ExpressionSyntax.KindMemberAccess()) { return IrExpression.MemberAccess(Expression(e.Receiver()), e.MemberName()); }
-            if (k == ExpressionSyntax.KindInvocation()) { IrExpression target = Expression(e.Target()); IrExpression[] arguments = Arguments(e.Arguments()); return IrExpression.Invocation(target, arguments); }
-            if (k == ExpressionSyntax.KindAssignment()) { IrExpression target = Expression(e.Target()); IrExpression value = Expression(e.Value()); return IrExpression.Assignment(target, value); }
-            if (k == ExpressionSyntax.KindBinary()) { IrExpression left = Expression(e.Left()); IrExpression right = Expression(e.Right()); return IrExpression.Binary(left, (int)e.OperatorKind(), right); }
-            if (k == ExpressionSyntax.KindIndex()) { IrExpression receiver = Expression(e.Receiver()); IrExpression index = Expression(e.Index()); return IrExpression.IndexExpr(receiver, index); }
-            if (k == ExpressionSyntax.KindObjectCreation()) { IrType type = Type(e.Type()); IrExpression[] arguments = Arguments(e.Arguments()); return IrExpression.ObjectCreation(type, arguments); }
-            if (k == ExpressionSyntax.KindArrayCreation()) { IrType type = Type(e.Type()); IrExpression size = Expression(e.Size()); return IrExpression.ArrayCreation(type, size); }
-            if (k == ExpressionSyntax.KindCast()) { IrType type = Type(e.CastType()); IrExpression value = Expression(e.CastExpression()); return IrExpression.Cast(type, value); }
-            if (k == ExpressionSyntax.KindUnary()) { return IrExpression.Unary((int)e.UnaryOperatorKind(), Expression(e.UnaryOperand())); }
-            return IrExpression.SizeOf(Type(e.SizeOfType()));
+            IrExpression result;
+            if (k == ExpressionSyntax.KindName()) { result = IrExpression.NameExpr(e.Name()); }
+            else if (k == ExpressionSyntax.KindLiteral()) { result = IrExpression.Literal(e.LiteralKind(), e.LiteralText()); }
+            else if (k == ExpressionSyntax.KindMemberAccess()) { result = IrExpression.MemberAccess(Expression(e.Receiver()), e.MemberName()); }
+            else if (k == ExpressionSyntax.KindInvocation()) { IrExpression target = Expression(e.Target()); IrExpression[] arguments = Arguments(e.Arguments()); result = IrExpression.Invocation(target, arguments); }
+            else if (k == ExpressionSyntax.KindAssignment()) { IrExpression target = Expression(e.Target()); IrExpression value = Expression(e.Value()); result = IrExpression.Assignment(target, value); }
+            else if (k == ExpressionSyntax.KindBinary()) { IrExpression left = Expression(e.Left()); IrExpression right = Expression(e.Right()); result = IrExpression.Binary(left, (int)e.OperatorKind(), right); }
+            else if (k == ExpressionSyntax.KindIndex()) { IrExpression receiver = Expression(e.Receiver()); IrExpression index = Expression(e.Index()); result = IrExpression.IndexExpr(receiver, index); }
+            else if (k == ExpressionSyntax.KindObjectCreation()) { IrType type = Type(e.Type()); IrExpression[] arguments = Arguments(e.Arguments()); result = IrExpression.ObjectCreation(type, arguments); }
+            else if (k == ExpressionSyntax.KindArrayCreation()) { IrType type = Type(e.Type()); IrExpression size = Expression(e.Size()); result = IrExpression.ArrayCreation(type, size); }
+            else if (k == ExpressionSyntax.KindCast()) { IrType type = Type(e.CastType()); IrExpression value = Expression(e.CastExpression()); result = IrExpression.Cast(type, value); }
+            else if (k == ExpressionSyntax.KindUnary()) { result = IrExpression.Unary((int)e.UnaryOperatorKind(), Expression(e.UnaryOperand())); }
+            else { result = IrExpression.SizeOf(Type(e.SizeOfType())); }
+            if (e.Span() != null) { result.SetLocation(e.Line(), e.Column(), e.Span().Start(), e.Span().Length()); }
+            return result;
         }
     }
 }

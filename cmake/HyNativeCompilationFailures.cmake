@@ -27,8 +27,8 @@ set(cases native_unsupported_call native_no_main native_unsupported_string inval
 set(reasons
     "Program.Main: unsupported native runtime intrinsic: System.Console.ReadLine"
     "no static Main method"
-    "1:1 error assignment target is not writable\n"
-    "1:1 error return type mismatch\n"
+    "4:9 error assignment target is not writable\n"
+    "3:9 error return type mismatch\n"
     "2:20 error Expected identifier\n2:20 error Expected parameter name\n2:20 error Expected ')'\n"
 )
 

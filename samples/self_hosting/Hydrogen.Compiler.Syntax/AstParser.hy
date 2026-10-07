@@ -102,27 +102,38 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private ClassDeclarationSyntax ParseClass() {
+            bool isStruct = false;
             if (Check(SyntaxKind.ClassKeyword)) {
                 Consume(SyntaxKind.ClassKeyword, "Expected class");
             } else {
-                diagnostics.Report(Current().Line(), Current().Column(), "not supported in self-host subset: structs");
+                isStruct = true;
                 Consume(SyntaxKind.StructKeyword, "Expected struct");
             }
             string name = ConsumeIdentifier("Expected class name");
+            string baseType = ""; string[] declaredBases = new string[0]; int baseCount = 0;
             // Skip base list / type parameters in stage1 AST (subset avoids them).
             if (Check(SyntaxKind.LessToken)) {
                 diagnostics.Report(Current().Line(), Current().Column(), "not supported in self-host subset: generics");
                 SkipTypeArgumentOrParameterList();
             }
             if (Check(SyntaxKind.ColonToken)) {
-                diagnostics.Report(Current().Line(), Current().Column(), "not supported in self-host subset: inheritance");
                 Advance();
-                ParseQualifiedNameText();
+                while (true) {
+                    string declaredBase = ParseQualifiedNameText();
+                    declaredBases = AppendString(declaredBases, baseCount, declaredBase); baseCount = baseCount + 1;
+                    if (!Check(SyntaxKind.CommaToken)) { break; }
+                    Advance();
+                }
+                if (declaredBases.Length > 0) { baseType = declaredBases[0]; }
             }
             Consume(SyntaxKind.OpenBraceToken, "Expected '{' after class");
             ClassMemberListSyntax members = ParseClassMembers();
             Consume(SyntaxKind.CloseBraceToken, "Expected '}' after class");
-            return new ClassDeclarationSyntax(name, members.Fields(), members.Methods());
+            ClassDeclarationSyntax result = new ClassDeclarationSyntax(name, members.Fields(), members.Methods());
+            result.SetStruct(isStruct);
+            result.SetBaseType(baseType);
+            result.SetDeclaredBases(declaredBases);
+            return result;
         }
 
         private ClassMemberListSyntax ParseClassMembers() {
@@ -164,9 +175,19 @@ namespace Hydrogen.Compiler.Syntax {
                 } else if (Check(SyntaxKind.OpenParenToken)) {
                     // Constructor: no explicit return type. Treat as void-returning method named after the type.
                     ParameterSyntax[] parameters2 = ParseParameterList();
+                    string initializerKind = "";
+                    ExpressionSyntax[] initializerArguments = new ExpressionSyntax[0];
+                    if (Check(SyntaxKind.ColonToken)) {
+                        Advance();
+                        if (Check(SyntaxKind.BaseKeyword)) { initializerKind = "base"; Advance(); }
+                        else if (Check(SyntaxKind.ThisKeyword)) { initializerKind = "this"; Advance(); }
+                        else { diagnostics.Report(Current().Line(), Current().Column(), "Expected base or this constructor initializer"); Advance(); }
+                        initializerArguments = ParseArgumentList();
+                    }
                     StatementSyntax body2 = ParseBlock();
                     methods = AppendMethod(methods, methodCount, new MethodDeclarationSyntax(returnType.DisplayName(), false, false, false, new TypeSyntax("void"), parameters2, body2));
                     methods[methodCount].SetPrivate(isPrivate);
+                    methods[methodCount].SetConstructorInitializer(initializerKind, initializerArguments);
                     methodCount = methodCount + 1;
                     continue;
                 } else {
@@ -236,6 +257,15 @@ namespace Hydrogen.Compiler.Syntax {
 		private InterfaceDeclarationSyntax ParseInterface() {
 			Consume(SyntaxKind.InterfaceKeyword, "Expected interface");
 			string name = ConsumeIdentifier("Expected interface name");
+			string[] declaredBases = new string[0]; int baseCount = 0;
+			if (Check(SyntaxKind.ColonToken)) {
+				Advance();
+				while (true) {
+					declaredBases = AppendString(declaredBases, baseCount, ParseQualifiedNameText()); baseCount = baseCount + 1;
+					if (!Check(SyntaxKind.CommaToken)) { break; }
+					Advance();
+				}
+			}
 
 			Consume(SyntaxKind.OpenBraceToken, "Expected '{' after interface name");
 
@@ -260,7 +290,8 @@ namespace Hydrogen.Compiler.Syntax {
 			}
 
 			Consume(SyntaxKind.CloseBraceToken, "Expected '}' after interface");
-			return new InterfaceDeclarationSyntax(name, methods);
+			InterfaceDeclarationSyntax result = new InterfaceDeclarationSyntax(name, methods);
+			result.SetDeclaredBases(declaredBases); return result;
 		}
 
         private ParameterSyntax[] ParseParameterList() {
@@ -298,6 +329,14 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private StatementSyntax ParseStatement() {
+            SyntaxToken start = Current();
+            StatementSyntax result = ParseStatementCore();
+            SyntaxToken end = Previous();
+            result.SetLocation(start.Line(), start.Column(), start.Position(), SpanLength(start, end));
+            return result;
+        }
+
+        private StatementSyntax ParseStatementCore() {
             if (Check(SyntaxKind.OpenBraceToken)) {
                 return ParseBlock();
             }
@@ -306,6 +345,9 @@ namespace Hydrogen.Compiler.Syntax {
             }
             if (Check(SyntaxKind.WhileKeyword)) {
                 return ParseWhile();
+            }
+            if (Check(SyntaxKind.ForKeyword)) {
+                return ParseFor();
             }
             if (Check(SyntaxKind.ReturnKeyword)) {
                 return ParseReturn();
@@ -400,6 +442,42 @@ namespace Hydrogen.Compiler.Syntax {
             return StatementSyntax.While(condition, body);
         }
 
+        private StatementSyntax ParseFor() {
+            Consume(SyntaxKind.ForKeyword, "Expected for");
+            Consume(SyntaxKind.OpenParenToken, "Expected '(' after for");
+
+            StatementSyntax initializer = null;
+            if (Check(SyntaxKind.SemicolonToken)) {
+                Advance();
+            } else if (LooksLikeLocalDeclaration()) {
+                TypeSyntax type = ParseType();
+                string name = ConsumeIdentifier("Expected identifier after type");
+                ExpressionSyntax value = null;
+                if (Check(SyntaxKind.EqualsToken)) {
+                    Advance();
+                    value = ParseExpression();
+                }
+                Consume(SyntaxKind.SemicolonToken, "Expected ';' after for initializer");
+                initializer = StatementSyntax.VariableDeclaration(type, name, value);
+            } else {
+                initializer = StatementSyntax.ExpressionStatement(ParseExpression());
+                Consume(SyntaxKind.SemicolonToken, "Expected ';' after for initializer");
+            }
+
+            ExpressionSyntax condition = ExpressionSyntax.Literal("bool", "true");
+            if (!Check(SyntaxKind.SemicolonToken)) {
+                condition = ParseExpression();
+            }
+            Consume(SyntaxKind.SemicolonToken, "Expected ';' after for condition");
+
+            ExpressionSyntax increment = null;
+            if (!Check(SyntaxKind.CloseParenToken)) {
+                increment = ParseExpression();
+            }
+            Consume(SyntaxKind.CloseParenToken, "Expected ')' after for clauses");
+            return StatementSyntax.For(initializer, condition, increment, ParseStatement());
+        }
+
         private StatementSyntax ParseReturn() {
             Consume(SyntaxKind.ReturnKeyword, "Expected return");
             ExpressionSyntax expression = null;
@@ -441,7 +519,11 @@ namespace Hydrogen.Compiler.Syntax {
 		}
 
         private ExpressionSyntax ParseExpression() {
-            return ParseAssignment();
+            SyntaxToken start = Current();
+            ExpressionSyntax result = ParseAssignment();
+            SyntaxToken end = Previous();
+            result.SetLocation(start.Line(), start.Column(), start.Position(), SpanLength(start, end));
+            return result;
         }
 
         private ExpressionSyntax ParseAssignment() {
@@ -475,7 +557,7 @@ namespace Hydrogen.Compiler.Syntax {
                 Consume(SyntaxKind.CloseParenToken, "Expected ')'");
                 return ExpressionSyntax.Cast(type, ParseUnary());
             }
-            if (Check(SyntaxKind.BangToken) || Check(SyntaxKind.MinusToken)) {
+            if (Check(SyntaxKind.BangToken) || Check(SyntaxKind.MinusToken) || Check(SyntaxKind.PlusToken)) {
                 SyntaxKind op = Advance().Kind();
                 ExpressionSyntax operand = ParseUnary();
                 return ExpressionSyntax.Unary(op, operand);
@@ -577,7 +659,7 @@ namespace Hydrogen.Compiler.Syntax {
 				Consume(SyntaxKind.CloseParenToken, "Expected ')' after sizeof type");
 				return ExpressionSyntax.SizeOf(type);
 			}
-            if (Current().Kind() == SyntaxKind.IdentifierToken || Check(SyntaxKind.ThisKeyword)) {
+            if (Current().Kind() == SyntaxKind.IdentifierToken || Check(SyntaxKind.ThisKeyword) || Check(SyntaxKind.BaseKeyword)) {
                 return ExpressionSyntax.NameExpr(Advance().Text());
             }
 			if (Check(SyntaxKind.StackAllocKeyword)) {
@@ -623,6 +705,10 @@ namespace Hydrogen.Compiler.Syntax {
                    next == SyntaxKind.FalseKeyword ||
                    next == SyntaxKind.NullKeyword ||
                    next == SyntaxKind.NewKeyword ||
+                   next == SyntaxKind.SizeOfKeyword ||
+                   next == SyntaxKind.BangToken ||
+                   next == SyntaxKind.MinusToken ||
+                   next == SyntaxKind.PlusToken ||
                    next == SyntaxKind.OpenParenToken;
         }
 
@@ -659,6 +745,7 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private TypeSyntax ParseType() {
+            SyntaxToken start = Current();
             string name = "";
             if (IsPredefinedType(Current().Kind())) {
                 name = Advance().Text();
@@ -672,7 +759,10 @@ namespace Hydrogen.Compiler.Syntax {
                 Advance();
                 name = name + "[]";
             }
-            return new TypeSyntax(name);
+            TypeSyntax result = new TypeSyntax(name);
+            SyntaxToken end = Previous();
+            result.SetLocation(start.Line(), start.Column(), start.Position(), SpanLength(start, end));
+            return result;
         }
 
         private bool IsPredefinedType(SyntaxKind kind) {
@@ -737,6 +827,17 @@ namespace Hydrogen.Compiler.Syntax {
 
         private SyntaxToken Current() {
             return Peek(0);
+        }
+
+        private SyntaxToken Previous() {
+            if (index == 0) { return tokens.Get(0); }
+            return tokens.Get(index - 1);
+        }
+
+        private int SpanLength(SyntaxToken start, SyntaxToken end) {
+            int length = end.Position() + end.Text().Length - start.Position();
+            if (length < 0) { return 0; }
+            return length;
         }
 
         private SyntaxToken Peek(int offset) {
@@ -883,6 +984,12 @@ namespace Hydrogen.Compiler.Syntax {
             }
             next[count] = item;
             return next;
+        }
+
+        private string[] AppendString(string[] items, int count, string item) {
+            string[] next = new string[count + 1]; int i = 0;
+            while (i < count) { next[i] = items[i]; i = i + 1; }
+            next[count] = item; return next;
         }
 
 		private EnumMemberSyntax[] AppendEnumMember(EnumMemberSyntax[] items, int count, EnumMemberSyntax item) {

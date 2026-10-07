@@ -6,21 +6,95 @@ The Hydrogen-written compiler produces standalone Linux x86-64 executables, a co
 
 | Tool | Use it for | Output or execution |
 | --- | --- | --- |
-| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI hello-world proof | Linux x64 ELF or constrained `uefi-x64` PE32+ output; no external compiler or linker |
-| `hy` (C++ SDK) | Build/run/test/check/fmt/new/package/LSP workflows; UEFI hello-world proof | Interpreter, host C backend, or constrained `uefi-x64` PE32+ output |
+| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI console and chain-loading proof | Linux x64 ELF or constrained `uefi-x64` PE32+ output; no external compiler or linker |
+| `hy` (C++ SDK) | Build/run/test/check/fmt/new/package/LSP workflows; UEFI console proof | Interpreter, host C backend, or constrained `uefi-x64` PE32+ output |
 | `hyrun` | Direct interpreted execution | Shares the SDK semantic pipeline |
 | `hyc build` | Compatibility build command | Host C backend, executables or static libraries |
 
 See the [language and tool reference](https://aurora-softwares.github.io/Hylang-Docs/) and [native compiler guide](samples/self_hosting/README.md) for the supported features of each route.
+
+## Package a self-hosted release
+
+After you have verified and renamed the final self-hosted compiler to `safe/hy`,
+create a Linux x86-64 release archive with:
+
+```bash
+cmake -DSOURCE_DIR="$PWD" -DVERSION=alpha-0.0.1 -P cmake/PackageHydrogenRelease.cmake
+```
+
+This writes `releases/hydrogen-alpha-0.0.1-linux-x86_64.tar.gz` and its adjacent
+`.sha256` checksum. The archive contains `bin/hy`, a release README, build
+metadata, and `SHA256SUMS` for the executable. The command refuses to overwrite
+an existing release; pass `-DFORCE=ON` only when intentionally rebuilding it.
+
+If CMake is already configured, the equivalent target is:
+
+```bash
+cmake -S . -B build -DHYDROGEN_RELEASE_VERSION=alpha-0.0.1
+cmake --build build --target hydrogen_package_release
+```
 
 ## Build the tools
 
 Run these commands from this repository's root. The SDK requires CMake 3.20 or newer and a C++20 compiler. Its executable builds also require a host C compiler; static-library builds require an archiver. The direct native compiler targets Linux x86-64.
 
 ```bash
-cmake -S . -B build
-cmake --build build
-cmake --build build --target hydrogen_stage1
+cd /home/rsmith/Projects/Aurora-Softwares/Hylang-Compiler
+
+# Build the C++ stage 0 compiler.
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target hy --parallel
+
+./build/hy --help
+
+# Use stage 0 to produce the temporary Hydrogen bootstrap compiler.
+mkdir -p build/self_hosting
+rm -f build/self_hosting/hydrogen-bootstrap
+
+./build/hy build samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build/self_hosting/hydrogen-bootstrap
+
+chmod +x build/self_hosting/hydrogen-bootstrap
+
+# This is the temporary Hydrogen bootstrap compiler.
+./build/self_hosting/hydrogen-bootstrap --help
+
+# Bootstrap compiler -> stage 1.
+rm -f build/self_hosting/hydrogen-stage1.pending
+
+./build/self_hosting/hydrogen-bootstrap build ./samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o ./build/self_hosting/hydrogen-stage1.pending
+
+chmod +x build/self_hosting/hydrogen-stage1.pending
+mv build/self_hosting/hydrogen-stage1.pending build/self_hosting/hydrogen-stage1
+
+# This is stage 1.
+./build/self_hosting/hydrogen-stage1 --help
+
+# Stage 1 -> stage 2.
+rm -f build/self_hosting/hydrogen-stage2.pending
+
+./build/self_hosting/hydrogen-stage1 build ./samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o ./build/self_hosting/hydrogen-stage2.pending
+
+chmod +x build/self_hosting/hydrogen-stage2.pending
+mv build/self_hosting/hydrogen-stage2.pending build/self_hosting/hydrogen-stage2
+
+# This is stage 2.
+./build/self_hosting/hydrogen-stage2 --help
+
+# Stage 2 -> stage 3.
+rm -f build/self_hosting/hydrogen-stage3.pending
+
+./build/self_hosting/hydrogen-stage2 build ./samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o ./build/self_hosting/hydrogen-stage3.pending
+
+chmod +x build/self_hosting/hydrogen-stage3.pending
+mv build/self_hosting/hydrogen-stage3.pending build/self_hosting/hydrogen-stage3
+
+# This is stage 3.
+./build/self_hosting/hydrogen-stage3 --help
+
+# Stage 2 and stage 3 should be byte-identical.
+sha256sum build/self_hosting/hydrogen-stage2 build/self_hosting/hydrogen-stage3
+
+cmp build/self_hosting/hydrogen-stage2 build/self_hosting/hydrogen-stage3
 ```
 
 The native target initially uses the SDK's C backend to create a seed, then Hydrogen's own backend compiles the complete compiler CLI project and its referenced libraries. The resulting `build/self_hosting/hydrogen-stage1` has no C/C++ toolchain dependency when compiling supported programs.
@@ -74,12 +148,50 @@ Hello, Hydrogen
 
 Native output files need execute permission. Compilation failures return a nonzero status and do not create or overwrite the output; check that status before running an existing artifact.
 
-## UEFI hello-world proof
+## UEFI console proof
 
-The SDK compiler can also emit a bootable x86_64 UEFI PE32+ application for a
-deliberately constrained proof of concept. The input must have a normal Hylang
-`Main` method containing exactly one `System.Console.WriteLine` with a printable
-ASCII string literal:
+The self-hosted compiler can emit a bootable x86_64 UEFI PE32+ application.
+Its `Main` method can call `System.Uefi.ClearScreen()` before console output,
+call `System.Uefi.Await()` to wait for and consume one keyboard event, and
+contain multiple `System.Console.WriteLine` calls with ASCII string literals. A
+UEFI program may also call
+`System.Uefi.StartImage("\\EFI\\AUSTRALIS\\KERNEL.EFI")` to read an EFI
+application from the same FAT volume and start it through UEFI boot services.
+For the first freestanding kernel handoff, call
+`System.Uefi.ExitBootServices()`, `System.Kernel.MemoryMap.Initialize()`,
+`System.Kernel.Memory.Initialize()`,
+`System.Kernel.VirtualMemory.Initialize()`,
+`System.Kernel.VirtualMemory.ApplyPolicy()`, optional
+`System.Kernel.Memory.AllocatePage()` calls,
+`System.Kernel.Heap.Initialize()`, optional
+`System.Kernel.Heap.Allocate(<literal-byte-count>)` calls,
+`System.Kernel.Framebuffer.Initialize()`, and literal
+`System.Kernel.Framebuffer.WriteLine(<text>)` calls, then
+`System.Kernel.Halt()`. The
+generated image captures a final UEFI memory map, chooses the largest
+`EfiConventionalMemory` descriptor, reserves and clears its first 4 KiB page,
+and writes the resulting physical-page range to a writable `KernelBootInfo`
+record. It reserves 64 descriptor slots, retries the final
+`GetMemoryMap`/`ExitBootServices` pair up to eight times, then copies every
+present PML4, PDPT, PD, and PT page into allocator pages, records the new root,
+and switches `CR3` to it. Leaf mappings retain their existing physical frames
+and attributes. The PE32+ image has a zero image base and RIP-relative internal
+references. Post-handoff Hydrogen code receives the record pointer in `RDI`; its
+state is `127` after the framebuffer console is active, before interrupts are
+disabled and the CPU idles. Each `AllocatePage()` call reserves and zeros one 4 KiB page and
+writes its physical address to `KernelBootInfo + 72`. `Heap.Initialize()` adds
+a zeroed heap page; `Heap.Allocate()` accepts a literal size from 1 through
+1 MiB, aligns it to 16 bytes, grows the heap with contiguous physical pages,
+and writes its address to `KernelBootInfo + 104`. This bootstrap heap is
+monotonic and does not free or reuse allocations.
+Framebuffer initialization locates GOP before `ExitBootServices`, stores its
+base, size, geometry, and pixel format in `KernelBootInfo`, clears the display
+directly after the handoff, and renders printable ASCII with an embedded 8x8
+font. It accepts the standard RGB and BGR 32-bit GOP modes.
+The paging walker supports the normal four-level x86_64 mode; it detects LA57
+and halts before replacing `CR3` on a five-level firmware hierarchy.
+The SDK compiler's older UEFI path still accepts only one printable ASCII
+`WriteLine` literal.
 
 ```bash
 ./build/self_hosting/hydrogen-stage1 compile tests/uefi_hello.hy --target uefi-x64 -o build/BOOTX64.EFI
@@ -89,9 +201,14 @@ file build/BOOTX64.EFI
 The result is an EFI application, not a Linux ELF. The self-hosted compiler
 emits a PE32+ image, uses the UEFI Microsoft x64 entry ABI, writes an ASCII
 message as UTF-16 through the firmware `OutputString` function pointer, and
-then remains on screen. This target has no managed runtime, Linux syscalls,
-allocator, or general method support yet; it is the bootability proof on the
-path to a complete firmware backend.
+then remains on screen. The chain-loading intrinsic uses the loaded-image,
+simple-file-system, and file protocols to pass an in-memory EFI application to
+`LoadImage` and `StartImage`. The kernel handoff collects the final memory map,
+materializes `KernelBootInfo`, invokes `ExitBootServices`, initializes a
+bootstrap physical-page range, copies every present paging-structure page into
+allocator-owned memory, removes the null page mapping, then halts with interrupts disabled. This target has no
+managed runtime, Linux syscalls, arbitrary method compilation, raw freestanding
+kernel-image format, or general post-handoff runtime yet.
 
 Alternatively, interpret or build with the SDK:
 
@@ -122,6 +239,38 @@ Paths are relative to the containing manifest. Use `type = "lib"` for a referenc
 chmod +x build/hello-project
 ./build/hello-project
 ```
+
+For OS development, the self-hosted compiler supports `type = "efi"` for a
+UEFI application, `type = "kernel"` for a kernel image, and `type = "os"` for
+an aggregate project. Both `efi` and `kernel` currently emit x86-64 PE32+ UEFI
+applications. The `kernel` type identifies the image's role; a raw freestanding
+kernel format is not yet available.
+
+An OS project lists component `.hyproj` files in `project_references` and has
+no sources of its own. Each component sets an `output` path relative to the
+build directory, such as `EFI/BOOT/BOOTX64.EFI`. Hydrogen compiles each
+component independently:
+
+```toml
+# OS.hyproj
+format = 2
+type = "os"
+project_references = ["Boot/Boot.hyproj", "Kernel/Kernel.hyproj"]
+
+# In Boot/Boot.hyproj: type = "efi", output = "EFI/BOOT/BOOTX64.EFI"
+# In Kernel/Kernel.hyproj: type = "kernel", output = "EFI/OS/KERNEL.EFI"
+```
+
+```bash
+./build/self_hosting/hydrogen-stage1 build OS/OS.hyproj -o build/efi
+```
+
+The output directory contains separate EFI applications ready for image
+packaging. You can also build an `efi` or `kernel` project directly with `-o`
+pointing to one EFI file. Scaffold them with `hydrogen-stage1 new efi <name>`,
+`hydrogen-stage1 new kernel <name>`, or `hydrogen-stage1 new os <name>`.
+These project types are currently available in
+`hydrogen-stage1`.
 
 SDK projects additionally support workspaces, test projects, local package dependencies, caching, and static-library artifacts. Useful SDK commands:
 

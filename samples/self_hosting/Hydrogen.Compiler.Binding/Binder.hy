@@ -117,18 +117,54 @@ namespace Hydrogen.Compiler.Binding {
         }
 
         private BoundOp BindExpressionStatement(StatementSyntax statement, DiagnosticBag diagnostics) {
-            // Only support System.Console.WriteLine("literal");
+            // The UEFI proof target accepts literal console output, a literal
+            // firmware image path to chain-load, and the kernel handoff calls.
             ExpressionSyntax expression = statement.Expression();
             if (expression.Kind() != ExpressionSyntax.KindInvocation()) {
                 return null;
             }
 
             ExpressionSyntax target = expression.Target();
-            if (!IsSystemConsoleWriteLine(target)) {
-                return null;
-            }
-
             ExpressionSyntax[] args = expression.Arguments();
+            if (args.Length == 0 && IsSystemUefiClearScreen(target)) {
+                return new BoundOp(BoundOp.KindClearScreen(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemUefiAwait(target)) {
+                return new BoundOp(BoundOp.KindAwaitKey(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemUefiExitBootServices(target)) {
+                return new BoundOp(BoundOp.KindExitBootServices(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelHalt(target)) {
+                return new BoundOp(BoundOp.KindKernelHalt(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelMemoryMapInitialize(target)) {
+                return new BoundOp(BoundOp.KindInitializeMemoryMap(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelMemoryInitialize(target)) {
+                return new BoundOp(BoundOp.KindInitializeKernelMemory(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelVirtualMemoryInitialize(target)) {
+                return new BoundOp(BoundOp.KindInitializeVirtualMemory(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelVirtualMemoryApplyPolicy(target)) {
+                return new BoundOp(BoundOp.KindApplyKernelMappingPolicy(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelMemoryAllocatePage(target)) {
+                return new BoundOp(BoundOp.KindAllocateKernelPage(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelHeapInitialize(target)) {
+                return new BoundOp(BoundOp.KindInitializeKernelHeap(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelFramebufferInitialize(target)) {
+                return new BoundOp(BoundOp.KindInitializeFramebuffer(), "", 0);
+            }
+            if (args.Length == 1 && IsSystemKernelHeapAllocate(target)) {
+                if (args[0].Kind() != ExpressionSyntax.KindLiteral() || args[0].LiteralKind() != "number") {
+                    return null;
+                }
+                return new BoundOp(BoundOp.KindAllocateKernelHeap(), "", ParseInt(args[0].LiteralText()));
+            }
             if (args.Length != 1) {
                 return null;
             }
@@ -140,7 +176,16 @@ namespace Hydrogen.Compiler.Binding {
             }
 
             // Lexer gives us raw string token text without quotes.
-            return new BoundOp(BoundOp.KindWriteLineLiteral(), args[0].LiteralText(), 0);
+            if (IsSystemConsoleWriteLine(target)) {
+                return new BoundOp(BoundOp.KindWriteLineLiteral(), args[0].LiteralText(), 0);
+            }
+            if (IsSystemUefiStartImage(target)) {
+                return new BoundOp(BoundOp.KindStartImageLiteral(), args[0].LiteralText(), 0);
+            }
+            if (IsSystemKernelFramebufferWriteLine(target)) {
+                return new BoundOp(BoundOp.KindFramebufferWriteLineLiteral(), args[0].LiteralText(), 0);
+            }
+            return null;
         }
 
         private bool IsSystemConsoleWriteLine(ExpressionSyntax target) {
@@ -159,6 +204,363 @@ namespace Hydrogen.Compiler.Binding {
                 return false;
             }
             ExpressionSyntax systemExpr = receiver.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemUefiStartImage(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "StartImage") {
+                return false;
+            }
+            ExpressionSyntax receiver = target.Receiver();
+            if (receiver.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (receiver.MemberName() != "Uefi") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = receiver.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemUefiExitBootServices(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "ExitBootServices") {
+                return false;
+            }
+            ExpressionSyntax receiver = target.Receiver();
+            if (receiver.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (receiver.MemberName() != "Uefi") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = receiver.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemUefiClearScreen(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "ClearScreen") {
+                return false;
+            }
+            ExpressionSyntax receiver = target.Receiver();
+            if (receiver.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (receiver.MemberName() != "Uefi") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = receiver.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemUefiAwait(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "Await") {
+                return false;
+            }
+            ExpressionSyntax receiver = target.Receiver();
+            if (receiver.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (receiver.MemberName() != "Uefi") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = receiver.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemKernelHalt(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "Halt") {
+                return false;
+            }
+            ExpressionSyntax receiver = target.Receiver();
+            if (receiver.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (receiver.MemberName() != "Kernel") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = receiver.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemKernelMemoryMapInitialize(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "Initialize") {
+                return false;
+            }
+            ExpressionSyntax memoryMap = target.Receiver();
+            if (memoryMap.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (memoryMap.MemberName() != "MemoryMap") {
+                return false;
+            }
+            ExpressionSyntax kernel = memoryMap.Receiver();
+            if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (kernel.MemberName() != "Kernel") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = kernel.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemKernelMemoryInitialize(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "Initialize") {
+                return false;
+            }
+            ExpressionSyntax memory = target.Receiver();
+            if (memory.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (memory.MemberName() != "Memory") {
+                return false;
+            }
+            ExpressionSyntax kernel = memory.Receiver();
+            if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (kernel.MemberName() != "Kernel") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = kernel.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemKernelVirtualMemoryInitialize(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "Initialize") {
+                return false;
+            }
+            ExpressionSyntax memory = target.Receiver();
+            if (memory.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (memory.MemberName() != "VirtualMemory") {
+                return false;
+            }
+            ExpressionSyntax kernel = memory.Receiver();
+            if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (kernel.MemberName() != "Kernel") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = kernel.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemKernelVirtualMemoryApplyPolicy(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "ApplyPolicy") {
+                return false;
+            }
+            ExpressionSyntax memory = target.Receiver();
+            if (memory.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (memory.MemberName() != "VirtualMemory") {
+                return false;
+            }
+            ExpressionSyntax kernel = memory.Receiver();
+            if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (kernel.MemberName() != "Kernel") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = kernel.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemKernelMemoryAllocatePage(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "AllocatePage") {
+                return false;
+            }
+            ExpressionSyntax memory = target.Receiver();
+            if (memory.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (memory.MemberName() != "Memory") {
+                return false;
+            }
+            ExpressionSyntax kernel = memory.Receiver();
+            if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (kernel.MemberName() != "Kernel") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = kernel.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemKernelHeapInitialize(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "Initialize") {
+                return false;
+            }
+            ExpressionSyntax heap = target.Receiver();
+            if (heap.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (heap.MemberName() != "Heap") {
+                return false;
+            }
+            ExpressionSyntax kernel = heap.Receiver();
+            if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (kernel.MemberName() != "Kernel") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = kernel.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemKernelHeapAllocate(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "Allocate") {
+                return false;
+            }
+            ExpressionSyntax heap = target.Receiver();
+            if (heap.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (heap.MemberName() != "Heap") {
+                return false;
+            }
+            ExpressionSyntax kernel = heap.Receiver();
+            if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (kernel.MemberName() != "Kernel") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = kernel.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemKernelFramebufferInitialize(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "Initialize") {
+                return false;
+            }
+            ExpressionSyntax framebuffer = target.Receiver();
+            if (framebuffer.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (framebuffer.MemberName() != "Framebuffer") {
+                return false;
+            }
+            ExpressionSyntax kernel = framebuffer.Receiver();
+            if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (kernel.MemberName() != "Kernel") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = kernel.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemKernelFramebufferWriteLine(ExpressionSyntax target) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != "WriteLine") {
+                return false;
+            }
+            ExpressionSyntax framebuffer = target.Receiver();
+            if (framebuffer.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (framebuffer.MemberName() != "Framebuffer") {
+                return false;
+            }
+            ExpressionSyntax kernel = framebuffer.Receiver();
+            if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (kernel.MemberName() != "Kernel") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = kernel.Receiver();
             if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
                 return false;
             }

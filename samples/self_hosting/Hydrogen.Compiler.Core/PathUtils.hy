@@ -15,6 +15,18 @@ namespace Hydrogen.Compiler.Core {
             return ".";
         }
 
+        public static string BaseName(string path) {
+            string normalized = Normalize(path);
+            int i = normalized.Length - 1;
+            while (i >= 0) {
+                if (normalized[i] == "/") {
+                    return Slice(normalized, i + 1, normalized.Length - i - 1);
+                }
+                i = i - 1;
+            }
+            return normalized;
+        }
+
         public static string Join(string baseDir, string relative) {
             if (relative.Length > 0) {
                 if (relative[0] == "/") {

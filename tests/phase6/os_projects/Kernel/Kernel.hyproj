@@ -1,0 +1,6 @@
+format = 2
+name = "Test.Kernel"
+type = "kernel"
+output = "EFI/TEST/KERNEL.EFI"
+sources = ["program.hy"]
+project_references = []
