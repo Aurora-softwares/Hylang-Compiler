@@ -4,18 +4,21 @@ namespace Hydrogen.Compiler.Core {
     public class HyprojManifest {
         private int format;
         private string type;
+        private string output;
         private string[] sources;
         private string[] projectReferences;
 
-        public HyprojManifest(int inputFormat, string inputType, string[] inputSources, string[] inputProjectReferences) {
+        public HyprojManifest(int inputFormat, string inputType, string inputOutput, string[] inputSources, string[] inputProjectReferences) {
             format = inputFormat;
             type = inputType;
+            output = inputOutput;
             sources = inputSources;
             projectReferences = inputProjectReferences;
         }
 
         public int Format() { return format; }
         public string Type() { return type; }
+        public string Output() { return output; }
         public string[] Sources() { return sources; }
         public string[] ProjectReferences() { return projectReferences; }
 
@@ -23,6 +26,7 @@ namespace Hydrogen.Compiler.Core {
             string text = System.IO.File.ReadAllText(path);
             int format = 0;
             string type = "";
+            string output = "";
             string[] sources = new string[0];
             string[] projectReferences = new string[0];
 
@@ -50,6 +54,8 @@ namespace Hydrogen.Compiler.Core {
                     format = ParseInt(value);
                 } else if (key == "type") {
                     type = Unquote(value);
+                } else if (key == "output") {
+                    output = Unquote(value);
                 } else if (key == "sources") {
                     sources = ParseStringArray(value);
                 } else if (key == "project_references") {
@@ -58,7 +64,7 @@ namespace Hydrogen.Compiler.Core {
                 i = i + 1;
             }
 
-            return new HyprojManifest(format, type, sources, projectReferences);
+            return new HyprojManifest(format, type, output, sources, projectReferences);
         }
 
         private static string[] SplitLines(string text) {

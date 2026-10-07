@@ -1,0 +1,6 @@
+format = 2
+name = "Test.Boot"
+type = "efi"
+output = "EFI/BOOT/BOOTX64.EFI"
+sources = ["program.hy"]
+project_references = []

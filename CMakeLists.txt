@@ -1351,6 +1351,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
     )
     set_tests_properties(hy_stage1_compile_uefi_hello PROPERTIES
         FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_build_os_project
+        COMMAND ${CMAKE_COMMAND}
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DPROJECT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/os_projects/OS.hyproj
+            -DOUTPUT_DIR=${stage1_test_dir}/os-project
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBuildOsProject.cmake
+    )
+    set_tests_properties(hy_stage1_build_os_project PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
     add_test(NAME hy_stage1_compile_uefi_multiline
         COMMAND ${CMAKE_COMMAND}
             -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
@@ -1359,6 +1368,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileUefiMultiline.cmake
     )
     set_tests_properties(hy_stage1_compile_uefi_multiline PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_compile_uefi_console_controls
+        COMMAND ${CMAKE_COMMAND}
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/uefi_console_controls.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/uefi_console_controls.efi
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileUefiConsoleControls.cmake
+    )
+    set_tests_properties(hy_stage1_compile_uefi_console_controls PROPERTIES
         FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
     add_test(NAME hy_stage1_compile_uefi_chainload
         COMMAND ${CMAKE_COMMAND}
@@ -1377,6 +1395,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileUefiExitBootServices.cmake
     )
     set_tests_properties(hy_stage1_compile_uefi_exit_boot_services PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_compile_uefi_framebuffer
+        COMMAND ${CMAKE_COMMAND}
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/uefi_framebuffer.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/uefi_framebuffer.efi
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileUefiFramebuffer.cmake
+    )
+    set_tests_properties(hy_stage1_compile_uefi_framebuffer PROPERTIES
         FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
     find_program(HYDROGEN_PRLIMIT_BINARY prlimit REQUIRED)
     add_custom_target(hydrogen_bootstrap_proof

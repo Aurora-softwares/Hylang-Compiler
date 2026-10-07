@@ -77,12 +77,12 @@ namespace Hydrogen.Compiler.Cli {
 
         private static int New(string[] args) {
             if (args.Length != 3) {
-                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace <name>");
+                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|os|efi|kernel <name>");
                 return 1;
             }
             string kind = args[1];
             string destination = PathUtils.Normalize(args[2]);
-            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace") {
+            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace" && kind != "os" && kind != "efi" && kind != "kernel") {
                 System.Console.WriteLine("error: unknown project kind '" + kind + "'");
                 return 1;
             }
@@ -98,6 +98,11 @@ namespace Hydrogen.Compiler.Cli {
                 System.IO.File.WriteAllText(workspacePath, workspaceManifest);
                 return 0;
             }
+            if (kind == "os") {
+                string osPath = PathUtils.Join(destination, name + ".hyproj");
+                System.IO.File.WriteAllText(osPath, RenderManifest(name, "os", "", false));
+                return 0;
+            }
 
             string projectType = "exe";
             string sourceFile = "Program.hy";
@@ -106,6 +111,8 @@ namespace Hydrogen.Compiler.Cli {
                 sourceFile = "Library.hy";
             } else if (kind == "test") {
                 projectType = "test";
+            } else if (kind == "efi" || kind == "kernel") {
+                projectType = kind;
             }
             string manifestPath = PathUtils.Join(destination, name + ".hyproj");
             string manifestText = RenderManifest(name, projectType, sourceFile, false);
@@ -123,7 +130,14 @@ namespace Hydrogen.Compiler.Cli {
             text = text + "type = \"" + type + "\"\n";
             if (workspace) {
                 text = text + "members = []\n";
+            } else if (type == "os") {
+                text = text + "project_references = []\n";
             } else {
+                if (type == "efi") {
+                    text = text + "output = \"EFI/" + name + ".EFI\"\n";
+                } else if (type == "kernel") {
+                    text = text + "output = \"EFI/KERNEL.EFI\"\n";
+                }
                 text = text + "sources = [\"" + source + "\"]\n";
                 text = text + "project_references = []\n";
             }
@@ -162,6 +176,12 @@ namespace Hydrogen.Compiler.Cli {
         }
 
         private static int Check(string path, bool emitIr) {
+            if (EndsWith(path, ".hyproj")) {
+                HyprojManifest manifest = HyprojManifest.Load(path);
+                if (manifest.Type() == "os") {
+                    return ProcessOsProject(path, manifest, "", true, emitIr);
+                }
+            }
             NativeCompiler compiler = new NativeCompiler();
             if (emitIr) {
                 NativeCompilerResult result = compiler.CheckFileEmitIr(path);
@@ -212,11 +232,11 @@ namespace Hydrogen.Compiler.Cli {
 
         private static int Build(string[] args) {
             if (args.Length != 4) {
-                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output>");
+                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory>");
                 return 1;
             }
             if (args[2] != "-o") {
-                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output>");
+                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory>");
                 return 1;
             }
 
@@ -231,13 +251,18 @@ namespace Hydrogen.Compiler.Cli {
                 System.Console.WriteLine("error: unsupported project format (expected format = 2)");
                 return 1;
             }
-            if (manifest.Type() != "exe") {
-                System.Console.WriteLine("error: only type = \"exe\" is supported by hy build in this phase");
+            if (manifest.Type() == "os") {
+                return ProcessOsProject(projectPath, manifest, args[3], false, false);
+            }
+            if (manifest.Type() != "exe" && manifest.Type() != "efi" && manifest.Type() != "kernel") {
+                System.Console.WriteLine("error: hy build supports exe, efi, kernel, and os projects");
                 return 1;
             }
 
             NativeCompiler compiler = new NativeCompiler();
-            NativeCompilerResult result = compiler.BuildProject(projectPath, args[3]);
+            NativeCompilerResult result;
+            if (manifest.Type() == "exe") { result = compiler.BuildProject(projectPath, args[3]); }
+            else { result = compiler.BuildProjectUefi(projectPath, args[3]); }
             if (!result.Success()) {
                 System.Console.Write(result.DiagnosticsText());
                 return 1;
@@ -246,11 +271,97 @@ namespace Hydrogen.Compiler.Cli {
             return 0;
         }
 
+        private static int ProcessOsProject(string projectPath, HyprojManifest manifest, string outputDirectory, bool check, bool emitIr) {
+            if (manifest.Format() != 2) {
+                System.Console.WriteLine("error: unsupported OS project format (expected format = 2)");
+                return 1;
+            }
+            string[] references = manifest.ProjectReferences();
+            if (manifest.Sources().Length != 0 || references.Length == 0) {
+                System.Console.WriteLine("error: OS projects require project_references and no sources");
+                return 1;
+            }
+
+            string[] paths = new string[references.Length];
+            string[] outputs = new string[references.Length];
+            int i = 0;
+            while (i < references.Length) {
+                string path = PathUtils.Join(PathUtils.DirName(projectPath), references[i]);
+                if (!System.IO.File.Exists(path)) {
+                    System.Console.WriteLine("error: referenced project not found: " + path);
+                    return 1;
+                }
+                HyprojManifest child = HyprojManifest.Load(path);
+                if (child.Format() != 2 || (child.Type() != "exe" && child.Type() != "efi" && child.Type() != "kernel")) {
+                    System.Console.WriteLine("error: OS reference must be a format 2 exe, efi, or kernel project: " + path);
+                    return 1;
+                }
+                string output = child.Output();
+                if (!ValidOsOutput(output)) {
+                    System.Console.WriteLine("error: OS project output must be a relative path below the output directory: " + path);
+                    return 1;
+                }
+                output = PathUtils.Normalize(output);
+                int previous = 0;
+                while (previous < i) {
+                    if (outputs[previous] == output) {
+                        System.Console.WriteLine("error: duplicate OS output path: " + output);
+                        return 1;
+                    }
+                    previous = previous + 1;
+                }
+                paths[i] = path;
+                outputs[i] = output;
+                i = i + 1;
+            }
+
+            NativeCompiler compiler = new NativeCompiler();
+            int index = 0;
+            while (index < paths.Length) {
+                string outputPath = PathUtils.Join(outputDirectory, outputs[index]);
+                NativeCompilerResult result;
+                if (check) {
+                    if (emitIr) { result = compiler.CheckFileEmitIr(paths[index]); }
+                    else { result = compiler.CheckFile(paths[index]); }
+                } else {
+                    result = compiler.BuildProjectUefi(paths[index], outputPath);
+                }
+                if (!result.Success()) {
+                    System.Console.Write(result.DiagnosticsText());
+                    return 1;
+                }
+                if (check) {
+                    System.Console.WriteLine("check ok: " + paths[index]);
+                    if (emitIr) { System.Console.WriteLine(result.DiagnosticsText()); }
+                } else {
+                    System.Console.WriteLine("wrote " + outputPath);
+                }
+                index = index + 1;
+            }
+            return 0;
+        }
+
+        private static bool ValidOsOutput(string output) {
+            if (output == "" || output[0] == "/" || output[0] == "\\") { return false; }
+            string normalized = PathUtils.Normalize(output);
+            return normalized != "." && normalized != ".." && !StartsWith(normalized, "../");
+        }
+
         private static bool StartsWith(string text, string prefix) {
             if (text.Length < prefix.Length) { return false; }
             int i = 0;
             while (i < prefix.Length) {
                 if (text[i] != prefix[i]) { return false; }
+                i = i + 1;
+            }
+            return true;
+        }
+
+        private static bool EndsWith(string text, string suffix) {
+            if (text.Length < suffix.Length) { return false; }
+            int i = 0;
+            while (i < suffix.Length) {
+                if (text[text.Length - suffix.Length + i] != suffix[i]) { return false; }
                 i = i + 1;
             }
             return true;
@@ -304,12 +415,12 @@ namespace Hydrogen.Compiler.Cli {
         }
 
         private static void PrintUsage() {
-            System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace <name>");
+            System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|os|efi|kernel <name>");
             System.Console.WriteLine("usage: hy <tokens|parse|check|build> <file.hy|project.hyproj>");
             System.Console.WriteLine("usage: hy check <file.hy> --emit-ir");
             System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");
             System.Console.WriteLine("usage: hy compile <file.hy> --target uefi-x64 -o <output>");
-            System.Console.WriteLine("usage: hy build <project.hyproj> -o <output>");
+            System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory>");
             System.Console.WriteLine("usage: hy stage-compare <project.hyproj> --stage1 <path> --stage2 <path>");
         }
     }

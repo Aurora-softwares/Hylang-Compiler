@@ -10,6 +10,14 @@ namespace Hydrogen.Compiler.Binding {
         public static int KindInitializeMemoryMap() { return 6; }
         public static int KindInitializeKernelMemory() { return 7; }
         public static int KindInitializeVirtualMemory() { return 8; }
+        public static int KindClearScreen() { return 9; }
+        public static int KindAwaitKey() { return 10; }
+        public static int KindApplyKernelMappingPolicy() { return 11; }
+        public static int KindAllocateKernelPage() { return 12; }
+        public static int KindInitializeKernelHeap() { return 13; }
+        public static int KindAllocateKernelHeap() { return 14; }
+        public static int KindInitializeFramebuffer() { return 15; }
+        public static int KindFramebufferWriteLineLiteral() { return 16; }
 
         private int kind;
         private string text;
@@ -85,6 +93,22 @@ namespace Hydrogen.Compiler.Binding {
                     text = text + "  Memory.Initialize()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindInitializeVirtualMemory()) {
                     text = text + "  VirtualMemory.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindApplyKernelMappingPolicy()) {
+                    text = text + "  VirtualMemory.ApplyPolicy()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindAllocateKernelPage()) {
+                    text = text + "  Memory.AllocatePage()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializeKernelHeap()) {
+                    text = text + "  Heap.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindAllocateKernelHeap()) {
+                    text = text + "  Heap.Allocate(" + entryOps[o].ExitCode() + ")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializeFramebuffer()) {
+                    text = text + "  Framebuffer.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindFramebufferWriteLineLiteral()) {
+                    text = text + "  Framebuffer.WriteLine(\"" + entryOps[o].Text() + "\")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindClearScreen()) {
+                    text = text + "  Uefi.ClearScreen()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindAwaitKey()) {
+                    text = text + "  Uefi.Await()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindExit()) {
                     text = text + "  Exit(" + entryOps[o].ExitCode() + ")\n";
                 } else {

@@ -26,10 +26,14 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
     public class NativeCompiler {
         public NativeCompilerResult BuildProject(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, false);
         }
 
-        private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr) {
+        public NativeCompilerResult BuildProjectUefi(string projectPath, string outputPath) {
+            return ProcessProject(projectPath, outputPath, false, false, true);
+        }
+
+        private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi) {
             ProjectClosure closure = ProjectClosure.Collect(projectPath);
             string[] projects = closure.Projects();
             if (projects.Length == 1 && StartsWith(projects[0], "<cycle:")) {
@@ -72,6 +76,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
 
             if (check) { return new NativeCompilerResult(true, DebugProgram(program, emitIr)); }
+            if (uefi) { return EmitUefiImage(program, projectPath, outputPath); }
             return EmitNativeImage(program, projectPath, outputPath);
         }
 
@@ -153,7 +158,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private NativeCompilerResult CheckFileInternal(string inputPath, bool emitIr) {
-            if (IsProject(inputPath)) { return ProcessProject(inputPath, "", true, emitIr); }
+            if (IsProject(inputPath)) { return ProcessProject(inputPath, "", true, emitIr, false); }
             SourceText source = SourceText.FromFile(inputPath);
             DiagnosticBag subsetDiagnostics = new DiagnosticBag();
             SelfHostSubsetValidator subset = new SelfHostSubsetValidator();

@@ -151,24 +151,45 @@ Native output files need execute permission. Compilation failures return a nonze
 ## UEFI console proof
 
 The self-hosted compiler can emit a bootable x86_64 UEFI PE32+ application.
-Its `Main` method can contain multiple `System.Console.WriteLine` calls with
-ASCII string literals. A UEFI program may also call
+Its `Main` method can call `System.Uefi.ClearScreen()` before console output,
+call `System.Uefi.Await()` to wait for and consume one keyboard event, and
+contain multiple `System.Console.WriteLine` calls with ASCII string literals. A
+UEFI program may also call
 `System.Uefi.StartImage("\\EFI\\AUSTRALIS\\KERNEL.EFI")` to read an EFI
 application from the same FAT volume and start it through UEFI boot services.
 For the first freestanding kernel handoff, call
 `System.Uefi.ExitBootServices()`, `System.Kernel.MemoryMap.Initialize()`,
 `System.Kernel.Memory.Initialize()`,
-`System.Kernel.VirtualMemory.Initialize()`, then `System.Kernel.Halt()`. The
+`System.Kernel.VirtualMemory.Initialize()`,
+`System.Kernel.VirtualMemory.ApplyPolicy()`, optional
+`System.Kernel.Memory.AllocatePage()` calls,
+`System.Kernel.Heap.Initialize()`, optional
+`System.Kernel.Heap.Allocate(<literal-byte-count>)` calls,
+`System.Kernel.Framebuffer.Initialize()`, and literal
+`System.Kernel.Framebuffer.WriteLine(<text>)` calls, then
+`System.Kernel.Halt()`. The
 generated image captures a final UEFI memory map, chooses the largest
 `EfiConventionalMemory` descriptor, reserves and clears its first 4 KiB page,
 and writes the resulting physical-page range to a writable `KernelBootInfo`
 record. It reserves 64 descriptor slots, retries the final
-`GetMemoryMap`/`ExitBootServices` pair up to eight times, then copies the active
-PML4 into the allocator's next page, records that kernel-owned root, and switches
-`CR3` to it. The PE32+ image has a zero image base and RIP-relative internal
+`GetMemoryMap`/`ExitBootServices` pair up to eight times, then copies every
+present PML4, PDPT, PD, and PT page into allocator pages, records the new root,
+and switches `CR3` to it. Leaf mappings retain their existing physical frames
+and attributes. The PE32+ image has a zero image base and RIP-relative internal
 references. Post-handoff Hydrogen code receives the record pointer in `RDI`; its
-state is `7` after virtual-memory setup, before interrupts are disabled and the
-CPU idles.
+state is `127` after the framebuffer console is active, before interrupts are
+disabled and the CPU idles. Each `AllocatePage()` call reserves and zeros one 4 KiB page and
+writes its physical address to `KernelBootInfo + 72`. `Heap.Initialize()` adds
+a zeroed heap page; `Heap.Allocate()` accepts a literal size from 1 through
+1 MiB, aligns it to 16 bytes, grows the heap with contiguous physical pages,
+and writes its address to `KernelBootInfo + 104`. This bootstrap heap is
+monotonic and does not free or reuse allocations.
+Framebuffer initialization locates GOP before `ExitBootServices`, stores its
+base, size, geometry, and pixel format in `KernelBootInfo`, clears the display
+directly after the handoff, and renders printable ASCII with an embedded 8x8
+font. It accepts the standard RGB and BGR 32-bit GOP modes.
+The paging walker supports the normal four-level x86_64 mode; it detects LA57
+and halts before replacing `CR3` on a five-level firmware hierarchy.
 The SDK compiler's older UEFI path still accepts only one printable ASCII
 `WriteLine` literal.
 
@@ -184,10 +205,10 @@ then remains on screen. The chain-loading intrinsic uses the loaded-image,
 simple-file-system, and file protocols to pass an in-memory EFI application to
 `LoadImage` and `StartImage`. The kernel handoff collects the final memory map,
 materializes `KernelBootInfo`, invokes `ExitBootServices`, initializes a
-bootstrap physical-page range, clones the active PML4 into a kernel-owned page,
-then halts with interrupts disabled. This target has no managed runtime, Linux
-syscalls, general allocation API, arbitrary method support, independent
-lower-level page tables, or post-handoff framebuffer output yet.
+bootstrap physical-page range, copies every present paging-structure page into
+allocator-owned memory, removes the null page mapping, then halts with interrupts disabled. This target has no
+managed runtime, Linux syscalls, arbitrary method compilation, raw freestanding
+kernel-image format, or general post-handoff runtime yet.
 
 Alternatively, interpret or build with the SDK:
 
@@ -218,6 +239,38 @@ Paths are relative to the containing manifest. Use `type = "lib"` for a referenc
 chmod +x build/hello-project
 ./build/hello-project
 ```
+
+For OS development, the self-hosted compiler supports `type = "efi"` for a
+UEFI application, `type = "kernel"` for a kernel image, and `type = "os"` for
+an aggregate project. Both `efi` and `kernel` currently emit x86-64 PE32+ UEFI
+applications. The `kernel` type identifies the image's role; a raw freestanding
+kernel format is not yet available.
+
+An OS project lists component `.hyproj` files in `project_references` and has
+no sources of its own. Each component sets an `output` path relative to the
+build directory, such as `EFI/BOOT/BOOTX64.EFI`. Hydrogen compiles each
+component independently:
+
+```toml
+# OS.hyproj
+format = 2
+type = "os"
+project_references = ["Boot/Boot.hyproj", "Kernel/Kernel.hyproj"]
+
+# In Boot/Boot.hyproj: type = "efi", output = "EFI/BOOT/BOOTX64.EFI"
+# In Kernel/Kernel.hyproj: type = "kernel", output = "EFI/OS/KERNEL.EFI"
+```
+
+```bash
+./build/self_hosting/hydrogen-stage1 build OS/OS.hyproj -o build/efi
+```
+
+The output directory contains separate EFI applications ready for image
+packaging. You can also build an `efi` or `kernel` project directly with `-o`
+pointing to one EFI file. Scaffold them with `hydrogen-stage1 new efi <name>`,
+`hydrogen-stage1 new kernel <name>`, or `hydrogen-stage1 new os <name>`.
+These project types are currently available in
+`hydrogen-stage1`.
 
 SDK projects additionally support workspaces, test projects, local package dependencies, caching, and static-library artifacts. Useful SDK commands:
 
