@@ -159,6 +159,42 @@ namespace Hydrogen.Compiler.Binding {
             if (args.Length == 0 && IsSystemKernelFramebufferInitialize(target)) {
                 return new BoundOp(BoundOp.KindInitializeFramebuffer(), "", 0);
             }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Gdt", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeGdt(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Idt", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeIdt(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Interrupts", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeInterruptController(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Timer", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeTimer(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Interrupts", "Enable")) {
+                return new BoundOp(BoundOp.KindEnableInterrupts(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Interrupts", "Idle")) {
+                return new BoundOp(BoundOp.KindInterruptIdle(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Pci", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializePci(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Mmio", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeMmio(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Dma", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeDma(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Storage", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeStorage(), "", 0);
+            }
+            if (args.Length == 1 && IsSystemKernelSubsystemCall(target, "Dma", "AllocatePages")) {
+                if (args[0].Kind() != ExpressionSyntax.KindLiteral() || args[0].LiteralKind() != "number") {
+                    return null;
+                }
+                return new BoundOp(BoundOp.KindAllocateDmaPages(), "", ParseInt(args[0].LiteralText()));
+            }
             if (args.Length == 1 && IsSystemKernelHeapAllocate(target)) {
                 if (args[0].Kind() != ExpressionSyntax.KindLiteral() || args[0].LiteralKind() != "number") {
                     return null;
@@ -554,6 +590,34 @@ namespace Hydrogen.Compiler.Binding {
                 return false;
             }
             ExpressionSyntax kernel = framebuffer.Receiver();
+            if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (kernel.MemberName() != "Kernel") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = kernel.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemKernelSubsystemCall(ExpressionSyntax target, string subsystem, string method) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != method) {
+                return false;
+            }
+            ExpressionSyntax receiver = target.Receiver();
+            if (receiver.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (receiver.MemberName() != subsystem) {
+                return false;
+            }
+            ExpressionSyntax kernel = receiver.Receiver();
             if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
                 return false;
             }

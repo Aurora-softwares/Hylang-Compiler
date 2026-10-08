@@ -177,13 +177,32 @@ present PML4, PDPT, PD, and PT page into allocator pages, records the new root,
 and switches `CR3` to it. Leaf mappings retain their existing physical frames
 and attributes. The PE32+ image has a zero image base and RIP-relative internal
 references. Post-handoff Hydrogen code receives the record pointer in `RDI`; its
-state is `127` after the framebuffer console is active, before interrupts are
-disabled and the CPU idles. Each `AllocatePage()` call reserves and zeros one 4 KiB page and
+state is `127` after the framebuffer console is active. An interrupt-enabled
+kernel then calls `Gdt.Initialize()`, `Idt.Initialize()`,
+`Interrupts.Initialize()`, and `Timer.Initialize()`. It may call
+`Pci.Initialize()`, `Mmio.Initialize()`, `Dma.Initialize()`, and one or more
+literal `Dma.AllocatePages(<1..1024>)` calls before it enables interrupts and
+idles. PCI enumeration uses configuration mechanism #1 at ports `0xcf8` and
+`0xcfc`, records the first xHCI, AHCI, and NVMe functions, and maps a guarded,
+uncached, non-executable 64 KiB high register aperture for each valid memory
+BAR. DMA pages are contiguous, zeroed, and selected from conventional memory
+below 4 GiB. The compiler reserves the literal DMA requests from that interval;
+if the reserved slice overlaps the main page allocator, that slice is removed
+before allocations begin. Each `AllocatePage()` call reserves and zeros one 4 KiB page and
 writes its physical address to `KernelBootInfo + 72`. `Heap.Initialize()` adds
 a zeroed heap page; `Heap.Allocate()` accepts a literal size from 1 through
 1 MiB, aligns it to 16 bytes, grows the heap with contiguous physical pages,
 and writes its address to `KernelBootInfo + 104`. This bootstrap heap is
 monotonic and does not free or reuse allocations.
+After a DMA allocation, the interrupt kernel may call
+`System.Kernel.Storage.Initialize()` before `Interrupts.Enable()`. The emitted
+transport uses the discovered AHCI aperture and a bounded polling READ DMA EXT
+path to read LBA 0, LBA 1, and the GPT primary entry array. It validates the
+protective MBR, the GPT 1.0 header and CRC, and the primary entry-array CRC;
+the current bootstrap accepts 512-byte logical sectors and up to 256 standard
+128-byte GPT entries. It records the selected AHCI port and the first present
+GPT partition in KernelBootInfo ABI version 7. The image does not yet emit an
+NVMe transport or filesystem driver.
 Framebuffer initialization locates GOP before `ExitBootServices`, stores its
 base, size, geometry, and pixel format in `KernelBootInfo`, clears the display
 directly after the handoff, and renders printable ASCII with an embedded 8x8

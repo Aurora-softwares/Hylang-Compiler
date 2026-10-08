@@ -16,6 +16,17 @@ namespace Hydrogen.Compiler.IR {
         public static int KindAllocateKernelHeap() { return 14; }
         public static int KindInitializeFramebuffer() { return 15; }
         public static int KindFramebufferWriteLineLiteral() { return 16; }
+        public static int KindInitializeGdt() { return 17; }
+        public static int KindInitializeIdt() { return 18; }
+        public static int KindInitializeInterruptController() { return 19; }
+        public static int KindInitializeTimer() { return 20; }
+        public static int KindEnableInterrupts() { return 21; }
+        public static int KindInterruptIdle() { return 22; }
+        public static int KindInitializePci() { return 23; }
+        public static int KindInitializeMmio() { return 24; }
+        public static int KindInitializeDma() { return 25; }
+        public static int KindAllocateDmaPages() { return 26; }
+        public static int KindInitializeStorage() { return 27; }
 
         private int kind;
         private string text;
@@ -73,6 +84,28 @@ namespace Hydrogen.Compiler.IR {
                     text = text + "  Framebuffer.Initialize()\n";
                 } else if (ops[i].Kind() == IrOp.KindFramebufferWriteLineLiteral()) {
                     text = text + "  Framebuffer.WriteLine(\"" + ops[i].Text() + "\")\n";
+                } else if (ops[i].Kind() == IrOp.KindInitializeGdt()) {
+                    text = text + "  Gdt.Initialize()\n";
+                } else if (ops[i].Kind() == IrOp.KindInitializeIdt()) {
+                    text = text + "  Idt.Initialize()\n";
+                } else if (ops[i].Kind() == IrOp.KindInitializeInterruptController()) {
+                    text = text + "  Interrupts.Initialize()\n";
+                } else if (ops[i].Kind() == IrOp.KindInitializeTimer()) {
+                    text = text + "  Timer.Initialize()\n";
+                } else if (ops[i].Kind() == IrOp.KindEnableInterrupts()) {
+                    text = text + "  Interrupts.Enable()\n";
+                } else if (ops[i].Kind() == IrOp.KindInterruptIdle()) {
+                    text = text + "  Interrupts.Idle()\n";
+                } else if (ops[i].Kind() == IrOp.KindInitializePci()) {
+                    text = text + "  Pci.Initialize()\n";
+                } else if (ops[i].Kind() == IrOp.KindInitializeMmio()) {
+                    text = text + "  Mmio.Initialize()\n";
+                } else if (ops[i].Kind() == IrOp.KindInitializeDma()) {
+                    text = text + "  Dma.Initialize()\n";
+                } else if (ops[i].Kind() == IrOp.KindAllocateDmaPages()) {
+                    text = text + "  Dma.AllocatePages(" + ops[i].ExitCode() + ")\n";
+                } else if (ops[i].Kind() == IrOp.KindInitializeStorage()) {
+                    text = text + "  Storage.Initialize()\n";
                 } else if (ops[i].Kind() == IrOp.KindClearScreen()) {
                     text = text + "  Uefi.ClearScreen()\n";
                 } else if (ops[i].Kind() == IrOp.KindAwaitKey()) {

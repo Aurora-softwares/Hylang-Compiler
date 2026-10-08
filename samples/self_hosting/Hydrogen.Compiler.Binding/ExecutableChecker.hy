@@ -436,6 +436,17 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.Kernel.Heap.Allocate") { return Intrinsic(e, qualified, "int", "", "void"); }
             if (qualified == "System.Kernel.Framebuffer.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.Kernel.Framebuffer.WriteLine") { return Intrinsic(e, qualified, "string", "", "void"); }
+            if (qualified == "System.Kernel.Gdt.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Idt.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Interrupts.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Timer.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Interrupts.Enable") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Interrupts.Idle") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Pci.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Mmio.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Dma.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Dma.AllocatePages") { return Intrinsic(e, qualified, "int", "", "void"); }
+            if (qualified == "System.Kernel.Storage.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.IO.File.Exists") { return Intrinsic(e, qualified, "string", "", "bool"); }
             if (qualified == "System.IO.File.ReadAllText") { return Intrinsic(e, qualified, "string", "", "string"); }
             if (qualified == "System.IO.File.ReadAllBytes") { return Intrinsic(e, qualified, "string", "", "byte[]"); }
