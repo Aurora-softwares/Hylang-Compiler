@@ -19,16 +19,18 @@ chmod +x hello
 ./hello
 ```
 
-The default target emits a Linux x86-64 executable. The constrained UEFI proof
+The default target emits a Linux x86-64 executable. The constrained UEFI
 target is available with:
 
 ```bash
 hy compile uefi_hello.hy --target uefi-x64 -o BOOTX64.EFI
 ```
 
-`BOOTX64.EFI` is firmware code, not a Linux executable. The current UEFI target
-supports the small `System.Console.WriteLine` ASCII-literal proof only; it is not
-yet a general UEFI runtime or standard library.
+`BOOTX64.EFI` is firmware code, not a Linux executable. The UEFI target supports
+ASCII-literal console output, screen clearing, one key wait, and EFI image
+launch. Its early-kernel profile also supports a fixed boot-services exit,
+memory/paging initialization, heap, framebuffer output, and halt sequence. It
+does not provide a general UEFI runtime or standard library.
 
 ## Verify the compiler
 

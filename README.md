@@ -4,11 +4,11 @@
 
 Hydrogen is a C#-inspired language with classes, methods, managed strings and arrays, and explicit low-level facilities. Source files use `.hy`; project manifests use `.hyproj`.
 
-The Hydrogen-written compiler produces standalone Linux x86-64 executables, a constrained x86_64 UEFI proof image, and can compile itself. The C++ SDK provides additional language features, an interpreter, project scaffolding, packaging, formatting, and editor integration. Choose the tool according to the features your program needs.
+The Hydrogen-written compiler produces standalone Linux x86-64 executables, constrained x86-64 UEFI images, and can compile itself. The C++ SDK provides additional language features, an interpreter, packaging, formatting, and editor integration. Choose the tool according to the features your program needs.
 
 | Tool | Use it for | Output or execution |
 | --- | --- | --- |
-| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI console and chain-loading proof | Linux x64 ELF or constrained `uefi-x64` PE32+ output; no external compiler or linker |
+| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI boot/kernel images, and project scaffolding | Linux x64 ELF or constrained `uefi-x64` PE32+ output; no external compiler or linker |
 | `hy` (C++ SDK) | Build/run/test/check/fmt/new/package/LSP workflows; UEFI console proof | Interpreter, host C backend, or constrained `uefi-x64` PE32+ output |
 | `hyrun` | Direct interpreted execution | Shares the SDK semantic pipeline |
 | `hyc build` | Compatibility build command | Host C backend, executables or static libraries |
@@ -21,10 +21,11 @@ After you have verified and renamed the final self-hosted compiler to `safe/hy`,
 create a Linux x86-64 release archive with:
 
 ```bash
-cmake -DSOURCE_DIR="$PWD" -DVERSION=alpha-0.0.1 -P cmake/PackageHydrogenRelease.cmake
+RELEASE_VERSION=your-next-version
+cmake -DSOURCE_DIR="$PWD" -DVERSION="$RELEASE_VERSION" -P cmake/PackageHydrogenRelease.cmake
 ```
 
-This writes `releases/hydrogen-alpha-0.0.1-linux-x86_64.tar.gz` and its adjacent
+This writes `releases/hydrogen-<version>-linux-x86_64.tar.gz` and its adjacent
 `.sha256` checksum. The archive contains `bin/hy`, a release README, build
 metadata, and `SHA256SUMS` for the executable. The command refuses to overwrite
 an existing release; pass `-DFORCE=ON` only when intentionally rebuilding it.
@@ -32,7 +33,7 @@ an existing release; pass `-DFORCE=ON` only when intentionally rebuilding it.
 If CMake is already configured, the equivalent target is:
 
 ```bash
-cmake -S . -B build -DHYDROGEN_RELEASE_VERSION=alpha-0.0.1
+cmake -S . -B build -DHYDROGEN_RELEASE_VERSION="$RELEASE_VERSION"
 cmake --build build --target hydrogen_package_release
 ```
 
@@ -41,7 +42,7 @@ cmake --build build --target hydrogen_package_release
 Run these commands from this repository's root. The SDK requires CMake 3.20 or newer and a C++20 compiler. Its executable builds also require a host C compiler; static-library builds require an archiver. The direct native compiler targets Linux x86-64.
 
 ```bash
-cd /home/rsmith/Projects/Aurora-Softwares/Hylang-Compiler
+cd /path/to/Hylang-Compiler
 
 # Build the C++ stage 0 compiler.
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -150,7 +151,7 @@ Hello, Hydrogen
 
 Native output files need execute permission. Compilation failures return a nonzero status and do not create or overwrite the output; check that status before running an existing artifact.
 
-## UEFI console proof
+## UEFI and early kernel output
 
 The self-hosted compiler can emit a bootable x86_64 UEFI PE32+ application.
 Its `Main` method can call `System.Uefi.ClearScreen()` before console output,
@@ -198,13 +199,15 @@ and writes its address to `KernelBootInfo + 104`. This bootstrap heap is
 monotonic and does not free or reuse allocations.
 After a DMA allocation, the interrupt kernel may call
 `System.Kernel.Storage.Initialize()` before `Interrupts.Enable()`. The emitted
-transport uses the discovered AHCI aperture and a bounded polling READ DMA EXT
-path to read LBA 0, LBA 1, and the GPT primary entry array. It validates the
+transport prefers a discovered NVMe controller, using depth-two admin and I/O
+queues, namespace Identify, and bounded polling reads. It falls back to AHCI
+READ DMA EXT when no NVMe aperture is mapped. Both paths read LBA 0, LBA 1,
+and the GPT primary entry array. The builder validates the
 protective MBR, the GPT 1.0 header and CRC, and the primary entry-array CRC;
 the current bootstrap accepts 512-byte logical sectors and up to 256 standard
-128-byte GPT entries. It records the selected AHCI port and the first present
-GPT partition in KernelBootInfo ABI version 7. The image does not yet emit an
-NVMe transport or filesystem driver.
+128-byte GPT entries. It records the controller kind and first present GPT
+partition in KernelBootInfo ABI version 7. The image does not yet mount a
+filesystem.
 Framebuffer initialization locates GOP before `ExitBootServices`, stores its
 base, size, geometry, and pixel format in `KernelBootInfo`, clears the display
 directly after the handoff, and renders printable ASCII with an embedded 8x8
@@ -305,11 +308,11 @@ SDK projects additionally support workspaces, test projects, local package depen
 
 ## Language and runtime
 
-The direct native route supports classes with instance fields and constructors, static/instance methods, recursion, `var`, enums, `int`/`byte`/`bool`, strings, arrays, `if`/`else`, `while`, `break`, `continue`, and returns. `int` is signed 64-bit. Strings have byte-based length/indexing; indexing returns a one-byte string. Native literals accept ASCII and common escaped control characters; file contents and arguments preserve raw bytes.
+The direct native route supports classes, inheritance, interfaces, virtual dispatch, structs, overloads, static and instance fields/methods, constructors, recursion, enums, signed and unsigned integer widths, `bool`, strings, arrays, `var`, `if`/`else`, `while`, `for`, `break`, `continue`, and returns. `int` is signed 32-bit. Strings have byte-based length/indexing; indexing returns a one-byte string. Native literals accept ASCII and common escaped control characters; file contents and arguments preserve raw bytes.
 
 Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings. File reads require seekable files.
 
-The SDK also supports inheritance, virtual/interface dispatch, structs with value semantics, generics, overloads, static fields, `for`, string exceptions, `List<T>`, checked unsafe/manual-memory operations, `Buffer`, and `BinaryPrimitives`. These additional facilities are not implemented by the native compiler. The SDK interpreter evaluates both sides of `&&` and `||`; generated native and C-backed programs short-circuit. Write explicit conditional guards when sharing code with the interpreter.
+The SDK additionally supports generics, string exceptions, `List<T>`, checked unsafe/manual-memory operations, `Buffer`, and `BinaryPrimitives`. These additional facilities are not implemented by the native compiler. The SDK interpreter evaluates both sides of `&&` and `||`; generated native and C-backed programs short-circuit. Write explicit conditional guards when sharing code with the interpreter.
 
 ## Examples and editor support
 

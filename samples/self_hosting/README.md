@@ -1,6 +1,6 @@
 # Native Hydrogen compiler
 
-This directory contains the Hydrogen-written compiler and its referenced libraries. It emits standalone Linux x86-64 executables, and a constrained x86_64 UEFI proof image, and can compile its own complete CLI project. The executable manifest is `Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj`; `Hydrogen.Compiler.hyproj` is the SDK workspace including tests.
+This directory contains the Hydrogen-written compiler and its referenced libraries. It emits standalone Linux x86-64 executables and constrained x86-64 UEFI images, and can compile its own complete CLI project. The executable manifest is `Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj`; `Hydrogen.Compiler.hyproj` is the SDK workspace including tests.
 
 ## Build and use
 
@@ -24,11 +24,12 @@ hydrogen-stage1 parse <file.hy>
 hydrogen-stage1 check <file.hy|project.hyproj> [--emit-ir]
 hydrogen-stage1 compile <file.hy> -o <output>
 hydrogen-stage1 compile <file.hy> --target uefi-x64 -o <output>
-hydrogen-stage1 build <project.hyproj> -o <output>
+hydrogen-stage1 build <project.hyproj> -o <output-file|output-directory>
+hydrogen-stage1 new app|lib|tool|test|workspace|os|efi|kernel <name>
 hydrogen-stage1 stage-compare <project.hyproj> --stage1 <artifact> --stage2 <artifact>
 ```
 
-`tokens` prints lexer tokens/locations. `parse` prints a syntax outline. `check` performs semantic checking; `--emit-ir` prints typed executable method-body IR. `compile` emits a Linux executable by default, or a constrained PE32+ UEFI application with `--target uefi-x64`; `build` emits a format-2 executable project's complete reference closure. `stage-compare` compares existing files exactly; it does not build or behaviorally test them.
+`tokens` prints lexer tokens/locations. `parse` prints a syntax outline. `check` performs semantic checking; `--emit-ir` prints typed executable method-body IR. `compile` emits a Linux executable by default, or a constrained PE32+ UEFI application with `--target uefi-x64`; `build` accepts format-2 `exe`, `efi`, `kernel`, and `os` projects. OS builds emit referenced images below the specified output directory. `stage-compare` compares existing files exactly; it does not build or behaviorally test them.
 
 ## UEFI console and chain-loading target
 
@@ -77,20 +78,20 @@ active LA57 five-level hierarchy and halts before changing `CR3`.
 
 The CLI returns nonzero on invalid or unsupported compilation and does not create or overwrite the output on failure. An older output may remain, so check status before running it. Checking does not guarantee emission support. Normal compilation never substitutes a debug IR executable. Semantic positions use `1:1` where AST spans are unavailable; lexer/parser diagnostics have source positions.
 
-The native tool has no SDK `new`, `run`, `test`, `fmt`, `package`, `lsp`, `--json`, or `--debug` options.
+The native tool has `new` scaffolding, but not the SDK's `run`, `test`, `fmt`, `package`, `lsp`, `--json`, or `--debug` options.
 
 ## Language support
 
 | Supported | Details |
 | --- | --- |
-| Class objects | Reference identity, instance fields, initializers, constructors/default constructors |
-| Calls | Static and instance methods, parameters, returns, direct/mutual recursion |
-| Types | `int` (signed 64-bit), `byte`, `bool`, enums, strings, class references, arrays; `void` returns |
+| Class objects | Reference identity, inheritance, virtual dispatch, instance fields, initializers, constructors |
+| Calls | Static and instance methods, overloads, interface calls, parameters, returns, recursion |
+| Types | Signed and unsigned integer widths (`int` is 32-bit), `bool`, enums, strings, structs, classes, arrays; `void` returns |
 | Expressions | Arithmetic, comparisons, assignment, fields, indexing, numeric casts, short-circuit booleans |
-| Statements | Blocks, `var`, `if`/`else`, `while`, `break`, `continue`, returns |
+| Statements | Blocks, `var`, `if`/`else`, `while`, `for`, `break`, `continue`, returns |
 | Entry | Static `Main`, `int`/`void`, zero parameters or `string[]` user arguments |
 
-Inheritance, virtual/interface dispatch, structs with value semantics, generics, overloads, static fields, `for`, exceptions, pointers/manual memory, `Buffer`, `BinaryPrimitives`, and `List<T>` require SDK implementation work before native use. Wider numeric declarations may check successfully but reachable native signatures remain restricted.
+Static fields and struct value semantics are supported. Generics, exceptions, pointers/manual memory, `Buffer`, `BinaryPrimitives`, and `List<T>` remain outside native compilation.
 
 Use fully qualified builtin names such as `System.Console.WriteLine`. The SDK interpreter evaluates both logical operands; native code short-circuits. Explicit conditional guards make code safe to execute in both routes.
 
