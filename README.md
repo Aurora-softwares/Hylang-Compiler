@@ -1,5 +1,7 @@
 # Hydrogen (Hylang)
 
+<img src="assets/hydrogen.icon.svg" style="display: block;margin-left: auto; margin-right: auto; width: 30%;" />
+
 Hydrogen is a C#-inspired language with classes, methods, managed strings and arrays, and explicit low-level facilities. Source files use `.hy`; project manifests use `.hyproj`.
 
 The Hydrogen-written compiler produces standalone Linux x86-64 executables, a constrained x86_64 UEFI proof image, and can compile itself. The C++ SDK provides additional language features, an interpreter, project scaffolding, packaging, formatting, and editor integration. Choose the tool according to the features your program needs.
