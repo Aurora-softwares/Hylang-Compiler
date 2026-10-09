@@ -113,6 +113,7 @@ namespace Hydrogen.Compiler.Cli {
                 projectType = "test";
             } else if (kind == "efi" || kind == "kernel") {
                 projectType = kind;
+                if (kind == "kernel") { sourceFile = "KernelMain.hy"; }
             }
             string manifestPath = PathUtils.Join(destination, name + ".hyproj");
             string manifestText = RenderManifest(name, projectType, sourceFile, false);
@@ -136,7 +137,7 @@ namespace Hydrogen.Compiler.Cli {
                 if (type == "efi") {
                     text = text + "output = \"EFI/" + name + ".EFI\"\n";
                 } else if (type == "kernel") {
-                    text = text + "output = \"EFI/KERNEL.EFI\"\n";
+                    text = text + "output = \"EFI/KERNEL.BIN\"\n";
                 }
                 text = text + "sources = [\"" + source + "\"]\n";
                 text = text + "project_references = []\n";
@@ -164,6 +165,13 @@ namespace Hydrogen.Compiler.Cli {
                     "public class Program {\n" +
                     "    public static int Main(string[] args) {\n" +
                     "        Assert.True(true, \"scaffolded test should pass\");\n" +
+                    "        return 0;\n" +
+                    "    }\n" +
+                    "}\n";
+            }
+            if (kind == "kernel") {
+                return "public class KernelMain {\n" +
+                    "    public static int Run(long bootInfo) {\n" +
                     "        return 0;\n" +
                     "    }\n" +
                     "}\n";
@@ -262,6 +270,7 @@ namespace Hydrogen.Compiler.Cli {
             NativeCompiler compiler = new NativeCompiler();
             NativeCompilerResult result;
             if (manifest.Type() == "exe") { result = compiler.BuildProject(projectPath, args[3]); }
+            else if (manifest.Type() == "kernel") { result = compiler.BuildProjectKernel(projectPath, args[3]); }
             else { result = compiler.BuildProjectUefi(projectPath, args[3]); }
             if (!result.Success()) {
                 System.Console.Write(result.DiagnosticsText());
@@ -324,7 +333,10 @@ namespace Hydrogen.Compiler.Cli {
                     if (emitIr) { result = compiler.CheckFileEmitIr(paths[index]); }
                     else { result = compiler.CheckFile(paths[index]); }
                 } else {
-                    result = compiler.BuildProjectUefi(paths[index], outputPath);
+                    HyprojManifest child = HyprojManifest.Load(paths[index]);
+                    if (child.Type() == "kernel") { result = compiler.BuildProjectKernel(paths[index], outputPath); }
+                    else if (child.Type() == "efi") { result = compiler.BuildProjectUefi(paths[index], outputPath); }
+                    else { result = compiler.BuildProject(paths[index], outputPath); }
                 }
                 if (!result.Success()) {
                     System.Console.Write(result.DiagnosticsText());

@@ -42,7 +42,9 @@ The UEFI target accepts static `Main(string[] args)` entry points with
 for and consume one keyboard event, and multiple `System.Console.WriteLine`
 ASCII string literals. It can also use
 `System.Uefi.StartImage` with an ASCII path to load and launch an EFI image from
-the boot volume. A kernel image can finish with
+the boot volume. A bootloader can instead use
+`System.Kernel.Boot.Load(<literal-path>)` to load and validate a raw `AUKR`
+kernel before the final memory map, followed by
 `System.Uefi.ExitBootServices()`, `System.Kernel.MemoryMap.Initialize()`,
 `System.Kernel.Memory.Initialize()`,
 `System.Kernel.VirtualMemory.Initialize()`,
@@ -52,8 +54,8 @@ the boot volume. A kernel image can finish with
 `System.Kernel.Heap.Allocate(<literal-byte-count>)` calls,
 `System.Kernel.Framebuffer.Initialize()`, literal
 `System.Kernel.Framebuffer.WriteLine(<text>)` calls, and
-`System.Kernel.Halt()`. The
-target captures a final memory map, selects the largest
+`System.Kernel.Runtime.Execute()`. The
+bootloader captures a final memory map, selects the largest
 `EfiConventionalMemory` descriptor, reserves and clears its first 4 KiB page,
 publishes the remaining physical-page range, retries `ExitBootServices` with a
 fresh map key when needed, then copies every present PML4, PDPT, PD, and PT page
@@ -68,10 +70,25 @@ literal size from 1 through 1 MiB and publishes its address at `KernelBootInfo +
 the bootstrap heap does not free or reuse allocations. Framebuffer initialization
 captures GOP before services end, clears the framebuffer with direct stores, and
 renders literal printable-ASCII lines through an embedded 8x8 font; it accepts
-the standard RGB and BGR 32-bit GOP formats. It then disables interrupts and idles. It emits the PE32+ image in Hydrogen, encodes its console text as UTF-16,
-and invokes the firmware text
-output protocol through the UEFI x64 calling convention. The target does not
-offer a general firmware runtime or arbitrary method compilation.
+the standard RGB and BGR 32-bit GOP formats. The EFI bootloader switches to
+a dedicated 64 KiB stack and calls the raw kernel entry after
+`ExitBootServices`. The kernel enables interrupts and owns its idle loop.
+
+A format-2 `kernel` project compiles reachable
+`static int KernelMain.Run(long bootInfo)` methods into a separate
+position-independent binary. Its 16-byte `AUKR` header records version 1,
+code length, and entry offset 16. The bootloader verifies the header and exact
+file size, then loads it in executable memory before the final map capture.
+Freestanding code supports direct 8/16/32/64-bit memory loads and stores, byte
+port I/O, CPU pause/halt/interrupt enable, and a page-backed allocator for
+objects, arrays, and ASCII string literals. Managed strings support content
+equality, byte-based indexing, `System.Kernel.String.ByteAt`, and
+`System.Kernel.String.FromBytes` in freestanding code. The kernel runtime consumes the page
+range in `KernelBootInfo`; a failed checked runtime allocation records error
+code `5` at `KernelBootInfo + 1160` before it traps, and it does not invoke UEFI
+or Linux. Static fields,
+other string operations, and unsupported runtime intrinsics are rejected during
+freestanding emission.
 
 The paging walker handles standard four-level x86_64 paging. It detects an
 active LA57 five-level hierarchy and halts before changing `CR3`.

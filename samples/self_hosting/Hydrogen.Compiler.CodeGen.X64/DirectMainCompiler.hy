@@ -83,51 +83,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private string[] staticNames;
         private int staticCount;
         private string currentStaticOwner;
+        private bool freestanding;
 
         public DirectImageResult Compile(IrModule input) {
-            module = input;
-            IrUnit root = module.Root();
-            code = new X64Assembler();
-            localNames = new string[0];
-            localCount = 0;
-            payloads = new string[0];
-            payloadCount = 0;
-            payloadPatchOffsets = new int[0];
-            payloadPatchIndexes = new int[0];
-            payloadPatchCount = 0;
-            failure = "";
-
-            classNames = new string[0];
-            classDeclarations = new IrClass[0];
-            classCount = 0;
-            enumNames = new string[0];
-            enumDeclarations = new IrEnum[0];
-            enumCount = 0;
-            runtimeTargets = new string[0];
-            runtimePatches = new int[0];
-            runtimePatchCount = 0;
-            continuePatches = new int[0];
-            continueCount = 0;
-            staticOwners = new string[0];
-            staticNames = new string[0];
-            staticCount = 0;
-            currentStaticOwner = "";
-            functions = new NativeFunction[0];
-            functionCount = 0;
-            callPatchOffsets = new int[0];
-            callPatchTargets = new int[0];
-            callPatchCount = 0;
-
-            CollectFunctions(root.Classes(), "");
-            CollectEnums(root.Enums(), "");
-            IrNamespace[] namespaces = root.Namespaces();
-            int n = 0;
-            while (n < namespaces.Length) {
-                CollectFunctions(namespaces[n].Classes(), namespaces[n].Name());
-                CollectEnums(namespaces[n].Enums(), namespaces[n].Name());
-                n = n + 1;
-            }
-            CollectStaticFields();
+            Reset(input);
+            freestanding = false;
             mainFunction = -1;
             int i = 0;
             while (i < functionCount) {
@@ -181,26 +141,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             EmitExitFromRax();
 
             // Compile the reachable call graph, including forward and mutually recursive edges.
-            bool progress = true;
-            while (progress) {
-                progress = false;
-                i = 0;
-                while (i < functionCount) {
-                    if (functions[i].Needed() && functions[i].Position() < 0) {
-                        currentFunction = i;
-                        if (!CompileFunction()) {
-                            return Failed(functions[i].Owner() + "." + functions[i].Declaration().Name() + ": " + failure);
-                        }
-                        progress = true;
-                    }
-                    i = i + 1;
-                }
-            }
-            i = 0;
-            while (i < callPatchCount) {
-                PatchRelative(callPatchOffsets[i], functions[callPatchTargets[i]].Position());
-                i = i + 1;
-            }
+            if (!CompileNeededFunctions()) { return Failed(failure); }
             NativeRuntimeEmitter runtime = new NativeRuntimeEmitter();
             int runtimeStart = code.Position();
             runtime.Emit(code);
@@ -218,6 +159,139 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 pi = pi + 1;
             }
             return new DirectImageResult(true, imageBuilder.BuildCodeAndData(code.ToArray(), payloads, payloadPatchOffsets, payloadPatchIndexes), "");
+        }
+
+        // Emit only a reachable freestanding method graph. The EFI handoff
+        // passes one boot-information pointer on the Hydrogen stack and checks
+        // the returned int status. Runtime helpers use the kernel's page range.
+        public DirectImageResult CompileFreestanding(IrModule input, string owner, string methodName) {
+            Reset(input);
+            freestanding = true;
+            mainFunction = -1;
+            if (staticCount != 0) { return Failed("freestanding entry does not yet support static fields"); }
+            int entry = -1;
+            int i = 0;
+            while (i < functionCount) {
+                if (functions[i].Owner() == owner && functions[i].Declaration().Name() == methodName &&
+                    functions[i].Declaration().IsStatic()) {
+                    if (entry >= 0) { return Failed("ambiguous freestanding entry method"); }
+                    entry = i;
+                }
+                i = i + 1;
+            }
+            if (entry < 0) { return Failed("missing freestanding entry method " + owner + "." + methodName); }
+            IrMethod method = functions[entry].Declaration();
+            if (method.ReturnType().DisplayName() != "int" || method.Parameters().Length != 1 ||
+                method.Parameters()[0].Type().DisplayName() != "long") {
+                return Failed("freestanding entry must be static int Run(long bootInfo)");
+            }
+            functions[entry].Require();
+            if (!CompileNeededFunctions()) { return Failed(failure); }
+            if (functions[entry].Position() != 0) {
+                return Failed("freestanding entry must start at code offset zero");
+            }
+            if (runtimePatchCount > 0) {
+                FreestandingRuntimeEmitter runtime = new FreestandingRuntimeEmitter();
+                int runtimeStart = code.Position();
+                runtime.Emit(code);
+                i = 0;
+                while (i < runtimePatchCount) {
+                    int offset = runtime.Offset(runtimeTargets[i]);
+                    if (offset < 0) { return Failed("unsupported freestanding runtime helper: " + runtimeTargets[i]); }
+                    PatchRelative(runtimePatches[i], runtimeStart + offset);
+                    i = i + 1;
+                }
+            }
+            ElfImageBuilder ascii = new ElfImageBuilder();
+            int[] payloadOffsets = new int[payloadCount];
+            i = 0;
+            while (i < payloadCount) {
+                if (!ascii.SupportsPayload(payloads[i])) { return Failed("non-ASCII freestanding literal"); }
+                payloadOffsets[i] = code.Position();
+                int ch = 0;
+                while (ch < payloads[i].Length) {
+                    code.EmitByte(ascii.AsciiCode(payloads[i][ch]));
+                    ch = ch + 1;
+                }
+                i = i + 1;
+            }
+            i = 0;
+            while (i < payloadPatchCount) {
+                PatchRelative(payloadPatchOffsets[i], payloadOffsets[payloadPatchIndexes[i]]);
+                i = i + 1;
+            }
+            return new DirectImageResult(true, code.ToArray(), "");
+        }
+
+        private bool CompileNeededFunctions() {
+            bool progress = true;
+            while (progress) {
+                progress = false;
+                int i = 0;
+                while (i < functionCount) {
+                    if (functions[i].Needed() && functions[i].Position() < 0) {
+                        currentFunction = i;
+                        if (!CompileFunction()) {
+                            failure = functions[i].Owner() + "." + functions[i].Declaration().Name() + ": " + failure;
+                            return false;
+                        }
+                        progress = true;
+                    }
+                    i = i + 1;
+                }
+            }
+            int i = 0;
+            while (i < callPatchCount) {
+                PatchRelative(callPatchOffsets[i], functions[callPatchTargets[i]].Position());
+                i = i + 1;
+            }
+            return true;
+        }
+
+        private void Reset(IrModule input) {
+            module = input;
+            IrUnit root = module.Root();
+            code = new X64Assembler();
+            localNames = new string[0];
+            localCount = 0;
+            payloads = new string[0];
+            payloadCount = 0;
+            payloadPatchOffsets = new int[0];
+            payloadPatchIndexes = new int[0];
+            payloadPatchCount = 0;
+            failure = "";
+
+            classNames = new string[0];
+            classDeclarations = new IrClass[0];
+            classCount = 0;
+            enumNames = new string[0];
+            enumDeclarations = new IrEnum[0];
+            enumCount = 0;
+            runtimeTargets = new string[0];
+            runtimePatches = new int[0];
+            runtimePatchCount = 0;
+            continuePatches = new int[0];
+            continueCount = 0;
+            staticOwners = new string[0];
+            staticNames = new string[0];
+            staticCount = 0;
+            currentStaticOwner = "";
+            functions = new NativeFunction[0];
+            functionCount = 0;
+            callPatchOffsets = new int[0];
+            callPatchTargets = new int[0];
+            callPatchCount = 0;
+
+            CollectFunctions(root.Classes(), "");
+            CollectEnums(root.Enums(), "");
+            IrNamespace[] namespaces = root.Namespaces();
+            int n = 0;
+            while (n < namespaces.Length) {
+                CollectFunctions(namespaces[n].Classes(), namespaces[n].Name());
+                CollectEnums(namespaces[n].Enums(), namespaces[n].Name());
+                n = n + 1;
+            }
+            CollectStaticFields();
         }
 
         private DirectImageResult Failed(string message) {
@@ -817,6 +891,95 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private bool CompileInvocation(IrExpression expression) {
             IrExpression[] arguments = expression.Arguments();
             string intrinsic = QualifiedName(expression.Target());
+            if (intrinsic == "System.Kernel.Memory.Read8" || intrinsic == "System.Kernel.Memory.Read16" ||
+                intrinsic == "System.Kernel.Memory.Read32" || intrinsic == "System.Kernel.Memory.Read64") {
+                if (!freestanding || arguments.Length != 1 || !CompileExpression(arguments[0]) ||
+                    !Assignable(valueType, "long")) { failure = "invalid freestanding memory read"; return false; }
+                if (intrinsic == "System.Kernel.Memory.Read8") {
+                    code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0x00);
+                } else if (intrinsic == "System.Kernel.Memory.Read16") {
+                    code.EmitByte(0x0f); code.EmitByte(0xb7); code.EmitByte(0x00);
+                } else if (intrinsic == "System.Kernel.Memory.Read32") {
+                    code.EmitByte(0x8b); code.EmitByte(0x00);
+                } else {
+                    code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x00);
+                }
+                valueType = "long"; return true;
+            }
+            if (intrinsic == "System.Kernel.Memory.NoExecute") {
+                if (!freestanding || arguments.Length != 0) { failure = "invalid freestanding NX mask"; return false; }
+                // x86-64 page-table bit 63. A dedicated intrinsic avoids
+                // narrowing this architectural 64-bit constant through the
+                // language's ordinary numeric-literal path.
+                code.EmitByte(0x48); code.EmitByte(0xb8);
+                code.EmitByte(0); code.EmitByte(0); code.EmitByte(0); code.EmitByte(0);
+                code.EmitByte(0); code.EmitByte(0); code.EmitByte(0); code.EmitByte(128);
+                valueType = "long"; return true;
+            }
+            if (intrinsic == "System.Kernel.Memory.Write8" || intrinsic == "System.Kernel.Memory.Write16" ||
+                intrinsic == "System.Kernel.Memory.Write32" || intrinsic == "System.Kernel.Memory.Write64") {
+                if (!freestanding || arguments.Length != 2 || !CompileExpression(arguments[0]) ||
+                    !Assignable(valueType, "long")) { failure = "invalid freestanding memory write address"; return false; }
+                code.EmitByte(0x50); // preserve address while lowering value
+                if (!CompileExpression(arguments[1]) || !Assignable(valueType, "long")) {
+                    failure = "invalid freestanding memory write value"; return false;
+                }
+                code.EmitByte(0x59); // pop rcx
+                if (intrinsic == "System.Kernel.Memory.Write8") {
+                    code.EmitByte(0x88); code.EmitByte(0x01);
+                } else if (intrinsic == "System.Kernel.Memory.Write16") {
+                    code.EmitByte(0x66); code.EmitByte(0x89); code.EmitByte(0x01);
+                } else if (intrinsic == "System.Kernel.Memory.Write32") {
+                    code.EmitByte(0x89); code.EmitByte(0x01);
+                } else {
+                    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0x01);
+                }
+                valueType = "void"; return true;
+            }
+            if (intrinsic == "System.Kernel.Cpu.Pause" || intrinsic == "System.Kernel.Cpu.Halt" ||
+                intrinsic == "System.Kernel.Cpu.EnableInterrupts") {
+                if (!freestanding || arguments.Length != 0) { failure = "invalid freestanding CPU operation"; return false; }
+                if (intrinsic == "System.Kernel.Cpu.Pause") { code.EmitByte(0xf3); code.EmitByte(0x90); }
+                else if (intrinsic == "System.Kernel.Cpu.Halt") { code.EmitByte(0xf4); }
+                else { code.EmitByte(0xfb); }
+                valueType = "void"; return true;
+            }
+            if (intrinsic == "System.Kernel.Cpu.InvalidatePage") {
+                if (!freestanding || arguments.Length != 1 || !CompileExpression(arguments[0]) ||
+                    !Assignable(valueType, "long")) { failure = "invalid freestanding page invalidation"; return false; }
+                // invlpg [rax] invalidates precisely this virtual page in the
+                // current address space without relying on firmware services.
+                code.EmitByte(0x0f); code.EmitByte(0x01); code.EmitByte(0x38);
+                valueType = "void"; return true;
+            }
+            if (intrinsic == "System.Kernel.Port.Read8") {
+                if (!freestanding || arguments.Length != 1 || !CompileExpression(arguments[0]) ||
+                    !Assignable(valueType, "int")) { failure = "invalid freestanding port read"; return false; }
+                code.EmitByte(0x66); code.EmitByte(0x89); code.EmitByte(0xc2); // mov dx, ax
+                code.EmitByte(0x31); code.EmitByte(0xc0); // zero upper result bits
+                code.EmitByte(0xec); // in al, dx
+                valueType = "int"; return true;
+            }
+            if (intrinsic == "System.Kernel.Port.Write8") {
+                if (!freestanding || arguments.Length != 2 || !CompileExpression(arguments[0]) ||
+                    !Assignable(valueType, "int")) { failure = "invalid freestanding port write address"; return false; }
+                code.EmitByte(0x50); // preserve port
+                if (!CompileExpression(arguments[1]) || !Assignable(valueType, "int")) {
+                    failure = "invalid freestanding port write value"; return false;
+                }
+                code.EmitByte(0x59); // rcx = port
+                code.EmitByte(0x66); code.EmitByte(0x89); code.EmitByte(0xca); // mov dx, cx
+                code.EmitByte(0xee); // out dx, al
+                valueType = "void"; return true;
+            }
+            if (intrinsic == "System.Kernel.String.ByteAt") {
+                if (!freestanding) { failure = "kernel string bytes require freestanding emission"; return false; }
+                return RuntimeCall(expression, "rt_byte_at", "string", "int", "int");
+            }
+            if (intrinsic == "System.Kernel.String.FromBytes") {
+                if (!freestanding) { failure = "kernel string conversion requires freestanding emission"; return false; }
+                return RuntimeCall(expression, "rt_from_bytes", "byte[]", "int", "string");
+            }
             if (intrinsic == "System.Console.WriteLine" || intrinsic == "System.Console.Write") {
                 if (arguments.Length > 1 || (arguments.Length == 0 && intrinsic == "System.Console.Write")) {
                     failure = "native console output requires one value"; return false;

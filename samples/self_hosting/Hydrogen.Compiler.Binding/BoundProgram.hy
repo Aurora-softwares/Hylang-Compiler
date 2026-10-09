@@ -29,6 +29,8 @@ namespace Hydrogen.Compiler.Binding {
         public static int KindInitializeDma() { return 25; }
         public static int KindAllocateDmaPages() { return 26; }
         public static int KindInitializeStorage() { return 27; }
+        public static int KindExecuteKernel() { return 28; }
+        public static int KindLoadRawKernelLiteral() { return 29; }
 
         private int kind;
         private string text;
@@ -94,6 +96,8 @@ namespace Hydrogen.Compiler.Binding {
                     text = text + "  WriteLineLiteral(\"" + entryOps[o].Text() + "\")\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindStartImageLiteral()) {
                     text = text + "  StartImageLiteral(\"" + entryOps[o].Text() + "\")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindLoadRawKernelLiteral()) {
+                    text = text + "  LoadRawKernelLiteral(\"" + entryOps[o].Text() + "\")\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindExitBootServices()) {
                     text = text + "  ExitBootServices()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindKernelHalt()) {
@@ -138,6 +142,8 @@ namespace Hydrogen.Compiler.Binding {
                     text = text + "  Dma.AllocatePages(" + entryOps[o].ExitCode() + ")\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindInitializeStorage()) {
                     text = text + "  Storage.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindExecuteKernel()) {
+                    text = text + "  Kernel.Runtime.Execute()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindClearScreen()) {
                     text = text + "  Uefi.ClearScreen()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindAwaitKey()) {

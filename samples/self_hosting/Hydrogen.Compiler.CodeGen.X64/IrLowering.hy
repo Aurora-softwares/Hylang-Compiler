@@ -15,6 +15,8 @@ namespace Hydrogen.Compiler.IR {
                     lowered[i] = new IrOp(IrOp.KindWriteLineLiteral(), ops[i].Text(), 0);
                 } else if (ops[i].Kind() == BoundOp.KindStartImageLiteral()) {
                     lowered[i] = new IrOp(IrOp.KindStartImageLiteral(), ops[i].Text(), 0);
+                } else if (ops[i].Kind() == BoundOp.KindLoadRawKernelLiteral()) {
+                    lowered[i] = new IrOp(IrOp.KindLoadRawKernelLiteral(), ops[i].Text(), 0);
                 } else if (ops[i].Kind() == BoundOp.KindExitBootServices()) {
                     lowered[i] = new IrOp(IrOp.KindExitBootServices(), "", 0);
                 } else if (ops[i].Kind() == BoundOp.KindKernelHalt()) {
@@ -59,6 +61,8 @@ namespace Hydrogen.Compiler.IR {
                     lowered[i] = new IrOp(IrOp.KindAllocateDmaPages(), "", ops[i].ExitCode());
                 } else if (ops[i].Kind() == BoundOp.KindInitializeStorage()) {
                     lowered[i] = new IrOp(IrOp.KindInitializeStorage(), "", 0);
+                } else if (ops[i].Kind() == BoundOp.KindExecuteKernel()) {
+                    lowered[i] = new IrOp(IrOp.KindExecuteKernel(), "", 0);
                 } else if (ops[i].Kind() == BoundOp.KindClearScreen()) {
                     lowered[i] = new IrOp(IrOp.KindClearScreen(), "", 0);
                 } else if (ops[i].Kind() == BoundOp.KindAwaitKey()) {

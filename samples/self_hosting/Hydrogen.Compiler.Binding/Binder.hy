@@ -189,6 +189,9 @@ namespace Hydrogen.Compiler.Binding {
             if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Storage", "Initialize")) {
                 return new BoundOp(BoundOp.KindInitializeStorage(), "", 0);
             }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Runtime", "Execute")) {
+                return new BoundOp(BoundOp.KindExecuteKernel(), "", 0);
+            }
             if (args.Length == 1 && IsSystemKernelSubsystemCall(target, "Dma", "AllocatePages")) {
                 if (args[0].Kind() != ExpressionSyntax.KindLiteral() || args[0].LiteralKind() != "number") {
                     return null;
@@ -217,6 +220,9 @@ namespace Hydrogen.Compiler.Binding {
             }
             if (IsSystemUefiStartImage(target)) {
                 return new BoundOp(BoundOp.KindStartImageLiteral(), args[0].LiteralText(), 0);
+            }
+            if (IsSystemKernelSubsystemCall(target, "Boot", "Load")) {
+                return new BoundOp(BoundOp.KindLoadRawKernelLiteral(), args[0].LiteralText(), 0);
             }
             if (IsSystemKernelFramebufferWriteLine(target)) {
                 return new BoundOp(BoundOp.KindFramebufferWriteLineLiteral(), args[0].LiteralText(), 0);
