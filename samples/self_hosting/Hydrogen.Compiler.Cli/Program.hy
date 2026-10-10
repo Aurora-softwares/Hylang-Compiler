@@ -77,12 +77,12 @@ namespace Hydrogen.Compiler.Cli {
 
         private static int New(string[] args) {
             if (args.Length != 3) {
-                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|os|efi|kernel <name>");
+                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|os|efi|kernel|exec <name>");
                 return 1;
             }
             string kind = args[1];
             string destination = PathUtils.Normalize(args[2]);
-            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace" && kind != "os" && kind != "efi" && kind != "kernel") {
+            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace" && kind != "os" && kind != "efi" && kind != "kernel" && kind != "exec") {
                 System.Console.WriteLine("error: unknown project kind '" + kind + "'");
                 return 1;
             }
@@ -111,7 +111,7 @@ namespace Hydrogen.Compiler.Cli {
                 sourceFile = "Library.hy";
             } else if (kind == "test") {
                 projectType = "test";
-            } else if (kind == "efi" || kind == "kernel") {
+            } else if (kind == "efi" || kind == "kernel" || kind == "exec") {
                 projectType = kind;
                 if (kind == "kernel") { sourceFile = "KernelMain.hy"; }
             }
@@ -138,6 +138,8 @@ namespace Hydrogen.Compiler.Cli {
                     text = text + "output = \"EFI/" + name + ".EFI\"\n";
                 } else if (type == "kernel") {
                     text = text + "output = \"EFI/KERNEL.BIN\"\n";
+                } else if (type == "exec") {
+                    text = text + "output = \"" + name + ".exec\"\n";
                 }
                 text = text + "sources = [\"" + source + "\"]\n";
                 text = text + "project_references = []\n";
@@ -188,6 +190,17 @@ namespace Hydrogen.Compiler.Cli {
                 HyprojManifest manifest = HyprojManifest.Load(path);
                 if (manifest.Type() == "os") {
                     return ProcessOsProject(path, manifest, "", true, emitIr);
+                }
+                if (manifest.Type() == "exec" || manifest.Type() == "australis") {
+                    NativeCompiler execCompiler = new NativeCompiler();
+                    NativeCompilerResult execResult = execCompiler.CheckProjectAustralis(path, emitIr);
+                    if (!execResult.Success()) {
+                        System.Console.Write(execResult.DiagnosticsText());
+                        return 1;
+                    }
+                    System.Console.WriteLine("check ok");
+                    if (emitIr) { System.Console.WriteLine(execResult.DiagnosticsText()); }
+                    return 0;
                 }
             }
             NativeCompiler compiler = new NativeCompiler();
@@ -265,8 +278,9 @@ namespace Hydrogen.Compiler.Cli {
             if (manifest.Type() != "exe" &&
 				manifest.Type() != "efi" &&
 				manifest.Type() != "kernel" &&
-				manifest.Type() != "australis") {
-                System.Console.WriteLine("error: hy build supports exe, efi, kernel, australis, and os projects");
+				manifest.Type() != "australis" &&
+				manifest.Type() != "exec") {
+                System.Console.WriteLine("error: hy build supports exe, efi, kernel, exec, australis, and os projects");
                 return 1;
             }
 
@@ -276,7 +290,7 @@ namespace Hydrogen.Compiler.Cli {
 				result = compiler.BuildProject(projectPath, args[3]);
 			} else if (manifest.Type() == "kernel") {
 				result = compiler.BuildProjectKernel(projectPath, args[3]);
-			} else if (manifest.Type() == "australis") {
+			} else if (manifest.Type() == "australis" || manifest.Type() == "exec") {
 				result = compiler.BuildProjectAustralis(projectPath, args[3]);
 			} else {
 				result = compiler.BuildProjectUefi(projectPath, args[3]);
@@ -310,8 +324,10 @@ namespace Hydrogen.Compiler.Cli {
                     return 1;
                 }
                 HyprojManifest child = HyprojManifest.Load(path);
-                if (child.Format() != 2 || (child.Type() != "exe" && child.Type() != "efi" && child.Type() != "kernel")) {
-                    System.Console.WriteLine("error: OS reference must be a format 2 exe, efi, or kernel project: " + path);
+                if (child.Format() != 2 || (child.Type() != "exe" && child.Type() != "efi" &&
+                    child.Type() != "kernel" && child.Type() != "exec" &&
+                    child.Type() != "australis")) {
+                    System.Console.WriteLine("error: OS reference must be a format 2 exe, efi, kernel, or exec project: " + path);
                     return 1;
                 }
                 string output = child.Output();
@@ -339,12 +355,16 @@ namespace Hydrogen.Compiler.Cli {
                 string outputPath = PathUtils.Join(outputDirectory, outputs[index]);
                 NativeCompilerResult result;
                 if (check) {
-                    if (emitIr) { result = compiler.CheckFileEmitIr(paths[index]); }
+                    HyprojManifest checkedChild = HyprojManifest.Load(paths[index]);
+                    if (checkedChild.Type() == "exec" || checkedChild.Type() == "australis") {
+                        result = compiler.CheckProjectAustralis(paths[index], emitIr);
+                    } else if (emitIr) { result = compiler.CheckFileEmitIr(paths[index]); }
                     else { result = compiler.CheckFile(paths[index]); }
                 } else {
                     HyprojManifest child = HyprojManifest.Load(paths[index]);
                     if (child.Type() == "kernel") { result = compiler.BuildProjectKernel(paths[index], outputPath); }
                     else if (child.Type() == "efi") { result = compiler.BuildProjectUefi(paths[index], outputPath); }
+                    else if (child.Type() == "exec" || child.Type() == "australis") { result = compiler.BuildProjectAustralis(paths[index], outputPath); }
                     else { result = compiler.BuildProject(paths[index], outputPath); }
                 }
                 if (!result.Success()) {
@@ -436,7 +456,7 @@ namespace Hydrogen.Compiler.Cli {
         }
 
         private static void PrintUsage() {
-            System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|os|efi|kernel <name>");
+            System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|os|efi|kernel|exec <name>");
             System.Console.WriteLine("usage: hy <tokens|parse|check|build> <file.hy|project.hyproj>");
             System.Console.WriteLine("usage: hy check <file.hy> --emit-ir");
             System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");

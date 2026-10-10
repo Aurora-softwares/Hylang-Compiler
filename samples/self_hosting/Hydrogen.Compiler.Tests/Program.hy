@@ -48,6 +48,11 @@ namespace Hydrogen.Compiler.Tests {
             return false;
         }
 
+        private static long Read32(byte[] bytes, int offset) {
+            return bytes[offset] + bytes[offset + 1] * 256 +
+                bytes[offset + 2] * 65536 + (long)bytes[offset + 3] * 16777216;
+        }
+
         public static int Main(string[] args) {
             SyntaxTree hello = SyntaxTree.Parse(new SourceText("public class Program { public static void Main(string[] args) { System.Console.WriteLine(\"Hello\"); } }"));
             Assert.Equal("Public", SyntaxFacts.KindName(hello.Tokens().Get(0).Kind()), "first token should be public");
@@ -108,6 +113,28 @@ namespace Hydrogen.Compiler.Tests {
             Assert.True(Contains(returnCheck.DiagnosticsText(), "WriteLineLiteral(\"First native line\")"), "native_return should lower first WriteLineLiteral");
             Assert.True(Contains(returnCheck.DiagnosticsText(), "WriteLineLiteral(\"Second native line\")"), "native_return should lower second WriteLineLiteral");
             Assert.True(Contains(returnCheck.DiagnosticsText(), "Exit(7)"), "native_return should lower Exit(7)");
+
+            string execSource = "public class Program { public static void Main(string[] args) { " +
+                "System.Australis.Terminal.Write(\"user> \"); " +
+                "System.Australis.Terminal.ReadLine(64); " +
+                "System.Australis.Terminal.WriteResult(); " +
+                "System.Australis.Files.Open(\"/hello.txt\"); " +
+                "System.Australis.Files.Read(1024); " +
+                "System.Australis.Terminal.WriteResult(); " +
+                "System.Australis.Files.Close(); } }";
+            SyntaxTree execTree = SyntaxTree.ParseFast(new SourceText(execSource));
+            DiagnosticBag execDiagnostics = new DiagnosticBag();
+            BoundProgram execProgram = new Hydrogen.Compiler.Binding.Binder().Bind(execTree.Root(), execDiagnostics);
+            Assert.True(!execDiagnostics.HasErrors(), "Australis intrinsics should bind");
+            byte[] execImage = new AustralisExecImageBuilder().Build(execProgram);
+            Assert.True(execImage != null && execImage.Length > 32, "Australis backend should emit an image");
+            Assert.True(execImage[0] == 65 && execImage[1] == 85 && execImage[2] == 69 &&
+                execImage[3] == 88 && execImage[4] == 1 && execImage[5] == 32,
+                "Australis image should have an AUEX v1 header");
+            Assert.True(Read32(execImage, 12) == 16 && Read32(execImage, 16) == 1040,
+                "Australis backend should allocate literals and the largest read buffer");
+            Assert.True(execImage[32] == 2 && execImage[41] == 3,
+                "Australis backend should emit write then terminal read opcodes");
 
             DirectMainCompiler directMain = new DirectMainCompiler();
             SyntaxTree directTree = SyntaxTree.ParseFast(new SourceText("public class Program { public static int Main(string[] args) { int x = 1; if (x == 1) { System.Console.WriteLine(\"x was 1\"); return 7; } System.Console.WriteLine(\"x was not 1\"); return 3; } }"));

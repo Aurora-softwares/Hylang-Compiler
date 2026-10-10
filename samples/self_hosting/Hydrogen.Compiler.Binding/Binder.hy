@@ -126,6 +126,30 @@ namespace Hydrogen.Compiler.Binding {
 
             ExpressionSyntax target = expression.Target();
             ExpressionSyntax[] args = expression.Arguments();
+            string qualified = Qualified(target);
+            if (args.Length == 0 && qualified == "System.Australis.Terminal.WriteResult") {
+                return new BoundOp(BoundOp.KindUserWriteResult(), "", 0);
+            }
+            if (args.Length == 0 && qualified == "System.Australis.Files.Close") {
+                return new BoundOp(BoundOp.KindUserCloseFile(), "", 0);
+            }
+            if (args.Length == 0 && qualified == "System.Australis.Process.Yield") {
+                return new BoundOp(BoundOp.KindUserYield(), "", 0);
+            }
+            if (args.Length == 1 && qualified == "System.Australis.Terminal.ReadLine" &&
+                IsNumberLiteral(args[0])) {
+                return new BoundOp(BoundOp.KindUserReadTerminal(), "", ParseInt(args[0].LiteralText()));
+            }
+            if (args.Length == 1 && qualified == "System.Australis.Files.Read" &&
+                IsNumberLiteral(args[0])) {
+                return new BoundOp(BoundOp.KindUserReadFile(), "", ParseInt(args[0].LiteralText()));
+            }
+            if (args.Length == 2 && qualified == "System.Australis.Memory.StoreByte" &&
+                IsNumberLiteral(args[0]) && IsNumberLiteral(args[1])) {
+                BoundOp store = new BoundOp(BoundOp.KindUserStoreByte(), "", ParseInt(args[1].LiteralText()));
+                store.SetArgument((long)ParseInt(args[0].LiteralText()));
+                return store;
+            }
             if (args.Length == 0 && IsSystemUefiClearScreen(target)) {
                 return new BoundOp(BoundOp.KindClearScreen(), "", 0);
             }
@@ -218,6 +242,15 @@ namespace Hydrogen.Compiler.Binding {
             if (IsSystemConsoleWriteLine(target)) {
                 return new BoundOp(BoundOp.KindWriteLineLiteral(), args[0].LiteralText(), 0);
             }
+            if (qualified == "System.Australis.Terminal.Write") {
+                return new BoundOp(BoundOp.KindUserWriteLiteral(), args[0].LiteralText(), 0);
+            }
+            if (qualified == "System.Australis.Terminal.WriteLine") {
+                return new BoundOp(BoundOp.KindWriteLineLiteral(), args[0].LiteralText(), 0);
+            }
+            if (qualified == "System.Australis.Files.Open") {
+                return new BoundOp(BoundOp.KindUserOpenLiteral(), args[0].LiteralText(), 0);
+            }
             if (IsSystemUefiStartImage(target)) {
                 return new BoundOp(BoundOp.KindStartImageLiteral(), args[0].LiteralText(), 0);
             }
@@ -228,6 +261,20 @@ namespace Hydrogen.Compiler.Binding {
                 return new BoundOp(BoundOp.KindFramebufferWriteLineLiteral(), args[0].LiteralText(), 0);
             }
             return null;
+        }
+
+        private bool IsNumberLiteral(ExpressionSyntax expression) {
+            return expression.Kind() == ExpressionSyntax.KindLiteral() &&
+                expression.LiteralKind() == "number";
+        }
+
+        private string Qualified(ExpressionSyntax expression) {
+            if (expression.Kind() == ExpressionSyntax.KindName()) { return expression.Name(); }
+            if (expression.Kind() == ExpressionSyntax.KindMemberAccess()) {
+                string receiver = Qualified(expression.Receiver());
+                if (receiver != "") { return receiver + "." + expression.MemberName(); }
+            }
+            return "";
         }
 
         private bool IsSystemConsoleWriteLine(ExpressionSyntax target) {

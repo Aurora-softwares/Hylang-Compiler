@@ -37,9 +37,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return ProcessProject(projectPath, outputPath, false, false, false, true, false);
         }
 
-		public NativeCompilerResult BuildProjectAustralis(string projectPath, string outputPath) {
+        public NativeCompilerResult BuildProjectAustralis(string projectPath, string outputPath) {
 			return ProcessProject(projectPath, outputPath, false, false, false, false, true);
 		}
+
+        public NativeCompilerResult CheckProjectAustralis(string projectPath, bool emitIr) {
+            return ProcessProject(projectPath, "", true, emitIr, false, false, true);
+        }
 
         private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel, bool australis) {
             ProjectClosure closure = ProjectClosure.Collect(projectPath);
@@ -83,7 +87,16 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return new NativeCompilerResult(false, projectPath + ":\n" + diagnostics.ToText());
             }
 
-            if (check) { return new NativeCompilerResult(true, DebugProgram(program, emitIr)); }
+            if (check) {
+                if (australis) {
+                    AustralisExecImageBuilder validationBuilder = new AustralisExecImageBuilder();
+                    if (validationBuilder.Build(program) == null) {
+                        return new NativeCompilerResult(false,
+                            projectPath + ": unsupported Australis program\n");
+                    }
+                }
+                return new NativeCompilerResult(true, DebugProgram(program, emitIr));
+            }
             if (kernel) { return EmitKernelImage(program, projectPath, outputPath); }
             if (uefi) { return EmitUefiImage(program, projectPath, outputPath); }
 			if (australis) { return EmitAustralisImage(program, projectPath, outputPath); }

@@ -265,10 +265,10 @@ chmod +x build/hello-project
 ```
 
 For OS development, the self-hosted compiler supports `type = "efi"` for a
-UEFI application, `type = "kernel"` for a kernel image, and `type = "os"` for
-an aggregate project. Both `efi` and `kernel` currently emit x86-64 PE32+ UEFI
-applications. The `kernel` type identifies the image's role; a raw freestanding
-kernel format is not yet available.
+UEFI application, `type = "kernel"` for a raw freestanding kernel image,
+`type = "exec"` for an Australis AUEX v1 program, and `type = "os"` for an
+aggregate project. The older `type = "australis"` spelling remains accepted
+for existing AUEX projects.
 
 An OS project lists component `.hyproj` files in `project_references` and has
 no sources of its own. Each component sets an `output` path relative to the
@@ -290,9 +290,10 @@ project_references = ["Boot/Boot.hyproj", "Kernel/Kernel.hyproj"]
 ```
 
 The output directory contains separate EFI applications ready for image
-packaging. You can also build an `efi` or `kernel` project directly with `-o`
-pointing to one EFI file. Scaffold them with `hydrogen-stage1 new efi <name>`,
-`hydrogen-stage1 new kernel <name>`, or `hydrogen-stage1 new os <name>`.
+packaging. You can also build an `efi`, `kernel`, or `exec` project directly
+with `-o` pointing to its output file. Scaffold them with
+`hydrogen-stage1 new efi <name>`, `hydrogen-stage1 new kernel <name>`,
+`hydrogen-stage1 new exec <name>`, or `hydrogen-stage1 new os <name>`.
 These project types are currently available in
 `hydrogen-stage1`.
 

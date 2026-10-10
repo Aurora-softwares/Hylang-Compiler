@@ -432,6 +432,29 @@ namespace Hydrogen.Compiler.Binding {
                 e.SetResolvedOwner("System.Console"); return "void";
             }
             if (qualified == "System.Console.ReadLine") { return Intrinsic(e, qualified, "", "", "string"); }
+            if (qualified == "System.Australis.Terminal.Write" ||
+                qualified == "System.Australis.Terminal.WriteLine") {
+                return Intrinsic(e, qualified, "string", "", "void");
+            }
+            if (qualified == "System.Australis.Terminal.ReadLine") {
+                return Intrinsic(e, qualified, "int", "", "void");
+            }
+            if (qualified == "System.Australis.Terminal.WriteResult") {
+                return Intrinsic(e, qualified, "", "", "void");
+            }
+            if (qualified == "System.Australis.Files.Open") {
+                return Intrinsic(e, qualified, "string", "", "void");
+            }
+            if (qualified == "System.Australis.Files.Read") {
+                return Intrinsic(e, qualified, "int", "", "void");
+            }
+            if (qualified == "System.Australis.Files.Close" ||
+                qualified == "System.Australis.Process.Yield") {
+                return Intrinsic(e, qualified, "", "", "void");
+            }
+            if (qualified == "System.Australis.Memory.StoreByte") {
+                return Intrinsic(e, qualified, "long", "int", "void");
+            }
             if (qualified == "System.Uefi.StartImage") { return Intrinsic(e, qualified, "string", "", "void"); }
             if (qualified == "System.Kernel.Boot.Load") { return Intrinsic(e, qualified, "string", "", "void"); }
             if (qualified == "System.Kernel.Cpu.EnableInterrupts") { return Intrinsic(e, qualified, "", "", "void"); }

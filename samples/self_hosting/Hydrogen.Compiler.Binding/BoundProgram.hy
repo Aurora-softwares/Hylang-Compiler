@@ -31,15 +31,25 @@ namespace Hydrogen.Compiler.Binding {
         public static int KindInitializeStorage() { return 27; }
         public static int KindExecuteKernel() { return 28; }
         public static int KindLoadRawKernelLiteral() { return 29; }
+        public static int KindUserWriteLiteral() { return 30; }
+        public static int KindUserReadTerminal() { return 31; }
+        public static int KindUserWriteResult() { return 32; }
+        public static int KindUserOpenLiteral() { return 33; }
+        public static int KindUserReadFile() { return 34; }
+        public static int KindUserCloseFile() { return 35; }
+        public static int KindUserStoreByte() { return 36; }
+        public static int KindUserYield() { return 37; }
 
         private int kind;
         private string text;
         private int exitCode;
+        private long argument;
 
         public BoundOp(int inputKind, string inputText, int inputExitCode) {
             kind = inputKind;
             text = inputText;
             exitCode = inputExitCode;
+            argument = 0;
         }
 
         public int Kind() {
@@ -53,6 +63,9 @@ namespace Hydrogen.Compiler.Binding {
         public int ExitCode() {
             return exitCode;
         }
+
+        public long Argument() { return argument; }
+        public void SetArgument(long value) { argument = value; }
     }
 
     public class BoundProgram {
@@ -148,6 +161,22 @@ namespace Hydrogen.Compiler.Binding {
                     text = text + "  Uefi.ClearScreen()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindAwaitKey()) {
                     text = text + "  Uefi.Await()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserWriteLiteral()) {
+                    text = text + "  Australis.Terminal.Write(\"" + entryOps[o].Text() + "\")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserReadTerminal()) {
+                    text = text + "  Australis.Terminal.ReadLine(" + entryOps[o].ExitCode() + ")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserWriteResult()) {
+                    text = text + "  Australis.Terminal.WriteResult()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserOpenLiteral()) {
+                    text = text + "  Australis.Files.Open(\"" + entryOps[o].Text() + "\")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserReadFile()) {
+                    text = text + "  Australis.Files.Read(" + entryOps[o].ExitCode() + ")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserCloseFile()) {
+                    text = text + "  Australis.Files.Close()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserStoreByte()) {
+                    text = text + "  Australis.Memory.StoreByte(" + entryOps[o].Argument() + ", " + entryOps[o].ExitCode() + ")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserYield()) {
+                    text = text + "  Australis.Process.Yield()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindExit()) {
                     text = text + "  Exit(" + entryOps[o].ExitCode() + ")\n";
                 } else {
