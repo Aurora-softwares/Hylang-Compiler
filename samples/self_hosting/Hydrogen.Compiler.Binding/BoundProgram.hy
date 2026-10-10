@@ -18,15 +18,38 @@ namespace Hydrogen.Compiler.Binding {
         public static int KindAllocateKernelHeap() { return 14; }
         public static int KindInitializeFramebuffer() { return 15; }
         public static int KindFramebufferWriteLineLiteral() { return 16; }
+        public static int KindInitializeGdt() { return 17; }
+        public static int KindInitializeIdt() { return 18; }
+        public static int KindInitializeInterruptController() { return 19; }
+        public static int KindInitializeTimer() { return 20; }
+        public static int KindEnableInterrupts() { return 21; }
+        public static int KindInterruptIdle() { return 22; }
+        public static int KindInitializePci() { return 23; }
+        public static int KindInitializeMmio() { return 24; }
+        public static int KindInitializeDma() { return 25; }
+        public static int KindAllocateDmaPages() { return 26; }
+        public static int KindInitializeStorage() { return 27; }
+        public static int KindExecuteKernel() { return 28; }
+        public static int KindLoadRawKernelLiteral() { return 29; }
+        public static int KindUserWriteLiteral() { return 30; }
+        public static int KindUserReadTerminal() { return 31; }
+        public static int KindUserWriteResult() { return 32; }
+        public static int KindUserOpenLiteral() { return 33; }
+        public static int KindUserReadFile() { return 34; }
+        public static int KindUserCloseFile() { return 35; }
+        public static int KindUserStoreByte() { return 36; }
+        public static int KindUserYield() { return 37; }
 
         private int kind;
         private string text;
         private int exitCode;
+        private long argument;
 
         public BoundOp(int inputKind, string inputText, int inputExitCode) {
             kind = inputKind;
             text = inputText;
             exitCode = inputExitCode;
+            argument = 0;
         }
 
         public int Kind() {
@@ -40,6 +63,9 @@ namespace Hydrogen.Compiler.Binding {
         public int ExitCode() {
             return exitCode;
         }
+
+        public long Argument() { return argument; }
+        public void SetArgument(long value) { argument = value; }
     }
 
     public class BoundProgram {
@@ -83,6 +109,8 @@ namespace Hydrogen.Compiler.Binding {
                     text = text + "  WriteLineLiteral(\"" + entryOps[o].Text() + "\")\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindStartImageLiteral()) {
                     text = text + "  StartImageLiteral(\"" + entryOps[o].Text() + "\")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindLoadRawKernelLiteral()) {
+                    text = text + "  LoadRawKernelLiteral(\"" + entryOps[o].Text() + "\")\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindExitBootServices()) {
                     text = text + "  ExitBootServices()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindKernelHalt()) {
@@ -105,10 +133,50 @@ namespace Hydrogen.Compiler.Binding {
                     text = text + "  Framebuffer.Initialize()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindFramebufferWriteLineLiteral()) {
                     text = text + "  Framebuffer.WriteLine(\"" + entryOps[o].Text() + "\")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializeGdt()) {
+                    text = text + "  Gdt.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializeIdt()) {
+                    text = text + "  Idt.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializeInterruptController()) {
+                    text = text + "  Interrupts.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializeTimer()) {
+                    text = text + "  Timer.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindEnableInterrupts()) {
+                    text = text + "  Interrupts.Enable()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInterruptIdle()) {
+                    text = text + "  Interrupts.Idle()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializePci()) {
+                    text = text + "  Pci.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializeMmio()) {
+                    text = text + "  Mmio.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializeDma()) {
+                    text = text + "  Dma.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindAllocateDmaPages()) {
+                    text = text + "  Dma.AllocatePages(" + entryOps[o].ExitCode() + ")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindInitializeStorage()) {
+                    text = text + "  Storage.Initialize()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindExecuteKernel()) {
+                    text = text + "  Kernel.Runtime.Execute()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindClearScreen()) {
                     text = text + "  Uefi.ClearScreen()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindAwaitKey()) {
                     text = text + "  Uefi.Await()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserWriteLiteral()) {
+                    text = text + "  Australis.Terminal.Write(\"" + entryOps[o].Text() + "\")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserReadTerminal()) {
+                    text = text + "  Australis.Terminal.ReadLine(" + entryOps[o].ExitCode() + ")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserWriteResult()) {
+                    text = text + "  Australis.Terminal.WriteResult()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserOpenLiteral()) {
+                    text = text + "  Australis.Files.Open(\"" + entryOps[o].Text() + "\")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserReadFile()) {
+                    text = text + "  Australis.Files.Read(" + entryOps[o].ExitCode() + ")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserCloseFile()) {
+                    text = text + "  Australis.Files.Close()\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserStoreByte()) {
+                    text = text + "  Australis.Memory.StoreByte(" + entryOps[o].Argument() + ", " + entryOps[o].ExitCode() + ")\n";
+                } else if (entryOps[o].Kind() == BoundOp.KindUserYield()) {
+                    text = text + "  Australis.Process.Yield()\n";
                 } else if (entryOps[o].Kind() == BoundOp.KindExit()) {
                     text = text + "  Exit(" + entryOps[o].ExitCode() + ")\n";
                 } else {

@@ -15,6 +15,8 @@ namespace Hydrogen.Compiler.IR {
                     lowered[i] = new IrOp(IrOp.KindWriteLineLiteral(), ops[i].Text(), 0);
                 } else if (ops[i].Kind() == BoundOp.KindStartImageLiteral()) {
                     lowered[i] = new IrOp(IrOp.KindStartImageLiteral(), ops[i].Text(), 0);
+                } else if (ops[i].Kind() == BoundOp.KindLoadRawKernelLiteral()) {
+                    lowered[i] = new IrOp(IrOp.KindLoadRawKernelLiteral(), ops[i].Text(), 0);
                 } else if (ops[i].Kind() == BoundOp.KindExitBootServices()) {
                     lowered[i] = new IrOp(IrOp.KindExitBootServices(), "", 0);
                 } else if (ops[i].Kind() == BoundOp.KindKernelHalt()) {
@@ -37,6 +39,30 @@ namespace Hydrogen.Compiler.IR {
                     lowered[i] = new IrOp(IrOp.KindInitializeFramebuffer(), "", 0);
                 } else if (ops[i].Kind() == BoundOp.KindFramebufferWriteLineLiteral()) {
                     lowered[i] = new IrOp(IrOp.KindFramebufferWriteLineLiteral(), ops[i].Text(), 0);
+                } else if (ops[i].Kind() == BoundOp.KindInitializeGdt()) {
+                    lowered[i] = new IrOp(IrOp.KindInitializeGdt(), "", 0);
+                } else if (ops[i].Kind() == BoundOp.KindInitializeIdt()) {
+                    lowered[i] = new IrOp(IrOp.KindInitializeIdt(), "", 0);
+                } else if (ops[i].Kind() == BoundOp.KindInitializeInterruptController()) {
+                    lowered[i] = new IrOp(IrOp.KindInitializeInterruptController(), "", 0);
+                } else if (ops[i].Kind() == BoundOp.KindInitializeTimer()) {
+                    lowered[i] = new IrOp(IrOp.KindInitializeTimer(), "", 0);
+                } else if (ops[i].Kind() == BoundOp.KindEnableInterrupts()) {
+                    lowered[i] = new IrOp(IrOp.KindEnableInterrupts(), "", 0);
+                } else if (ops[i].Kind() == BoundOp.KindInterruptIdle()) {
+                    lowered[i] = new IrOp(IrOp.KindInterruptIdle(), "", 0);
+                } else if (ops[i].Kind() == BoundOp.KindInitializePci()) {
+                    lowered[i] = new IrOp(IrOp.KindInitializePci(), "", 0);
+                } else if (ops[i].Kind() == BoundOp.KindInitializeMmio()) {
+                    lowered[i] = new IrOp(IrOp.KindInitializeMmio(), "", 0);
+                } else if (ops[i].Kind() == BoundOp.KindInitializeDma()) {
+                    lowered[i] = new IrOp(IrOp.KindInitializeDma(), "", 0);
+                } else if (ops[i].Kind() == BoundOp.KindAllocateDmaPages()) {
+                    lowered[i] = new IrOp(IrOp.KindAllocateDmaPages(), "", ops[i].ExitCode());
+                } else if (ops[i].Kind() == BoundOp.KindInitializeStorage()) {
+                    lowered[i] = new IrOp(IrOp.KindInitializeStorage(), "", 0);
+                } else if (ops[i].Kind() == BoundOp.KindExecuteKernel()) {
+                    lowered[i] = new IrOp(IrOp.KindExecuteKernel(), "", 0);
                 } else if (ops[i].Kind() == BoundOp.KindClearScreen()) {
                     lowered[i] = new IrOp(IrOp.KindClearScreen(), "", 0);
                 } else if (ops[i].Kind() == BoundOp.KindAwaitKey()) {

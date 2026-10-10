@@ -126,6 +126,30 @@ namespace Hydrogen.Compiler.Binding {
 
             ExpressionSyntax target = expression.Target();
             ExpressionSyntax[] args = expression.Arguments();
+            string qualified = Qualified(target);
+            if (args.Length == 0 && qualified == "System.Australis.Terminal.WriteResult") {
+                return new BoundOp(BoundOp.KindUserWriteResult(), "", 0);
+            }
+            if (args.Length == 0 && qualified == "System.Australis.Files.Close") {
+                return new BoundOp(BoundOp.KindUserCloseFile(), "", 0);
+            }
+            if (args.Length == 0 && qualified == "System.Australis.Process.Yield") {
+                return new BoundOp(BoundOp.KindUserYield(), "", 0);
+            }
+            if (args.Length == 1 && qualified == "System.Australis.Terminal.ReadLine" &&
+                IsNumberLiteral(args[0])) {
+                return new BoundOp(BoundOp.KindUserReadTerminal(), "", ParseInt(args[0].LiteralText()));
+            }
+            if (args.Length == 1 && qualified == "System.Australis.Files.Read" &&
+                IsNumberLiteral(args[0])) {
+                return new BoundOp(BoundOp.KindUserReadFile(), "", ParseInt(args[0].LiteralText()));
+            }
+            if (args.Length == 2 && qualified == "System.Australis.Memory.StoreByte" &&
+                IsNumberLiteral(args[0]) && IsNumberLiteral(args[1])) {
+                BoundOp store = new BoundOp(BoundOp.KindUserStoreByte(), "", ParseInt(args[1].LiteralText()));
+                store.SetArgument((long)ParseInt(args[0].LiteralText()));
+                return store;
+            }
             if (args.Length == 0 && IsSystemUefiClearScreen(target)) {
                 return new BoundOp(BoundOp.KindClearScreen(), "", 0);
             }
@@ -159,6 +183,45 @@ namespace Hydrogen.Compiler.Binding {
             if (args.Length == 0 && IsSystemKernelFramebufferInitialize(target)) {
                 return new BoundOp(BoundOp.KindInitializeFramebuffer(), "", 0);
             }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Gdt", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeGdt(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Idt", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeIdt(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Interrupts", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeInterruptController(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Timer", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeTimer(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Interrupts", "Enable")) {
+                return new BoundOp(BoundOp.KindEnableInterrupts(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Interrupts", "Idle")) {
+                return new BoundOp(BoundOp.KindInterruptIdle(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Pci", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializePci(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Mmio", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeMmio(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Dma", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeDma(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Storage", "Initialize")) {
+                return new BoundOp(BoundOp.KindInitializeStorage(), "", 0);
+            }
+            if (args.Length == 0 && IsSystemKernelSubsystemCall(target, "Runtime", "Execute")) {
+                return new BoundOp(BoundOp.KindExecuteKernel(), "", 0);
+            }
+            if (args.Length == 1 && IsSystemKernelSubsystemCall(target, "Dma", "AllocatePages")) {
+                if (args[0].Kind() != ExpressionSyntax.KindLiteral() || args[0].LiteralKind() != "number") {
+                    return null;
+                }
+                return new BoundOp(BoundOp.KindAllocateDmaPages(), "", ParseInt(args[0].LiteralText()));
+            }
             if (args.Length == 1 && IsSystemKernelHeapAllocate(target)) {
                 if (args[0].Kind() != ExpressionSyntax.KindLiteral() || args[0].LiteralKind() != "number") {
                     return null;
@@ -179,13 +242,39 @@ namespace Hydrogen.Compiler.Binding {
             if (IsSystemConsoleWriteLine(target)) {
                 return new BoundOp(BoundOp.KindWriteLineLiteral(), args[0].LiteralText(), 0);
             }
+            if (qualified == "System.Australis.Terminal.Write") {
+                return new BoundOp(BoundOp.KindUserWriteLiteral(), args[0].LiteralText(), 0);
+            }
+            if (qualified == "System.Australis.Terminal.WriteLine") {
+                return new BoundOp(BoundOp.KindWriteLineLiteral(), args[0].LiteralText(), 0);
+            }
+            if (qualified == "System.Australis.Files.Open") {
+                return new BoundOp(BoundOp.KindUserOpenLiteral(), args[0].LiteralText(), 0);
+            }
             if (IsSystemUefiStartImage(target)) {
                 return new BoundOp(BoundOp.KindStartImageLiteral(), args[0].LiteralText(), 0);
+            }
+            if (IsSystemKernelSubsystemCall(target, "Boot", "Load")) {
+                return new BoundOp(BoundOp.KindLoadRawKernelLiteral(), args[0].LiteralText(), 0);
             }
             if (IsSystemKernelFramebufferWriteLine(target)) {
                 return new BoundOp(BoundOp.KindFramebufferWriteLineLiteral(), args[0].LiteralText(), 0);
             }
             return null;
+        }
+
+        private bool IsNumberLiteral(ExpressionSyntax expression) {
+            return expression.Kind() == ExpressionSyntax.KindLiteral() &&
+                expression.LiteralKind() == "number";
+        }
+
+        private string Qualified(ExpressionSyntax expression) {
+            if (expression.Kind() == ExpressionSyntax.KindName()) { return expression.Name(); }
+            if (expression.Kind() == ExpressionSyntax.KindMemberAccess()) {
+                string receiver = Qualified(expression.Receiver());
+                if (receiver != "") { return receiver + "." + expression.MemberName(); }
+            }
+            return "";
         }
 
         private bool IsSystemConsoleWriteLine(ExpressionSyntax target) {
@@ -554,6 +643,34 @@ namespace Hydrogen.Compiler.Binding {
                 return false;
             }
             ExpressionSyntax kernel = framebuffer.Receiver();
+            if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (kernel.MemberName() != "Kernel") {
+                return false;
+            }
+            ExpressionSyntax systemExpr = kernel.Receiver();
+            if (systemExpr.Kind() != ExpressionSyntax.KindName()) {
+                return false;
+            }
+            return systemExpr.Name() == "System";
+        }
+
+        private bool IsSystemKernelSubsystemCall(ExpressionSyntax target, string subsystem, string method) {
+            if (target.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (target.MemberName() != method) {
+                return false;
+            }
+            ExpressionSyntax receiver = target.Receiver();
+            if (receiver.Kind() != ExpressionSyntax.KindMemberAccess()) {
+                return false;
+            }
+            if (receiver.MemberName() != subsystem) {
+                return false;
+            }
+            ExpressionSyntax kernel = receiver.Receiver();
             if (kernel.Kind() != ExpressionSyntax.KindMemberAccess()) {
                 return false;
             }

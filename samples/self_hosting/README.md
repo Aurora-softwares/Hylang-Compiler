@@ -1,6 +1,6 @@
 # Native Hydrogen compiler
 
-This directory contains the Hydrogen-written compiler and its referenced libraries. It emits standalone Linux x86-64 executables, and a constrained x86_64 UEFI proof image, and can compile its own complete CLI project. The executable manifest is `Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj`; `Hydrogen.Compiler.hyproj` is the SDK workspace including tests.
+This directory contains the Hydrogen-written compiler and its referenced libraries. It emits standalone Linux x86-64 executables and constrained x86-64 UEFI images, and can compile its own complete CLI project. The executable manifest is `Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj`; `Hydrogen.Compiler.hyproj` is the SDK workspace including tests.
 
 ## Build and use
 
@@ -24,11 +24,12 @@ hydrogen-stage1 parse <file.hy>
 hydrogen-stage1 check <file.hy|project.hyproj> [--emit-ir]
 hydrogen-stage1 compile <file.hy> -o <output>
 hydrogen-stage1 compile <file.hy> --target uefi-x64 -o <output>
-hydrogen-stage1 build <project.hyproj> -o <output>
+hydrogen-stage1 build <project.hyproj> -o <output-file|output-directory>
+hydrogen-stage1 new app|lib|tool|test|workspace|os|efi|kernel|exec <name>
 hydrogen-stage1 stage-compare <project.hyproj> --stage1 <artifact> --stage2 <artifact>
 ```
 
-`tokens` prints lexer tokens/locations. `parse` prints a syntax outline. `check` performs semantic checking; `--emit-ir` prints typed executable method-body IR. `compile` emits a Linux executable by default, or a constrained PE32+ UEFI application with `--target uefi-x64`; `build` emits a format-2 executable project's complete reference closure. `stage-compare` compares existing files exactly; it does not build or behaviorally test them.
+`tokens` prints lexer tokens/locations. `parse` prints a syntax outline. `check` performs semantic checking; `--emit-ir` prints typed executable method-body IR. `compile` emits a Linux executable by default, or a constrained PE32+ UEFI application with `--target uefi-x64`; `build` accepts format-2 `exe`, `efi`, `kernel`, `exec`, and `os` projects. An `exec` project emits an Australis AUEX v1 program. OS builds emit referenced images below the specified output directory and may include `exec` projects. `stage-compare` compares existing files exactly; it does not build or behaviorally test them.
 
 ## UEFI console and chain-loading target
 
@@ -41,7 +42,9 @@ The UEFI target accepts static `Main(string[] args)` entry points with
 for and consume one keyboard event, and multiple `System.Console.WriteLine`
 ASCII string literals. It can also use
 `System.Uefi.StartImage` with an ASCII path to load and launch an EFI image from
-the boot volume. A kernel image can finish with
+the boot volume. A bootloader can instead use
+`System.Kernel.Boot.Load(<literal-path>)` to load and validate a raw `AUKR`
+kernel before the final memory map, followed by
 `System.Uefi.ExitBootServices()`, `System.Kernel.MemoryMap.Initialize()`,
 `System.Kernel.Memory.Initialize()`,
 `System.Kernel.VirtualMemory.Initialize()`,
@@ -51,8 +54,8 @@ the boot volume. A kernel image can finish with
 `System.Kernel.Heap.Allocate(<literal-byte-count>)` calls,
 `System.Kernel.Framebuffer.Initialize()`, literal
 `System.Kernel.Framebuffer.WriteLine(<text>)` calls, and
-`System.Kernel.Halt()`. The
-target captures a final memory map, selects the largest
+`System.Kernel.Runtime.Execute()`. The
+bootloader captures a final memory map, selects the largest
 `EfiConventionalMemory` descriptor, reserves and clears its first 4 KiB page,
 publishes the remaining physical-page range, retries `ExitBootServices` with a
 fresh map key when needed, then copies every present PML4, PDPT, PD, and PT page
@@ -67,30 +70,57 @@ literal size from 1 through 1 MiB and publishes its address at `KernelBootInfo +
 the bootstrap heap does not free or reuse allocations. Framebuffer initialization
 captures GOP before services end, clears the framebuffer with direct stores, and
 renders literal printable-ASCII lines through an embedded 8x8 font; it accepts
-the standard RGB and BGR 32-bit GOP formats. It then disables interrupts and idles. It emits the PE32+ image in Hydrogen, encodes its console text as UTF-16,
-and invokes the firmware text
-output protocol through the UEFI x64 calling convention. The target does not
-offer a general firmware runtime or arbitrary method compilation.
+the standard RGB and BGR 32-bit GOP formats. The EFI bootloader switches to
+a dedicated 64 KiB stack and calls the raw kernel entry after
+`ExitBootServices`. The kernel enables interrupts and owns its idle loop.
+
+A format-2 `kernel` project compiles reachable
+`static int KernelMain.Run(long bootInfo)` methods into a separate
+position-independent binary. Its 16-byte `AUKR` header records version 1,
+code length, and entry offset 16. The bootloader verifies the header and exact
+file size, then loads it in executable memory before the final map capture.
+Freestanding code supports direct 8/16/32/64-bit memory loads and stores, byte
+and dword port I/O, CPU pause/halt/interrupt enable, `RDTSC` timestamps,
+`MFENCE` DMA synchronization, and a page-backed allocator for
+objects, arrays, and ASCII string literals. Managed strings support content
+equality, byte-based indexing, `System.Kernel.String.ByteAt`, and
+`System.Kernel.String.FromBytes` in freestanding code. The kernel runtime consumes the page
+range in `KernelBootInfo`. Each allocation has a 16-byte owner header and
+`System.Kernel.Managed.Release(value)` explicitly releases an object, array,
+or string. Released pages enter the kernel free-page list; one-page managed
+allocations reuse them. An active shell command marker defers reuse above its
+rewind point until the command completes. Callers must release a value only
+after every reference to it has gone out of use. A failed checked runtime allocation records error
+code `5` at `KernelBootInfo + 1160` before it traps, and it does not invoke UEFI
+or Linux. Static fields,
+other string operations, and unsupported runtime intrinsics are rejected during
+freestanding emission.
 
 The paging walker handles standard four-level x86_64 paging. It detects an
 active LA57 five-level hierarchy and halts before changing `CR3`.
 
 The CLI returns nonzero on invalid or unsupported compilation and does not create or overwrite the output on failure. An older output may remain, so check status before running it. Checking does not guarantee emission support. Normal compilation never substitutes a debug IR executable. Semantic positions use `1:1` where AST spans are unavailable; lexer/parser diagnostics have source positions.
 
-The native tool has no SDK `new`, `run`, `test`, `fmt`, `package`, `lsp`, `--json`, or `--debug` options.
+The native tool has `new` scaffolding, but not the SDK's `run`, `test`, `fmt`, `package`, `lsp`, `--json`, or `--debug` options.
 
 ## Language support
 
 | Supported | Details |
 | --- | --- |
-| Class objects | Reference identity, instance fields, initializers, constructors/default constructors |
-| Calls | Static and instance methods, parameters, returns, direct/mutual recursion |
-| Types | `int` (signed 64-bit), `byte`, `bool`, enums, strings, class references, arrays; `void` returns |
+| Class objects | Reference identity, inheritance, virtual dispatch, instance fields, initializers, constructors |
+| Calls | Static and instance methods, overloads, interface calls, parameters, returns, recursion |
+| Types | Signed and unsigned integer widths (`int` is 32-bit), `bool`, enums, strings, structs, classes, arrays; `void` returns |
 | Expressions | Arithmetic, comparisons, assignment, fields, indexing, numeric casts, short-circuit booleans |
-| Statements | Blocks, `var`, `if`/`else`, `while`, `break`, `continue`, returns |
+| Statements | Blocks, `var`, `if`/`else`, `while`, `for`, `break`, `continue`, returns |
 | Entry | Static `Main`, `int`/`void`, zero parameters or `string[]` user arguments |
 
-Inheritance, virtual/interface dispatch, structs with value semantics, generics, overloads, static fields, `for`, exceptions, pointers/manual memory, `Buffer`, `BinaryPrimitives`, and `List<T>` require SDK implementation work before native use. Wider numeric declarations may check successfully but reachable native signatures remain restricted.
+Fatal freestanding CPU exceptions use an allocation-free IDT panic path. It
+captures the CPU exception frame, `CR2`, and all general registers, writes a
+fixed hexadecimal report directly to polled COM1 and the initialized GOP
+framebuffer, and halts with interrupts disabled. The report does not depend on
+UEFI services or the managed runtime.
+
+Static fields and struct value semantics are supported. Generics, exceptions, pointers/manual memory, `Buffer`, `BinaryPrimitives`, and `List<T>` remain outside native compilation.
 
 Use fully qualified builtin names such as `System.Console.WriteLine`. The SDK interpreter evaluates both logical operands; native code short-circuits. Explicit conditional guards make code safe to execute in both routes.
 

@@ -22,11 +22,16 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
     // EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL.OutputString through its function pointer.
     public class UefiImageBuilder {
         public UefiImageResult Build(IrEntryPoint entryPoint) {
+            return Build(entryPoint, new byte[0]);
+        }
+
+        public UefiImageResult Build(IrEntryPoint entryPoint, byte[] kernelCode) {
             IrOp[] ops = entryPoint.Ops();
             string payload = "";
             string kernelPath = "";
             int writes = 0;
             int startImages = 0;
+            int rawKernelLoads = 0;
             int exitBootServices = 0;
             int memoryMapInitializers = 0;
             int memoryInitializers = 0;
@@ -39,6 +44,19 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             int framebufferInitializers = 0;
             string[] framebufferMessages = new string[ops.Length];
             int framebufferWrites = 0;
+            int gdtInitializers = 0;
+            int idtInitializers = 0;
+            int interruptControllerInitializers = 0;
+            int timerInitializers = 0;
+            int interruptEnables = 0;
+            int interruptIdles = 0;
+            int pciInitializers = 0;
+            int mmioInitializers = 0;
+            int dmaInitializers = 0;
+            int[] dmaAllocationPageCounts = new int[ops.Length];
+            int dmaAllocations = 0;
+            int storageInitializers = 0;
+            int kernelExecutions = 0;
             int kernelHalts = 0;
             int clearScreens = 0;
             int awaitKeys = 0;
@@ -72,6 +90,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 } else if (ops[i].Kind() == IrOp.KindStartImageLiteral()) {
                     kernelPath = ops[i].Text();
                     startImages = startImages + 1;
+                } else if (ops[i].Kind() == IrOp.KindLoadRawKernelLiteral()) {
+                    if (exitBootServices != 0) { return Failed("raw kernel load must precede ExitBootServices"); }
+                    kernelPath = ops[i].Text();
+                    rawKernelLoads = rawKernelLoads + 1;
                 } else if (ops[i].Kind() == IrOp.KindExitBootServices()) {
                     if (kernelHalts != 0) {
                         return Failed("System.Uefi.ExitBootServices must precede System.Kernel.Halt");
@@ -157,6 +179,111 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     }
                     framebufferMessages[framebufferWrites] = ops[i].Text();
                     framebufferWrites = framebufferWrites + 1;
+                } else if (ops[i].Kind() == IrOp.KindInitializeGdt()) {
+                    if (framebufferInitializers == 0) {
+                        return Failed("System.Kernel.Gdt.Initialize must follow System.Kernel.Framebuffer.Initialize");
+                    }
+                    if (kernelHalts != 0 || interruptIdles != 0) {
+                        return Failed("System.Kernel.Gdt.Initialize must precede the kernel idle loop");
+                    }
+                    gdtInitializers = gdtInitializers + 1;
+                } else if (ops[i].Kind() == IrOp.KindInitializeIdt()) {
+                    if (gdtInitializers == 0) {
+                        return Failed("System.Kernel.Idt.Initialize must follow System.Kernel.Gdt.Initialize");
+                    }
+                    if (kernelHalts != 0 || interruptIdles != 0) {
+                        return Failed("System.Kernel.Idt.Initialize must precede the kernel idle loop");
+                    }
+                    idtInitializers = idtInitializers + 1;
+                } else if (ops[i].Kind() == IrOp.KindInitializeInterruptController()) {
+                    if (idtInitializers == 0) {
+                        return Failed("System.Kernel.Interrupts.Initialize must follow System.Kernel.Idt.Initialize");
+                    }
+                    if (kernelHalts != 0 || interruptIdles != 0) {
+                        return Failed("System.Kernel.Interrupts.Initialize must precede the kernel idle loop");
+                    }
+                    interruptControllerInitializers = interruptControllerInitializers + 1;
+                } else if (ops[i].Kind() == IrOp.KindInitializeTimer()) {
+                    if (interruptControllerInitializers == 0) {
+                        return Failed("System.Kernel.Timer.Initialize must follow System.Kernel.Interrupts.Initialize");
+                    }
+                    if (kernelHalts != 0 || interruptIdles != 0) {
+                        return Failed("System.Kernel.Timer.Initialize must precede the kernel idle loop");
+                    }
+                    timerInitializers = timerInitializers + 1;
+                } else if (ops[i].Kind() == IrOp.KindInitializePci()) {
+                    if (timerInitializers == 0) {
+                        return Failed("System.Kernel.Pci.Initialize must follow System.Kernel.Timer.Initialize");
+                    }
+                    if (interruptEnables != 0 || kernelHalts != 0 || interruptIdles != 0) {
+                        return Failed("System.Kernel.Pci.Initialize must precede System.Kernel.Interrupts.Enable");
+                    }
+                    pciInitializers = pciInitializers + 1;
+                } else if (ops[i].Kind() == IrOp.KindInitializeMmio()) {
+                    if (pciInitializers == 0) {
+                        return Failed("System.Kernel.Mmio.Initialize must follow System.Kernel.Pci.Initialize");
+                    }
+                    if (interruptEnables != 0 || kernelHalts != 0 || interruptIdles != 0) {
+                        return Failed("System.Kernel.Mmio.Initialize must precede System.Kernel.Interrupts.Enable");
+                    }
+                    mmioInitializers = mmioInitializers + 1;
+                } else if (ops[i].Kind() == IrOp.KindInitializeDma()) {
+                    if (mmioInitializers == 0) {
+                        return Failed("System.Kernel.Dma.Initialize must follow System.Kernel.Mmio.Initialize");
+                    }
+                    if (interruptEnables != 0 || kernelHalts != 0 || interruptIdles != 0) {
+                        return Failed("System.Kernel.Dma.Initialize must precede System.Kernel.Interrupts.Enable");
+                    }
+                    dmaInitializers = dmaInitializers + 1;
+                } else if (ops[i].Kind() == IrOp.KindAllocateDmaPages()) {
+                    if (dmaInitializers == 0) {
+                        return Failed("System.Kernel.Dma.AllocatePages must follow System.Kernel.Dma.Initialize");
+                    }
+                    if (ops[i].ExitCode() <= 0 || ops[i].ExitCode() > 1024) {
+                        return Failed("System.Kernel.Dma.AllocatePages requires a literal page count from 1 through 1024");
+                    }
+                    if (interruptEnables != 0 || kernelHalts != 0 || interruptIdles != 0) {
+                        return Failed("System.Kernel.Dma.AllocatePages must precede System.Kernel.Interrupts.Enable");
+                    }
+                    dmaAllocationPageCounts[dmaAllocations] = ops[i].ExitCode();
+                    dmaAllocations = dmaAllocations + 1;
+                } else if (ops[i].Kind() == IrOp.KindInitializeStorage()) {
+                    if (dmaAllocations == 0) {
+                        return Failed("System.Kernel.Storage.Initialize requires a preceding System.Kernel.Dma.AllocatePages call");
+                    }
+                    // The fixed bootstrap transports reserve 16 contiguous
+                    // pages. NVMe needs admin and I/O queues, identify pages,
+                    // a PRP list, and the 32 KiB GPT transfer buffer; admitting
+                    // a smaller literal allocation would generate an image
+                    // whose controller DMA ranges overlap.
+                    if (dmaAllocationPageCounts[dmaAllocations - 1] < 16) {
+                        return Failed("System.Kernel.Storage.Initialize requires at least 16 preceding DMA pages");
+                    }
+                    if (interruptEnables != 0 || kernelHalts != 0 || interruptIdles != 0) {
+                        return Failed("System.Kernel.Storage.Initialize must precede System.Kernel.Interrupts.Enable");
+                    }
+                    storageInitializers = storageInitializers + 1;
+                } else if (ops[i].Kind() == IrOp.KindExecuteKernel()) {
+                    if (storageInitializers == 0 || interruptEnables != 0 || interruptIdles != 0 || kernelHalts != 0) {
+                        return Failed("System.Kernel.Runtime.Execute must follow storage initialization and precede interrupts");
+                    }
+                    kernelExecutions = kernelExecutions + 1;
+                } else if (ops[i].Kind() == IrOp.KindEnableInterrupts()) {
+                    if (timerInitializers == 0) {
+                        return Failed("System.Kernel.Interrupts.Enable must follow System.Kernel.Timer.Initialize");
+                    }
+                    if (pciInitializers != 0 && (mmioInitializers == 0 || dmaInitializers == 0)) {
+                        return Failed("System.Kernel.Interrupts.Enable must follow System.Kernel.Pci.Initialize, System.Kernel.Mmio.Initialize, and System.Kernel.Dma.Initialize");
+                    }
+                    if (kernelHalts != 0 || interruptIdles != 0) {
+                        return Failed("System.Kernel.Interrupts.Enable must precede the kernel idle loop");
+                    }
+                    interruptEnables = interruptEnables + 1;
+                } else if (ops[i].Kind() == IrOp.KindInterruptIdle()) {
+                    if (interruptEnables == 0) {
+                        return Failed("System.Kernel.Interrupts.Idle must follow System.Kernel.Interrupts.Enable");
+                    }
+                    interruptIdles = interruptIdles + 1;
                 } else if (ops[i].Kind() == IrOp.KindKernelHalt()) {
                     if (exitBootServices == 0) {
                         return Failed("System.Kernel.Halt must follow System.Uefi.ExitBootServices");
@@ -176,6 +303,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     if (heapInitializers == 0) {
                         return Failed("System.Kernel.Halt must follow System.Kernel.Heap.Initialize");
                     }
+                    if (gdtInitializers != 0 || idtInitializers != 0 || interruptControllerInitializers != 0 || timerInitializers != 0 || interruptEnables != 0 || interruptIdles != 0) {
+                        return Failed("System.Kernel.Halt cannot follow interrupt initialization; use System.Kernel.Interrupts.Idle");
+                    }
                     kernelHalts = kernelHalts + 1;
                 } else if (ops[i].Kind() != IrOp.KindExit()) {
                     return Failed("UEFI target supports literal console output, System.Uefi.StartImage, and the kernel handoff calls");
@@ -184,7 +314,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             if (writes == 0) { return Failed("UEFI target requires at least one System.Console.WriteLine string literal"); }
             if (startImages > 1) { return Failed("UEFI target supports one System.Uefi.StartImage call"); }
-            if (startImages == 1 && kernelPath.Length == 0) { return Failed("UEFI image path cannot be empty"); }
+            if (rawKernelLoads > 1 || (rawKernelLoads != 0 && startImages != 0)) {
+                return Failed("UEFI target supports exactly one kernel loading mode");
+            }
+            if ((startImages == 1 || rawKernelLoads == 1) && kernelPath.Length == 0) {
+                return Failed("kernel image path cannot be empty");
+            }
             if (exitBootServices > 1) { return Failed("UEFI target supports one System.Uefi.ExitBootServices call"); }
             if (memoryMapInitializers > 1) { return Failed("UEFI target supports one System.Kernel.MemoryMap.Initialize call"); }
             if (memoryInitializers > 1) { return Failed("UEFI target supports one System.Kernel.Memory.Initialize call"); }
@@ -192,14 +327,55 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (mappingPolicyInitializers > 1) { return Failed("UEFI target supports one System.Kernel.VirtualMemory.ApplyPolicy call"); }
             if (heapInitializers > 1) { return Failed("UEFI target supports one System.Kernel.Heap.Initialize call"); }
             if (framebufferInitializers > 1) { return Failed("UEFI target supports one System.Kernel.Framebuffer.Initialize call"); }
+            if (gdtInitializers > 1) { return Failed("UEFI target supports one System.Kernel.Gdt.Initialize call"); }
+            if (idtInitializers > 1) { return Failed("UEFI target supports one System.Kernel.Idt.Initialize call"); }
+            if (interruptControllerInitializers > 1) { return Failed("UEFI target supports one System.Kernel.Interrupts.Initialize call"); }
+            if (timerInitializers > 1) { return Failed("UEFI target supports one System.Kernel.Timer.Initialize call"); }
+            if (interruptEnables > 1) { return Failed("UEFI target supports one System.Kernel.Interrupts.Enable call"); }
+            if (interruptIdles > 1) { return Failed("UEFI target supports one System.Kernel.Interrupts.Idle call"); }
+            if (pciInitializers > 1) { return Failed("UEFI target supports one System.Kernel.Pci.Initialize call"); }
+            if (mmioInitializers > 1) { return Failed("UEFI target supports one System.Kernel.Mmio.Initialize call"); }
+            if (dmaInitializers > 1) { return Failed("UEFI target supports one System.Kernel.Dma.Initialize call"); }
+            if (storageInitializers > 1) { return Failed("UEFI target supports one System.Kernel.Storage.Initialize call"); }
+            if (kernelExecutions > 1) { return Failed("UEFI target supports one System.Kernel.Runtime.Execute call"); }
+            if ((kernelExecutions == 1 && kernelCode.Length == 0 && rawKernelLoads == 0) ||
+                (kernelExecutions == 0 && kernelCode.Length != 0) ||
+                (rawKernelLoads != 0 && (kernelExecutions != 1 || exitBootServices != 1 || kernelCode.Length != 0))) {
+                return Failed("freestanding kernel code and System.Kernel.Runtime.Execute must be provided together");
+            }
             if (kernelHalts > 1) { return Failed("UEFI target supports one System.Kernel.Halt call"); }
             if (clearScreens > 1) { return Failed("UEFI target supports one System.Uefi.ClearScreen call"); }
             if (startImages != 0 && exitBootServices != 0) { return Failed("a UEFI image cannot start another image and leave boot services"); }
-            if (exitBootServices != 1 || memoryMapInitializers != 1 || memoryInitializers != 1 || virtualMemoryInitializers != 1 || mappingPolicyInitializers != 1 || heapInitializers != 1 || kernelHalts != 1) {
+            if (rawKernelLoads != 0 && (interruptEnables != 0 || interruptIdles != 0)) {
+                return Failed("raw kernel owns interrupt enable and idle after handoff");
+            }
+            bool wantsInterruptKernel = gdtInitializers != 0 || idtInitializers != 0 || interruptControllerInitializers != 0 || timerInitializers != 0 || interruptEnables != 0 || interruptIdles != 0;
+            bool wantsHardwareFoundation = pciInitializers != 0 || mmioInitializers != 0 || dmaInitializers != 0 || dmaAllocations != 0 || storageInitializers != 0;
+            if (wantsInterruptKernel) {
+                if (exitBootServices != 1 || memoryMapInitializers != 1 || memoryInitializers != 1 || virtualMemoryInitializers != 1 || mappingPolicyInitializers != 1 || heapInitializers != 1 || framebufferInitializers != 1 || gdtInitializers != 1 || idtInitializers != 1 || interruptControllerInitializers != 1 || timerInitializers != 1 || (rawKernelLoads == 0 && (interruptEnables != 1 || interruptIdles != 1)) || kernelHalts != 0 || (wantsHardwareFoundation && (pciInitializers != 1 || mmioInitializers != 1 || dmaInitializers != 1))) {
+                    return Failed("the interrupt kernel requires the full handoff, framebuffer, GDT, IDT, interrupt-controller, timer, enable, and idle sequence");
+                }
+            } else if (exitBootServices != 1 || memoryMapInitializers != 1 || memoryInitializers != 1 || virtualMemoryInitializers != 1 || mappingPolicyInitializers != 1 || heapInitializers != 1 || kernelHalts != 1) {
                 if (exitBootServices != 0 || memoryMapInitializers != 0 || memoryInitializers != 0 || virtualMemoryInitializers != 0 || mappingPolicyInitializers != 0 || heapInitializers != 0 || kernelHalts != 0) {
                     return Failed("System.Uefi.ExitBootServices, System.Kernel.MemoryMap.Initialize, System.Kernel.Memory.Initialize, System.Kernel.VirtualMemory.Initialize, System.Kernel.VirtualMemory.ApplyPolicy, System.Kernel.Heap.Initialize, and System.Kernel.Halt must be used together");
                 }
             }
+		    // All current DMA allocations are literal intrinsics in the emitted
+		    // program. Reserve exactly the required low-memory slice (or 16 pages
+		    // when a driver only initializes DMA) rather than donating the primary
+		    // allocator's entire conventional-memory descriptor to DMA.
+		    int dmaReservationPages = 16;
+		    if (dmaAllocations != 0) {
+		        dmaReservationPages = 0;
+		        int dmaReservation = 0;
+		        while (dmaReservation < dmaAllocations) {
+		            if (dmaReservationPages > 262144 - dmaAllocationPageCounts[dmaReservation]) {
+		                return Failed("combined System.Kernel.Dma.AllocatePages calls may reserve at most 262144 pages");
+		            }
+		            dmaReservationPages = dmaReservationPages + dmaAllocationPageCounts[dmaReservation];
+		            dmaReservation = dmaReservation + 1;
+		        }
+		    }
 
             ElfImageBuilder ascii = new ElfImageBuilder();
             if (!ascii.SupportsPayload(payload) || !ascii.SupportsPayload(kernelPath)) {
@@ -212,37 +388,80 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 framebufferMessage = framebufferMessage + 1;
             }
-            return new UefiImageResult(true, BuildImage(payload, kernelPath, clearScreens == 1, awaitKeys, exitBootServices == 1, memoryMapInitializers == 1, memoryInitializers == 1, virtualMemoryInitializers == 1, mappingPolicyInitializers == 1, pageAllocations, heapInitializers == 1, heapAllocationSizes, heapAllocations, framebufferInitializers == 1, framebufferMessages, framebufferWrites, ascii), "");
+            byte[] image = BuildImage(payload, kernelPath, rawKernelLoads == 1, clearScreens == 1, awaitKeys, exitBootServices == 1, memoryMapInitializers == 1, memoryInitializers == 1, virtualMemoryInitializers == 1, mappingPolicyInitializers == 1, pageAllocations, heapInitializers == 1, heapAllocationSizes, heapAllocations, framebufferInitializers == 1, framebufferMessages, framebufferWrites, gdtInitializers == 1, idtInitializers == 1, interruptControllerInitializers == 1, timerInitializers == 1, pciInitializers == 1, mmioInitializers == 1, dmaInitializers == 1, dmaAllocationPageCounts, dmaAllocations, dmaReservationPages, storageInitializers == 1, kernelCode, interruptEnables == 1, interruptIdles == 1, ascii);
+            if (image.Length == 0) { return Failed("freestanding kernel text exceeds its mapped PE section"); }
+            return new UefiImageResult(true, image, "");
         }
 
         private UefiImageResult Failed(string message) {
             return new UefiImageResult(false, new byte[0], message);
         }
 
-        private byte[] BuildImage(string payload, string kernelPath, bool clearScreen, int awaitKeyCount, bool leaveBootServices, bool initializeMemoryMap, bool initializeKernelMemory, bool initializeVirtualMemory, bool applyMappingPolicy, int pageAllocationCount, bool initializeKernelHeap, int[] heapAllocationSizes, int heapAllocationCount, bool initializeFramebuffer, string[] framebufferMessages, int framebufferWriteCount, ElfImageBuilder ascii) {
+        private byte[] BuildImage(string payload, string kernelPath, bool rawKernelLoad, bool clearScreen, int awaitKeyCount, bool leaveBootServices, bool initializeMemoryMap, bool initializeKernelMemory, bool initializeVirtualMemory, bool applyMappingPolicy, int pageAllocationCount, bool initializeKernelHeap, int[] heapAllocationSizes, int heapAllocationCount, bool initializeFramebuffer, string[] framebufferMessages, int framebufferWriteCount, bool initializeGdt, bool initializeIdt, bool initializeInterruptController, bool initializeTimer, bool initializePci, bool initializeMmio, bool initializeDma, int[] dmaAllocationPageCounts, int dmaAllocationCount, int dmaReservationPages, bool initializeStorage, byte[] kernelCode, bool enableInterrupts, bool interruptIdle, ElfImageBuilder ascii) {
             int headers = 512;
             int textRva = 4096;
+            // The interrupt stubs are emitted ahead of the EFI entry point and
+            // make .text larger than one 4 KiB page. Keep read-only data well
+            // beyond that code range so PE section mappings cannot overlap.
+            // Small firmware apps retain compact PE layout. Handoff stubs and
+            // compiled kernel graphs need successively larger text apertures.
             int dataRva = 8192;
+            if (leaveBootServices) { dataRva = 65536; }
+            if (kernelCode.Length != 0) { dataRva = 262144; }
             int payloadSize = (payload.Length + 1) * 2;
             int kernelPathSize = 0;
             int loadedImageGuidOffset = 0;
             int simpleFileSystemGuidOffset = 0;
             int fileInfoGuidOffset = 0;
             int errorOffset = 0;
+            int rawLoadErrorOffset = 0;
             int memoryMapErrorOffset = 0;
             int errorSize = 0;
             int framebufferErrorOffset = 0;
             int graphicsOutputGuidOffset = 0;
             int framebufferFontOffset = 0;
+            int panicMessageOffset = 0;
+            string panicHeader = "\r\n*** AUSTRALIS KERNEL PANIC ***\r\nFatal CPU exception; interrupts are disabled.\r\n";
+            string panicMessage = panicHeader +
+                "VECTOR  =0x0000000000000000\r\n" +
+                "ERROR   =0x0000000000000000\r\n" +
+                "RIP     =0x0000000000000000\r\n" +
+                "CS      =0x0000000000000000\r\n" +
+                "RFLAGS  =0x0000000000000000\r\n" +
+                "RSP     =0x0000000000000000\r\n" +
+                "CR2     =0x0000000000000000\r\n" +
+                "RAX     =0x0000000000000000\r\n" +
+                "RBX     =0x0000000000000000\r\n" +
+                "RCX     =0x0000000000000000\r\n" +
+                "RDX     =0x0000000000000000\r\n" +
+                "RSI     =0x0000000000000000\r\n" +
+                "RDI     =0x0000000000000000\r\n" +
+                "RBP     =0x0000000000000000\r\n" +
+                "R8      =0x0000000000000000\r\n" +
+                "R9      =0x0000000000000000\r\n" +
+                "R10     =0x0000000000000000\r\n" +
+                "R11     =0x0000000000000000\r\n" +
+                "R12     =0x0000000000000000\r\n" +
+                "R13     =0x0000000000000000\r\n" +
+                "R14     =0x0000000000000000\r\n" +
+                "R15     =0x0000000000000000\r\n" +
+                "System halted. Power cycle or reset to continue.\r\n";
             int[] framebufferMessageOffsets = new int[framebufferWriteCount];
-            bool chainLoad = kernelPath.Length != 0;
-            if (chainLoad) {
+            bool chainLoad = kernelPath.Length != 0 && !rawKernelLoad;
+            if (chainLoad || rawKernelLoad) {
                 kernelPathSize = (kernelPath.Length + 1) * 2;
                 loadedImageGuidOffset = payloadSize + kernelPathSize;
                 simpleFileSystemGuidOffset = loadedImageGuidOffset + 16;
                 fileInfoGuidOffset = simpleFileSystemGuidOffset + 16;
                 errorOffset = fileInfoGuidOffset + 16;
                 errorSize = ("\r\n[BOOT] Failed to start kernel.\r\n".Length + 1) * 2;
+            }
+            if (rawKernelLoad) {
+                rawLoadErrorOffset = errorOffset;
+                errorOffset = rawLoadErrorOffset + errorSize;
+                memoryMapErrorOffset = errorOffset + ("\r\n[BOOT] Failed to allocate memory map.\r\n".Length + 1) * 2;
+                errorSize = errorSize + ("\r\n[BOOT] Failed to allocate memory map.\r\n".Length + 1) * 2
+                    + ("\r\n[BOOT] Failed to capture memory map.\r\n".Length + 1) * 2;
             } else if (leaveBootServices) {
                 errorOffset = payloadSize;
                 memoryMapErrorOffset = errorOffset + ("\r\n[KERNEL] Failed to allocate UEFI memory map.\r\n".Length + 1) * 2;
@@ -250,7 +469,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     + ("\r\n[KERNEL] Failed to capture final UEFI memory map.\r\n".Length + 1) * 2;
             }
             int dataSize = payloadSize + errorSize;
-            if (chainLoad) { dataSize = payloadSize + kernelPathSize + 48 + errorSize; }
+            if (chainLoad || rawKernelLoad) { dataSize = payloadSize + kernelPathSize + 48 + errorSize; }
             if (initializeFramebuffer) {
                 framebufferErrorOffset = dataSize;
                 graphicsOutputGuidOffset = framebufferErrorOffset + ("\r\n[KERNEL] GOP framebuffer is unavailable.\r\n".Length + 1) * 2;
@@ -262,18 +481,20 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     framebufferDataEnd = framebufferDataEnd + framebufferMessages[framebufferMessage].Length + 1;
                     framebufferMessage = framebufferMessage + 1;
                 }
+                panicMessageOffset = framebufferDataEnd;
+                framebufferDataEnd = framebufferDataEnd + panicMessage.Length + 1;
                 dataSize = framebufferDataEnd;
             }
             int dataRawSize = ((dataSize + 511) / 512) * 512;
             int dataVirtualSize = ((dataSize + 4095) / 4096) * 4096;
-            int bootInfoSize = 0;
             int bootInfoRawSize = 0;
             int bootInfoVirtualSize = 0;
             int bootInfoRva = 0;
             if (initializeMemoryMap) {
-                bootInfoSize = 152;
+                // Reserve a second writable page for the 256 x 16-byte IDT.
+                // The first page carries the ABI record and its GDT storage.
                 bootInfoRawSize = 512;
-                bootInfoVirtualSize = 4096;
+                bootInfoVirtualSize = 8192;
                 bootInfoRva = dataRva + dataVirtualSize;
             }
             int sectionCount = 2;
@@ -284,6 +505,40 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
 
             X64Assembler code = new X64Assembler();
+            int defaultInterruptStub = 0;
+            int[] exceptionInterruptStubs = new int[0];
+            int[] picIrqStubs = new int[0];
+            int timerInterruptStub = 0;
+            int storageInterruptStub = 0;
+            int deviceInterruptStub = 0;
+            if (initializeIdt) {
+                // Firmware enters at the beginning of .text, so jump over the
+                // handlers. The IDT later receives their position-independent
+                // code addresses through RIP-relative gate construction.
+                int entryJump = EmitForwardJump(code);
+                int panicHandler = EmitKernelPanicHandler(code, textRva, bootInfoRva,
+                    dataRva + framebufferFontOffset, dataRva + panicMessageOffset,
+                    panicHeader.Length, panicMessage.Length);
+                defaultInterruptStub = EmitUnexpectedInterruptStub(code, panicHandler);
+                exceptionInterruptStubs = new int[32];
+                int exceptionVector = 0;
+                while (exceptionVector < 32) {
+                    exceptionInterruptStubs[exceptionVector] = EmitExceptionInterruptStub(code,
+                        panicHandler, exceptionVector);
+                    exceptionVector = exceptionVector + 1;
+                }
+                picIrqStubs = new int[16];
+                int irqVector = 0;
+                while (irqVector < 16) {
+                    picIrqStubs[irqVector] = EmitPicIrqStub(code, textRva, bootInfoRva, irqVector + 32);
+                    irqVector = irqVector + 1;
+                }
+                timerInterruptStub = EmitLocalApicTimerStub(code, textRva, bootInfoRva);
+                storageInterruptStub = EmitStorageInterruptStub(code, textRva, bootInfoRva);
+                deviceInterruptStub = EmitDeviceInterruptStub(code, textRva, bootInfoRva);
+                int entryStart = code.Position();
+                code.Patch32(entryJump, entryStart - (entryJump + 4));
+            }
             EmitEntrySetup(code);
             if (clearScreen) { EmitClearScreen(code); }
             EmitConsoleWrite(code, textRva, dataRva);
@@ -294,14 +549,22 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             int[] failureJumps = new int[9];
             int failureCount = 0;
-            int[] kernelFailureJumps = new int[(pageAllocationCount + heapAllocationCount) * 8 + framebufferWriteCount + 40];
+            int[] rawFailureJumps = new int[24];
+            int rawFailureCount = 0;
+            int[] kernelFailureJumps = new int[(pageAllocationCount + heapAllocationCount) * 8 + framebufferWriteCount + 256];
             int kernelFailureCount = 0;
             int framebufferFailureJump = -1;
+            int kernelCallPatch = -1;
             if (chainLoad) {
                 failureCount = EmitChainLoader(code, textRva, dataRva + payloadSize,
                     dataRva + loadedImageGuidOffset, dataRva + simpleFileSystemGuidOffset,
-                    dataRva + fileInfoGuidOffset, failureJumps, failureCount);
+                    dataRva + fileInfoGuidOffset, bootInfoRva, false, failureJumps, failureCount);
             } else if (leaveBootServices) {
+                if (rawKernelLoad) {
+                    rawFailureCount = EmitChainLoader(code, textRva, dataRva + payloadSize,
+                        dataRva + loadedImageGuidOffset, dataRva + simpleFileSystemGuidOffset,
+                        dataRva + fileInfoGuidOffset, bootInfoRva, true, rawFailureJumps, rawFailureCount);
+                }
                 if (initializeFramebuffer) {
                     framebufferFailureJump = EmitCaptureFramebuffer(code, textRva, bootInfoRva,
                         dataRva + graphicsOutputGuidOffset);
@@ -343,13 +606,70 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                         framebufferMessage = framebufferMessage + 1;
                     }
                 }
-                EmitKernelHalt(code);
-                if (initializeKernelMemory || initializeVirtualMemory || applyMappingPolicy || pageAllocationCount != 0 || initializeKernelHeap || heapAllocationCount != 0 || initializeFramebuffer) {
+                if (initializeGdt) {
+                    kernelFailureCount = EmitInitializeGdt(code, kernelFailureJumps, kernelFailureCount);
+                }
+                if (initializeIdt) {
+                    kernelFailureCount = EmitInitializeIdt(code, textRva, bootInfoRva, defaultInterruptStub, exceptionInterruptStubs, picIrqStubs, timerInterruptStub, storageInterruptStub, deviceInterruptStub, kernelFailureJumps, kernelFailureCount);
+                }
+                if (initializeInterruptController) {
+                    kernelFailureCount = EmitInitializeInterruptController(code, kernelFailureJumps, kernelFailureCount);
+                }
+                if (initializeTimer) {
+                    kernelFailureCount = EmitInitializeTimer(code, kernelFailureJumps, kernelFailureCount);
+                }
+                if (initializePci) {
+                    kernelFailureCount = EmitInitializePci(code, kernelFailureJumps, kernelFailureCount);
+                }
+                if (initializeMmio) {
+                    kernelFailureCount = EmitInitializeMmio(code, kernelFailureJumps, kernelFailureCount);
+                }
+                if (initializeDma) {
+                    kernelFailureCount = EmitInitializeDma(code, dmaReservationPages, kernelFailureJumps, kernelFailureCount);
+                }
+                int dmaAllocation = 0;
+                while (dmaAllocation < dmaAllocationCount) {
+                    kernelFailureCount = EmitAllocateDmaPages(code, dmaAllocationPageCounts[dmaAllocation], kernelFailureJumps, kernelFailureCount);
+                    dmaAllocation = dmaAllocation + 1;
+                }
+                if (initializeStorage) {
+                    kernelFailureCount = EmitInitializeStorage(code, kernelFailureJumps, kernelFailureCount);
+                }
+                if (kernelCode.Length != 0) {
+                    code.EmitByte(0x41); code.EmitByte(0x57); // push r15: boot information argument
+                    code.EmitByte(0xe8); kernelCallPatch = code.Position(); code.Emit32(0);
+                    code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc4); code.EmitByte(8);
+                    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff); // restore rdi = r15
+                    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(476); // entry status
+                    code.EmitByte(0x85); code.EmitByte(0xc0); // nonzero return is a boot failure
+                    kernelFailureJumps[kernelFailureCount] = EmitConditionalJump(code, 0x85);
+                    kernelFailureCount = kernelFailureCount + 1;
+                } else if (rawKernelLoad) {
+                    kernelFailureCount = EmitExecuteRawKernel(code, kernelFailureJumps, kernelFailureCount);
+                }
+                if (enableInterrupts) {
+                    kernelFailureCount = EmitEnableInterrupts(code, initializeDma, initializeStorage, kernelFailureJumps, kernelFailureCount);
+                }
+                if (interruptIdle) {
+                    EmitInterruptIdle(code);
+                } else {
+                    EmitKernelHalt(code);
+                }
+                if (initializeKernelMemory || initializeVirtualMemory || applyMappingPolicy || pageAllocationCount != 0 || initializeKernelHeap || heapAllocationCount != 0 || initializeFramebuffer || initializeGdt || initializeIdt || initializeInterruptController || initializeTimer || initializePci || initializeMmio || initializeDma || dmaAllocationCount != 0 || initializeStorage || enableInterrupts) {
                     int kernelFailureStart = code.Position();
                     EmitKernelHalt(code);
                     int kernelFailure = 0;
                     while (kernelFailure < kernelFailureCount) {
-                        code.Patch32(kernelFailureJumps[kernelFailure], kernelFailureStart - (kernelFailureJumps[kernelFailure] + 4));
+                        // Preserve the source check that failed.  This is kept
+                        // in the boot record because post-ExitBootServices code
+                        // cannot depend on the firmware text console to report
+                        // a failure.  R15 is established before the first
+                        // kernel validation check and remains the boot record
+                        // pointer throughout the emitted kernel sequence.
+                        int failureStub = code.Position();
+                        code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(348); code.Emit32(kernelFailure + 1);
+                        EmitJumpTo(code, kernelFailureStart);
+                        code.Patch32(kernelFailureJumps[kernelFailure], failureStub - (kernelFailureJumps[kernelFailure] + 4));
                         kernelFailure = kernelFailure + 1;
                     }
                 }
@@ -368,6 +688,16 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                         jump = jump + 1;
                     }
                 } else {
+                    if (rawKernelLoad) {
+                        int rawFailureStart = code.Position();
+                        EmitConsoleWrite(code, textRva, dataRva + rawLoadErrorOffset);
+                        code.EmitByte(0xeb); code.EmitByte(0xfe);
+                        int rawJump = 0;
+                        while (rawJump < rawFailureCount) {
+                            code.Patch32(rawFailureJumps[rawJump], rawFailureStart - (rawFailureJumps[rawJump] + 4));
+                            rawJump = rawJump + 1;
+                        }
+                    }
                     if (initializeFramebuffer) {
                         int framebufferFailureStart = code.Position();
                         EmitConsoleWrite(code, textRva, dataRva + framebufferErrorOffset);
@@ -384,7 +714,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     code.Patch32(failureJumps[1], memoryMapFailureStart - (failureJumps[1] + 4));
                 }
             }
+            if (kernelCode.Length != 0) {
+                int kernelCodeStart = code.Position();
+                int kernelByte = 0;
+                while (kernelByte < kernelCode.Length) {
+                    code.EmitByte(kernelCode[kernelByte]);
+                    kernelByte = kernelByte + 1;
+                }
+                code.Patch32(kernelCallPatch, kernelCodeStart - (kernelCallPatch + 4));
+            }
             byte[] codeBytes = code.ToArray();
+            if (textRva + codeBytes.Length > dataRva) { return new byte[0]; }
             int textRawSize = ((codeBytes.Length + 511) / 512) * 512;
             int textOffset = headers;
             int dataOffset = textOffset + textRawSize;
@@ -440,7 +780,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (initializeMemoryMap) {
                 int bootInfoSection = dataSection + 40;
                 WriteName(image, bootInfoSection, ".data", ascii);
-                Write32(image, bootInfoSection + 8, bootInfoSize);
+                Write32(image, bootInfoSection + 8, bootInfoVirtualSize);
                 Write32(image, bootInfoSection + 12, bootInfoRva);
                 Write32(image, bootInfoSection + 16, bootInfoRawSize);
                 Write32(image, bootInfoSection + 20, bootInfoOffset);
@@ -450,15 +790,25 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             int i = 0;
             while (i < codeBytes.Length) { image[textOffset + i] = codeBytes[i]; i = i + 1; }
             WriteUtf16(image, dataOffset, payload, ascii);
-            if (chainLoad) {
+            if (chainLoad || rawKernelLoad) {
                 WriteUtf16(image, dataOffset + payloadSize, kernelPath, ascii);
                 WriteLoadedImageGuid(image, dataOffset + loadedImageGuidOffset);
                 WriteSimpleFileSystemGuid(image, dataOffset + simpleFileSystemGuidOffset);
                 WriteFileInfoGuid(image, dataOffset + fileInfoGuidOffset);
-                WriteUtf16(image, dataOffset + errorOffset, "\r\n[BOOT] Failed to start kernel.\r\n", ascii);
-            } else if (leaveBootServices) {
-                WriteUtf16(image, dataOffset + errorOffset, "\r\n[KERNEL] Failed to allocate UEFI memory map.\r\n", ascii);
-                WriteUtf16(image, dataOffset + memoryMapErrorOffset, "\r\n[KERNEL] Failed to capture final UEFI memory map.\r\n", ascii);
+                if (chainLoad) {
+                    WriteUtf16(image, dataOffset + errorOffset, "\r\n[BOOT] Failed to start kernel.\r\n", ascii);
+                } else {
+                    WriteUtf16(image, dataOffset + rawLoadErrorOffset, "\r\n[BOOT] Failed to start kernel.\r\n", ascii);
+                }
+            }
+            if (leaveBootServices) {
+                if (rawKernelLoad) {
+                    WriteUtf16(image, dataOffset + errorOffset, "\r\n[BOOT] Failed to allocate memory map.\r\n", ascii);
+                    WriteUtf16(image, dataOffset + memoryMapErrorOffset, "\r\n[BOOT] Failed to capture memory map.\r\n", ascii);
+                } else {
+                    WriteUtf16(image, dataOffset + errorOffset, "\r\n[KERNEL] Failed to allocate UEFI memory map.\r\n", ascii);
+                    WriteUtf16(image, dataOffset + memoryMapErrorOffset, "\r\n[KERNEL] Failed to capture final UEFI memory map.\r\n", ascii);
+                }
             }
             if (initializeFramebuffer) {
                 WriteUtf16(image, dataOffset + framebufferErrorOffset, "\r\n[KERNEL] GOP framebuffer is unavailable.\r\n", ascii);
@@ -469,6 +819,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     WriteAscii(image, dataOffset + framebufferMessageOffsets[framebufferMessage], framebufferMessages[framebufferMessage], ascii);
                     framebufferMessage = framebufferMessage + 1;
                 }
+                WriteAscii(image, dataOffset + panicMessageOffset, panicMessage, ascii);
             }
             if (initializeMemoryMap) {
                 WriteKernelBootInfo(image, bootInfoOffset);
@@ -520,10 +871,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             EmitLeaRcxRva(code, textRva, graphicsOutputGuidRva);
             code.EmitByte(0x31); code.EmitByte(0xd2); // registration = null
             EmitLeaR8Rsp(code, 120); // EFI_GRAPHICS_OUTPUT_PROTOCOL **
-            // LocateProtocol follows LocateHandleBuffer at offset 304 in the
-            // EFI_BOOT_SERVICES table. Its slot is therefore 312 (0x138);
-            // 320 is InstallMultipleProtocolInterfaces.
-            EmitBootService(code, 312); // LocateProtocol(&GOP, null, &gop)
+            // EFI_BOOT_SERVICES contains Exit at slot 216. The later protocol
+            // services therefore occupy these slots:
+            //   ProtocolsPerHandle = 304
+            //   LocateHandleBuffer = 312
+            //   LocateProtocol = 320
+            EmitBootService(code, 320); // LocateProtocol(&GOP, null, &gop)
             int failureJump = EmitFailureJump(code);
 
             code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x74); code.EmitByte(0x24); code.EmitByte(120); // rsi = GOP
@@ -546,7 +899,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
         private int EmitChainLoader(X64Assembler code, int textRva, int kernelPathRva,
             int loadedImageGuidRva, int simpleFileSystemGuidRva, int fileInfoGuidRva,
-            int[] failureJumps, int failureCount) {
+            int bootInfoRva, bool rawKernelLoad, int[] failureJumps, int failureCount) {
             code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x75); code.EmitByte(0x60); // r14 = BootServices
 
             // HandleProtocol(ImageHandle, LoadedImageGuid, &loadedImage).
@@ -609,8 +962,20 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x40); code.EmitByte(0x08);
             EmitStoreRaxRsp(code, 96);
 
-            // AllocatePool(EfiLoaderData, kernelSize, &kernelBuffer).
-            code.EmitByte(0xb9); code.Emit32(2);
+            if (rawKernelLoad) {
+                // AUKR header plus nonempty code, capped at 1 MiB. Keep the
+                // exact size so a short EFI_FILE_PROTOCOL.Read is rejected.
+                code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(16);
+                failureJumps[failureCount] = EmitConditionalJump(code, 0x86); failureCount = failureCount + 1; // jbe
+                code.EmitByte(0x48); code.EmitByte(0x3d); code.Emit32(1048576);
+                failureJumps[failureCount] = EmitConditionalJump(code, 0x87); failureCount = failureCount + 1; // ja
+                EmitStoreRaxRsp(code, 112);
+            }
+
+            // Raw code uses EfiLoaderCode so the loaded pages are executable.
+            code.EmitByte(0xb9);
+            if (rawKernelLoad) { code.Emit32(1); }
+            else { code.Emit32(2); }
             code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc2);
             EmitLeaR8Rsp(code, 104);
             EmitBootService(code, 64);
@@ -623,6 +988,47 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x41); code.EmitByte(0x20);
             code.EmitByte(0xff); code.EmitByte(0xd0);
             failureJumps[failureCount] = EmitFailureJump(code); failureCount = failureCount + 1;
+
+            if (rawKernelLoad) {
+                // BootInfo bytes 512 onward contain the GDT. Keep the raw
+                // image contract in the unused part of its first 4 KiB page.
+                EmitMovRaxRsp(code, 96); // bytes read
+                code.EmitByte(0x48); code.EmitByte(0x3b); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(112);
+                failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+                EmitMovRaxRsp(code, 104);
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // rcx = image base
+                code.EmitByte(0x81); code.EmitByte(0x39); code.Emit32(1380668737); // AUKR
+                failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+                code.EmitByte(0x83); code.EmitByte(0x79); code.EmitByte(4); code.EmitByte(1); // version
+                failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+                code.EmitByte(0x83); code.EmitByte(0x79); code.EmitByte(12); code.EmitByte(16); // entry offset
+                failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+                code.EmitByte(0x8b); code.EmitByte(0x41); code.EmitByte(8); // eax = code length
+                code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x54); code.EmitByte(0x24); code.EmitByte(112);
+                code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xea); code.EmitByte(16);
+                code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xd0);
+                failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+                EmitStoreRaxRva(code, textRva, bootInfoRva + 1032);
+                code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x41); code.EmitByte(16);
+                EmitStoreRaxRva(code, textRva, bootInfoRva + 1024);
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8);
+                EmitStoreRaxRva(code, textRva, bootInfoRva + 1040);
+
+                // Release temporary firmware-owned resources before the
+                // final GetMemoryMap/ExitBootServices pair.
+                EmitMovRcxRsp(code, 88); // EFI_FILE_INFO buffer
+                EmitBootService(code, 72); // FreePool
+                failureJumps[failureCount] = EmitFailureJump(code); failureCount = failureCount + 1;
+                EmitMovRcxRsp(code, 72); // kernel file
+                code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x41); code.EmitByte(16); // Close
+                code.EmitByte(0xff); code.EmitByte(0xd0);
+                failureJumps[failureCount] = EmitFailureJump(code); failureCount = failureCount + 1;
+                EmitMovRcxRsp(code, 64); // root directory
+                code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x41); code.EmitByte(16);
+                code.EmitByte(0xff); code.EmitByte(0xd0);
+                failureJumps[failureCount] = EmitFailureJump(code); failureCount = failureCount + 1;
+                return failureCount;
+            }
 
             // LoadImage(false, ImageHandle, null, kernelBuffer, kernelSize, &kernelImage).
             code.EmitByte(0x31); code.EmitByte(0xc9);
@@ -712,7 +1118,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             // ExitBootServices(ImageHandle, mapKey). Success returns to kernel code.
             code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe1);
             EmitMovRdxRsp(code, 56);
-            EmitBootService(code, 216);
+            EmitBootService(code, 232);
             code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc0);
             int exitBootServicesSucceeded = EmitConditionalJump(code, 0x84); // jz
             code.EmitByte(0x41); code.EmitByte(0xff); code.EmitByte(0xc7); // r15d++
@@ -743,16 +1149,18 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         // EfiConventionalMemory descriptor. The first page is zeroed as reserved
         // allocator metadata; subsequent pages form the initial free range.
         private int EmitInitializeKernelMemory(X64Assembler code, int[] failureJumps, int failureCount) {
+            // Make the boot-record pointer available to every kernel-failure
+            // stub, including the validation checks immediately below.
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff); // r15 = rdi
             // Validate KernelBootInfo before reading the firmware-owned map.
             code.EmitByte(0x81); code.EmitByte(0x3f); code.Emit32(1229083969); // "AUBI"
             failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1; // jne
-            code.EmitByte(0x83); code.EmitByte(0x7f); code.EmitByte(0x04); code.EmitByte(0x04);
+            code.EmitByte(0x83); code.EmitByte(0x7f); code.EmitByte(0x04); code.EmitByte(0x07);
             failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1; // jne
             code.EmitByte(0x83); code.EmitByte(0x7f); code.EmitByte(0x24); code.EmitByte(0x01);
             failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1; // jne
 
             // Keep the boot-information pointer while RDI clears the metadata page.
-            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff); // r15 = rdi
             code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x47); code.EmitByte(0x08); // r8 = map
             code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x4f); code.EmitByte(0x10); // r9 = map size
             code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x57); code.EmitByte(0x18); // r10 = descriptor size
@@ -1387,6 +1795,1798 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return failureCount;
         }
 
+        // Write the value in RAX as sixteen uppercase hexadecimal digits into
+        // the fixed panic report buffer. The exception path cannot allocate or
+        // call the normal terminal because it can interrupt either subsystem.
+        private void EmitPanicHex(X64Assembler code, int destination) {
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe7); // rdi = BootInfo
+            code.EmitByte(0x48); code.EmitByte(0x81); code.EmitByte(0xc7); code.Emit32(2688 + destination);
+            code.EmitByte(0xb9); code.Emit32(16);
+            int digitLoop = code.Position();
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc2); // rdx = value
+            code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xea); code.EmitByte(60);
+            code.EmitByte(0x80); code.EmitByte(0xfa); code.EmitByte(9);
+            int decimalDigit = EmitConditionalJump(code, 0x86); // jbe
+            code.EmitByte(0x80); code.EmitByte(0xc2); code.EmitByte(55); // A-F
+            int storeDigit = EmitForwardJump(code);
+            int decimalAt = code.Position();
+            code.Patch32(decimalDigit, decimalAt - (decimalDigit + 4));
+            code.EmitByte(0x80); code.EmitByte(0xc2); code.EmitByte(48); // 0-9
+            int storeAt = code.Position();
+            code.Patch32(storeDigit, storeAt - (storeDigit + 4));
+            code.EmitByte(0x88); code.EmitByte(0x17); // *rdi = dl
+            code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0xc7);
+            code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(4);
+            code.EmitByte(0xff); code.EmitByte(0xc9);
+            int nextDigit = EmitConditionalJump(code, 0x85);
+            code.Patch32(nextDigit, digitLoop - (nextDigit + 4));
+        }
+
+        private void EmitPanicHexFromBootInfo(X64Assembler code, int destination, int source) {
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(source);
+            EmitPanicHex(code, destination);
+        }
+
+        private void EmitPanicHex32FromBootInfo(X64Assembler code, int destination, int source) {
+            code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(source);
+            EmitPanicHex(code, destination);
+        }
+
+        private void EmitPanicHexFromStack(X64Assembler code, int destination, int source) {
+            code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(source);
+            EmitPanicHex(code, destination);
+        }
+
+        private void EmitInitializePanicSerial(X64Assembler code) {
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(249); code.EmitByte(3);
+            code.EmitByte(0x30); code.EmitByte(0xc0); code.EmitByte(0xee); // interrupts off
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(251); code.EmitByte(3);
+            code.EmitByte(0xb0); code.EmitByte(128); code.EmitByte(0xee); // divisor latch
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(248); code.EmitByte(3);
+            code.EmitByte(0xb0); code.EmitByte(1); code.EmitByte(0xee); // 115200 baud
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(249); code.EmitByte(3);
+            code.EmitByte(0x30); code.EmitByte(0xc0); code.EmitByte(0xee);
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(251); code.EmitByte(3);
+            code.EmitByte(0xb0); code.EmitByte(3); code.EmitByte(0xee); // 8N1
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(250); code.EmitByte(3);
+            code.EmitByte(0xb0); code.EmitByte(199); code.EmitByte(0xee); // FIFO
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(252); code.EmitByte(3);
+            code.EmitByte(0xb0); code.EmitByte(3); code.EmitByte(0xee); // DTR, RTS
+        }
+
+        private void EmitPanicSerialReport(X64Assembler code) {
+            EmitInitializePanicSerial(code);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe6); // rsi = BootInfo
+            code.EmitByte(0x48); code.EmitByte(0x81); code.EmitByte(0xc6); code.Emit32(2688);
+            int nextCharacter = code.Position();
+            code.EmitByte(0x8a); code.EmitByte(0x1e); // bl = *rsi
+            code.EmitByte(0x84); code.EmitByte(0xdb);
+            int reportDone = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0xc6);
+            code.EmitByte(0xb9); code.Emit32(1000000);
+            int waitForTransmitter = code.Position();
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(253); code.EmitByte(3);
+            code.EmitByte(0xec); code.EmitByte(0xa8); code.EmitByte(32);
+            int transmitterReady = EmitConditionalJump(code, 0x85);
+            code.EmitByte(0xf3); code.EmitByte(0x90);
+            code.EmitByte(0xff); code.EmitByte(0xc9);
+            int keepWaiting = EmitConditionalJump(code, 0x85);
+            code.Patch32(keepWaiting, waitForTransmitter - (keepWaiting + 4));
+            EmitJumpTo(code, nextCharacter); // omit one byte if the UART disappeared
+            int readyAt = code.Position();
+            code.Patch32(transmitterReady, readyAt - (transmitterReady + 4));
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(248); code.EmitByte(3);
+            code.EmitByte(0x88); code.EmitByte(0xd8); code.EmitByte(0xee); // out dx, bl
+            EmitJumpTo(code, nextCharacter);
+            int doneAt = code.Position();
+            code.Patch32(reportDone, doneAt - (reportDone + 4));
+        }
+
+        // Clear and render the same report buffer through the already validated
+        // GOP mapping. CR/LF handling keeps the serial and framebuffer reports
+        // byte-for-byte equivalent without using the normal terminal object.
+        private void EmitPanicFramebufferReport(X64Assembler code, int textRva, int fontRva) {
+            code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0xbc); code.EmitByte(0x24); code.Emit32(36); code.Emit32(127);
+            int unavailable = EmitConditionalJump(code, 0x82); // jb
+            code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(112); // r8 = framebuffer
+            code.EmitByte(0x4d); code.EmitByte(0x85); code.EmitByte(0xc0);
+            int noFramebuffer = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x9c); code.EmitByte(0x24); code.Emit32(128); // ebx = width
+            code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(132); // ebp = height
+            code.EmitByte(0x45); code.EmitByte(0x8b); code.EmitByte(0xb4); code.EmitByte(0x24); code.Emit32(136); // r14d = stride
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xc7); // rdi = framebuffer
+            code.EmitByte(0x31); code.EmitByte(0xc0);
+            code.EmitByte(0x44); code.EmitByte(0x89); code.EmitByte(0xf1); // ecx = stride
+            code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xaf); code.EmitByte(0xcd); // rcx *= rbp
+            code.EmitByte(0xfc); code.EmitByte(0xf3); code.EmitByte(0xab); // clear pixels
+            code.EmitByte(0x49); code.EmitByte(0xc1); code.EmitByte(0xe6); code.EmitByte(2); // stride bytes
+            EmitLeaR9Rva(code, textRva, fontRva);
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xe2); // r10 = BootInfo
+            code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xc2); code.Emit32(2688);
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xdb); // x = 0
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xed); // y = 0
+
+            int characterLoop = code.Position();
+            code.EmitByte(0x41); code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0x02);
+            code.EmitByte(0x84); code.EmitByte(0xc0);
+            int renderingDone = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x49); code.EmitByte(0xff); code.EmitByte(0xc2);
+            code.EmitByte(0x3c); code.EmitByte(13);
+            int skipCarriageReturn = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x3c); code.EmitByte(10);
+            int newline = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x2c); code.EmitByte(32);
+            code.EmitByte(0x3c); code.EmitByte(94);
+            int glyphReady = EmitConditionalJump(code, 0x86);
+            code.EmitByte(0xb0); code.EmitByte(31);
+            int glyphAt = code.Position(); code.Patch32(glyphReady, glyphAt - (glyphReady + 4));
+            code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0xc0);
+            code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(3);
+            code.EmitByte(0x4d); code.EmitByte(0x8d); code.EmitByte(0x3c); code.EmitByte(0x01); // r15 = glyph
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xd8);
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc0); code.EmitByte(8);
+            code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xd8);
+            int xReady = EmitConditionalJump(code, 0x86);
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xdb);
+            code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xc5); code.EmitByte(8);
+            int xAt = code.Position(); code.Patch32(xReady, xAt - (xReady + 4));
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe8);
+            code.EmitByte(0x49); code.EmitByte(0x0f); code.EmitByte(0xaf); code.EmitByte(0xc6);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xda);
+            code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe2); code.EmitByte(2);
+            code.EmitByte(0x48); code.EmitByte(0x01); code.EmitByte(0xd0);
+            code.EmitByte(0x4c); code.EmitByte(0x01); code.EmitByte(0xc0);
+            code.EmitByte(0xb9); code.Emit32(8);
+            int rowLoop = code.Position();
+            code.EmitByte(0x41); code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0x17);
+            code.EmitByte(0x49); code.EmitByte(0xff); code.EmitByte(0xc7);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc6);
+            code.EmitByte(0xbf); code.Emit32(8);
+            int pixelLoop = code.Position();
+            code.EmitByte(0xf6); code.EmitByte(0xc2); code.EmitByte(128);
+            int blackPixel = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0xc7); code.EmitByte(0x06); code.Emit32(16777215);
+            int pixelDone = EmitForwardJump(code);
+            int blackAt = code.Position(); code.Patch32(blackPixel, blackAt - (blackPixel + 4));
+            code.EmitByte(0xc7); code.EmitByte(0x06); code.Emit32(0);
+            int pixelAt = code.Position(); code.Patch32(pixelDone, pixelAt - (pixelDone + 4));
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc6); code.EmitByte(4);
+            code.EmitByte(0xd0); code.EmitByte(0xe2);
+            code.EmitByte(0xff); code.EmitByte(0xcf);
+            int nextPixel = EmitConditionalJump(code, 0x85);
+            code.Patch32(nextPixel, pixelLoop - (nextPixel + 4));
+            code.EmitByte(0x4c); code.EmitByte(0x01); code.EmitByte(0xf0);
+            code.EmitByte(0xff); code.EmitByte(0xc9);
+            int nextRow = EmitConditionalJump(code, 0x85);
+            code.Patch32(nextRow, rowLoop - (nextRow + 4));
+            code.EmitByte(0x49); code.EmitByte(0x83); code.EmitByte(0xc3); code.EmitByte(8);
+            EmitJumpTo(code, characterLoop);
+
+            int newlineAt = code.Position(); code.Patch32(newline, newlineAt - (newline + 4));
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xdb);
+            code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xc5); code.EmitByte(8);
+            code.EmitByte(0x41); code.EmitByte(0x39); code.EmitByte(0xed); // cmp r13d, ebp
+            int yReady = EmitConditionalJump(code, 0x82);
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xed);
+            int yAt = code.Position(); code.Patch32(yReady, yAt - (yReady + 4));
+            int skipAt = code.Position(); code.Patch32(skipCarriageReturn, skipAt - (skipCarriageReturn + 4));
+            EmitJumpTo(code, characterLoop);
+
+            int doneAt = code.Position(); code.Patch32(renderingDone, doneAt - (renderingDone + 4));
+            code.EmitByte(0x45); code.EmitByte(0x89); code.EmitByte(0x9c); code.EmitByte(0x24); code.Emit32(144);
+            code.EmitByte(0x45); code.EmitByte(0x89); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(148);
+            int unavailableAt = code.Position();
+            code.Patch32(unavailable, unavailableAt - (unavailable + 4));
+            code.Patch32(noFramebuffer, unavailableAt - (noFramebuffer + 4));
+        }
+
+        // Every exception stub pushes only its vector before entering this
+        // common handler. All registers are saved before the handler derives
+        // the x86 exception frame, so the report describes the interrupted
+        // instruction rather than the reporter itself.
+        private int EmitKernelPanicHandler(X64Assembler code, int textRva, int bootInfoRva,
+            int fontRva, int messageRva, int headerLength, int messageLength) {
+            int start = code.Position();
+            code.EmitByte(0xfa);
+            EmitPushInterruptRegisters(code);
+            EmitLeaR10Rva(code, textRva, bootInfoRva);
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xd4); // r12 = BootInfo
+            code.EmitByte(0x8b); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(120); // vector
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(184);
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(188);
+            code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xbc); code.EmitByte(0x24); code.Emit32(2672); code.EmitByte(0);
+            int nestedPanic = EmitConditionalJump(code, 0x85);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(2672); code.Emit32(1);
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(2600);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(2604); code.Emit32(0);
+
+            int[] errorJumps = new int[10];
+            int[] errorVectors = new int[10];
+            errorVectors[0] = 8; errorVectors[1] = 10; errorVectors[2] = 11; errorVectors[3] = 12;
+            errorVectors[4] = 13; errorVectors[5] = 14; errorVectors[6] = 17; errorVectors[7] = 21;
+            errorVectors[8] = 29; errorVectors[9] = 30;
+            int errorIndex = 0;
+            while (errorIndex < errorVectors.Length) {
+                code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(errorVectors[errorIndex]);
+                errorJumps[errorIndex] = EmitConditionalJump(code, 0x84);
+                errorIndex = errorIndex + 1;
+            }
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xed); // error = 0
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0xb4); code.EmitByte(0x24); code.Emit32(128); // RIP
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0xbc); code.EmitByte(0x24); code.Emit32(136); // CS
+            code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(144); // RFLAGS
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x9c); code.EmitByte(0x24); code.Emit32(152); // original RSP
+            int frameReady = EmitForwardJump(code);
+            int errorAt = code.Position();
+            errorIndex = 0;
+            while (errorIndex < errorJumps.Length) {
+                code.Patch32(errorJumps[errorIndex], errorAt - (errorJumps[errorIndex] + 4));
+                errorIndex = errorIndex + 1;
+            }
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(2604); code.Emit32(1);
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(128);
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0xb4); code.EmitByte(0x24); code.Emit32(136);
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0xbc); code.EmitByte(0x24); code.Emit32(144);
+            code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(152);
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x9c); code.EmitByte(0x24); code.Emit32(160);
+            int frameAt = code.Position(); code.Patch32(frameReady, frameAt - (frameReady + 4));
+            code.EmitByte(0x49); code.EmitByte(0x0f); code.EmitByte(0x20); code.EmitByte(0xd3); // r11 = CR2
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(2608);
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xb4); code.EmitByte(0x24); code.Emit32(2616);
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xbc); code.EmitByte(0x24); code.Emit32(2624);
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(2632);
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x9c); code.EmitByte(0x24); code.Emit32(2640);
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x9c); code.EmitByte(0x24); code.Emit32(2648);
+
+            EmitLeaR10Rva(code, textRva, messageRva);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xd6);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe7);
+            code.EmitByte(0x48); code.EmitByte(0x81); code.EmitByte(0xc7); code.Emit32(2688);
+            code.EmitByte(0xb9); code.Emit32(messageLength + 1);
+            code.EmitByte(0xfc); code.EmitByte(0xf3); code.EmitByte(0xa4);
+
+            int line = 0;
+            int lineSize = 29;
+            int digits = headerLength + 11;
+            EmitPanicHex32FromBootInfo(code, digits + lineSize * line, 2600); line = line + 1;
+            EmitPanicHexFromBootInfo(code, digits + lineSize * line, 2608); line = line + 1;
+            EmitPanicHexFromBootInfo(code, digits + lineSize * line, 2616); line = line + 1;
+            EmitPanicHexFromBootInfo(code, digits + lineSize * line, 2624); line = line + 1;
+            EmitPanicHexFromBootInfo(code, digits + lineSize * line, 2632); line = line + 1;
+            EmitPanicHexFromBootInfo(code, digits + lineSize * line, 2640); line = line + 1;
+            EmitPanicHexFromBootInfo(code, digits + lineSize * line, 2648); line = line + 1;
+            EmitPanicHexFromStack(code, digits + lineSize * line, 112); line = line + 1; // RAX
+            EmitPanicHexFromStack(code, digits + lineSize * line, 88); line = line + 1;  // RBX
+            EmitPanicHexFromStack(code, digits + lineSize * line, 104); line = line + 1; // RCX
+            EmitPanicHexFromStack(code, digits + lineSize * line, 96); line = line + 1;  // RDX
+            EmitPanicHexFromStack(code, digits + lineSize * line, 72); line = line + 1;  // RSI
+            EmitPanicHexFromStack(code, digits + lineSize * line, 64); line = line + 1;  // RDI
+            EmitPanicHexFromStack(code, digits + lineSize * line, 80); line = line + 1;  // RBP
+            EmitPanicHexFromStack(code, digits + lineSize * line, 56); line = line + 1;  // R8
+            EmitPanicHexFromStack(code, digits + lineSize * line, 48); line = line + 1;  // R9
+            EmitPanicHexFromStack(code, digits + lineSize * line, 40); line = line + 1;  // R10
+            EmitPanicHexFromStack(code, digits + lineSize * line, 32); line = line + 1;  // R11
+            EmitPanicHexFromStack(code, digits + lineSize * line, 24); line = line + 1;  // R12
+            EmitPanicHexFromStack(code, digits + lineSize * line, 16); line = line + 1;  // R13
+            EmitPanicHexFromStack(code, digits + lineSize * line, 8); line = line + 1;   // R14
+            EmitPanicHexFromStack(code, digits + lineSize * line, 0);                   // R15
+            EmitPanicSerialReport(code);
+            EmitPanicFramebufferReport(code, textRva, fontRva);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(2672); code.Emit32(2);
+            int haltAt = code.Position(); code.Patch32(nestedPanic, haltAt - (nestedPanic + 4));
+            EmitKernelHalt(code);
+            return start;
+        }
+
+        // Stubs avoid firmware services and enter a single allocation-free
+        // panic reporter. Masked IRQs and APIC handlers still acknowledge their
+        // controller and return with IRETQ.
+        private int EmitUnexpectedInterruptStub(X64Assembler code, int panicHandler) {
+            int start = code.Position();
+            code.EmitByte(0xfa); // cli
+            code.EmitByte(0x68); code.Emit32(255);
+            EmitJumpTo(code, panicHandler);
+            return start;
+        }
+
+        private int EmitExceptionInterruptStub(X64Assembler code, int panicHandler, int vector) {
+            int start = code.Position();
+            code.EmitByte(0xfa); // cli
+            code.EmitByte(0x6a); code.EmitByte(vector);
+            EmitJumpTo(code, panicHandler);
+            return start;
+        }
+
+        // An interrupt can arrive between any two generated instructions, so
+        // it must preserve every general register, not merely the registers
+        // used by its own small body. The ABI's callee-saved rule is not enough
+        // here because no ordinary call boundary exists at an IRQ entry.
+        private void EmitPushInterruptRegisters(X64Assembler code) {
+            code.EmitByte(0x50); code.EmitByte(0x51); code.EmitByte(0x52); code.EmitByte(0x53);
+            code.EmitByte(0x55); code.EmitByte(0x56); code.EmitByte(0x57);
+            code.EmitByte(0x41); code.EmitByte(0x50); code.EmitByte(0x41); code.EmitByte(0x51);
+            code.EmitByte(0x41); code.EmitByte(0x52); code.EmitByte(0x41); code.EmitByte(0x53);
+            code.EmitByte(0x41); code.EmitByte(0x54); code.EmitByte(0x41); code.EmitByte(0x55);
+            code.EmitByte(0x41); code.EmitByte(0x56); code.EmitByte(0x41); code.EmitByte(0x57);
+        }
+
+        private void EmitPopInterruptRegisters(X64Assembler code) {
+            code.EmitByte(0x41); code.EmitByte(0x5f); code.EmitByte(0x41); code.EmitByte(0x5e);
+            code.EmitByte(0x41); code.EmitByte(0x5d); code.EmitByte(0x41); code.EmitByte(0x5c);
+            code.EmitByte(0x41); code.EmitByte(0x5b); code.EmitByte(0x41); code.EmitByte(0x5a);
+            code.EmitByte(0x41); code.EmitByte(0x59); code.EmitByte(0x41); code.EmitByte(0x58);
+            code.EmitByte(0x5f); code.EmitByte(0x5e); code.EmitByte(0x5d); code.EmitByte(0x5b);
+            code.EmitByte(0x5a); code.EmitByte(0x59); code.EmitByte(0x58);
+        }
+
+        // Move every byte currently presented by COM1 into a fixed 1024-byte ring in
+        // KernelBootInfo. IRQ4 must clear its UART source before returning or
+        // the level remains asserted and can starve normal kernel execution.
+        // The one producer (this handler) and one consumer (the kernel shell)
+        // use aligned 32-bit head and tail cursors on the single bootstrap CPU.
+        private void EmitCom1Receive(X64Assembler code) {
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xd3); // r11 = BootInfo
+            int drain = code.Position();
+            // COM1 occupies 0x3f8 through 0x3ff, outside the immediate-port
+            // form's eight-bit range. Keep BootInfo in R11 while DX names the
+            // current UART port.
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(253); code.EmitByte(3);
+            code.EmitByte(0xec); // in al, COM1 line status
+            code.EmitByte(0xa8); code.EmitByte(1); // test data-ready
+            int noByte = EmitConditionalJump(code, 0x84); // jz
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(248); code.EmitByte(3);
+            code.EmitByte(0xec); // in al, COM1 receive buffer
+            code.EmitByte(0x44); code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0xc0); // r8d = byte
+            code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x83); code.Emit32(1168); // eax = head
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0xc1); // r9d = head
+            code.EmitByte(0x41); code.EmitByte(0xff); code.EmitByte(0xc1); // next head
+            code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0xe1); code.Emit32(1023);
+            code.EmitByte(0x45); code.EmitByte(0x3b); code.EmitByte(0x8b); code.Emit32(1172); // next == tail?
+            int ringFull = EmitConditionalJump(code, 0x84); // jz
+            code.EmitByte(0x45); code.EmitByte(0x88); code.EmitByte(0x84); code.EmitByte(0x03); code.Emit32(1280);
+            code.EmitByte(0x45); code.EmitByte(0x89); code.EmitByte(0x8b); code.Emit32(1168);
+            EmitJumpTo(code, drain);
+            int fullAt = code.Position(); code.Patch32(ringFull, fullAt - (ringFull + 4));
+            code.EmitByte(0x41); code.EmitByte(0xff); code.EmitByte(0x83); code.Emit32(1176); // dropped byte
+            EmitJumpTo(code, drain);
+            int done = code.Position(); code.Patch32(noByte, done - (noByte + 4));
+        }
+
+        private int EmitPicIrqStub(X64Assembler code, int textRva, int bootInfoRva, int vector) {
+            int start = code.Position();
+            EmitPushInterruptRegisters(code);
+            EmitLeaRdxRva(code, textRva, bootInfoRva);
+            code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(184); code.Emit32(vector);
+            if (vector == 36) {
+                // COM1 is legacy PIC IRQ4, remapped to vector 0x24.
+                code.EmitByte(0xff); code.EmitByte(0x82); code.Emit32(1148);
+                EmitCom1Receive(code);
+            }
+            code.EmitByte(0xb0); code.EmitByte(32); // non-specific EOI
+            if (vector >= 40) {
+                code.EmitByte(0xe6); code.EmitByte(160); // slave PIC command port
+            }
+            code.EmitByte(0xe6); code.EmitByte(32); // master PIC command port
+            EmitPopInterruptRegisters(code);
+            code.EmitByte(0x48); code.EmitByte(0xcf); // iretq
+            return start;
+        }
+
+        private int EmitLocalApicTimerStub(X64Assembler code, int textRva, int bootInfoRva) {
+            int start = code.Position();
+            EmitPushInterruptRegisters(code);
+            EmitLeaRdxRva(code, textRva, bootInfoRva);
+            code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0x82); code.Emit32(176); // ticks++
+            code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(184); code.Emit32(48);
+            code.EmitByte(0x83); code.EmitByte(0xba); code.Emit32(192); code.EmitByte(1);
+            int xApicEoi = EmitConditionalJump(code, 0x85); // jne
+            // x2APIC EOI MSR 0x80b.
+            code.EmitByte(0xb9); code.Emit32(2059);
+            code.EmitByte(0x31); code.EmitByte(0xc0);
+            code.EmitByte(0x31); code.EmitByte(0xd2);
+            code.EmitByte(0x0f); code.EmitByte(0x30); // wrmsr
+            int eoiDone = EmitForwardJump(code);
+            int xApicEoiAt = code.Position();
+            code.Patch32(xApicEoi, xApicEoiAt - (xApicEoi + 4));
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0x92); code.Emit32(168);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(176); code.Emit32(0);
+            int eoiDoneAt = code.Position();
+            code.Patch32(eoiDone, eoiDoneAt - (eoiDone + 4));
+            EmitPopInterruptRegisters(code);
+            code.EmitByte(0x48); code.EmitByte(0xcf); // iretq
+            return start;
+        }
+
+        // Vector 0x31 is reserved for PCI MSI/MSI-X storage completions. The
+        // device driver owns controller-specific acknowledgement; the common
+        // entry acknowledges the local APIC and publishes a monotonic delivery
+        // counter that waiters can observe without touching device registers.
+        private int EmitStorageInterruptStub(X64Assembler code, int textRva, int bootInfoRva) {
+            int start = code.Position();
+            EmitPushInterruptRegisters(code);
+            EmitLeaRdxRva(code, textRva, bootInfoRva);
+            code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0x82); code.Emit32(1224);
+            code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(184); code.Emit32(49);
+            code.EmitByte(0x83); code.EmitByte(0xba); code.Emit32(192); code.EmitByte(1);
+            int xApicEoi = EmitConditionalJump(code, 0x85);
+            code.EmitByte(0xb9); code.Emit32(2059); code.EmitByte(0x31); code.EmitByte(0xc0);
+            code.EmitByte(0x31); code.EmitByte(0xd2); code.EmitByte(0x0f); code.EmitByte(0x30);
+            int done = EmitForwardJump(code);
+            int xApicAt = code.Position(); code.Patch32(xApicEoi, xApicAt - (xApicEoi + 4));
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0x92); code.Emit32(168);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(176); code.Emit32(0);
+            int doneAt = code.Position(); code.Patch32(done, doneAt - (done + 4));
+            EmitPopInterruptRegisters(code); code.EmitByte(0x48); code.EmitByte(0xcf);
+            return start;
+        }
+
+        // Vector 0x32 is the first reusable device vector. The registered owner
+        // publishes a W1C status register address and mask. The handler only
+        // acknowledges hardware and increments a pending counter; all command
+        // completion work runs later in normal kernel context.
+        private int EmitDeviceInterruptStub(X64Assembler code, int textRva, int bootInfoRva) {
+            int start = code.Position();
+            EmitPushInterruptRegisters(code);
+            EmitLeaRdxRva(code, textRva, bootInfoRva);
+            code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0x82); code.Emit32(2304);
+            code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(184); code.Emit32(50);
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0x9a); code.Emit32(2320); // r11 = status address
+            code.EmitByte(0x4d); code.EmitByte(0x85); code.EmitByte(0xdb);
+            int noStatus = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x03); // eax = [r11]
+            code.EmitByte(0x89); code.EmitByte(0x82); code.Emit32(2332);
+            code.EmitByte(0x8b); code.EmitByte(0x8a); code.Emit32(2328);
+            code.EmitByte(0x85); code.EmitByte(0xc1);
+            int noPending = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x03); // write raw value: W1C + preserve IE
+            code.EmitByte(0xff); code.EmitByte(0x82); code.Emit32(2336);
+            int noPendingAt = code.Position(); code.Patch32(noPending, noPendingAt - (noPending + 4));
+            int noStatusAt = code.Position(); code.Patch32(noStatus, noStatusAt - (noStatus + 4));
+            code.EmitByte(0x83); code.EmitByte(0xba); code.Emit32(192); code.EmitByte(1);
+            int xApicEoi = EmitConditionalJump(code, 0x85);
+            code.EmitByte(0xb9); code.Emit32(2059); code.EmitByte(0x31); code.EmitByte(0xc0);
+            code.EmitByte(0x31); code.EmitByte(0xd2); code.EmitByte(0x0f); code.EmitByte(0x30);
+            int done = EmitForwardJump(code);
+            int xApicAt = code.Position(); code.Patch32(xApicEoi, xApicAt - (xApicEoi + 4));
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0x92); code.Emit32(168);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(176); code.Emit32(0);
+            int doneAt = code.Position(); code.Patch32(done, doneAt - (done + 4));
+            EmitPopInterruptRegisters(code); code.EmitByte(0x48); code.EmitByte(0xcf);
+            return start;
+        }
+
+        // The minimal long-mode GDT contains null, ring-0 code, and ring-0
+        // data descriptors. An explicit far return reloads CS after LGDT.
+        private int EmitInitializeGdt(X64Assembler code, int[] failureJumps, int failureCount) {
+            code.EmitByte(0x83); code.EmitByte(0x7f); code.EmitByte(36); code.EmitByte(127);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff); // r15 = boot info
+            code.EmitByte(0x4c); code.EmitByte(0x8d); code.EmitByte(0x87); code.Emit32(512); // r8 = GDT
+            code.EmitByte(0x31); code.EmitByte(0xc0);
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x00); // null descriptor
+            code.EmitByte(0x48); code.EmitByte(0xb8);
+            code.EmitByte(255); code.EmitByte(255); code.EmitByte(0); code.EmitByte(0); code.EmitByte(0); code.EmitByte(154); code.EmitByte(175); code.EmitByte(0);
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x40); code.EmitByte(8);
+            code.EmitByte(0x48); code.EmitByte(0xb8);
+            code.EmitByte(255); code.EmitByte(255); code.EmitByte(0); code.EmitByte(0); code.EmitByte(0); code.EmitByte(146); code.EmitByte(175); code.EmitByte(0);
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x40); code.EmitByte(16);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(152);
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xec); code.EmitByte(16);
+            code.EmitByte(0x66); code.EmitByte(0xc7); code.EmitByte(0x04); code.EmitByte(0x24); code.EmitByte(23); code.EmitByte(0);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(2);
+            code.EmitByte(0x0f); code.EmitByte(0x01); code.EmitByte(0x14); code.EmitByte(0x24); // lgdt [rsp]
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc4); code.EmitByte(16);
+            code.EmitByte(0x6a); code.EmitByte(8);
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x05); code.Emit32(3);
+            code.EmitByte(0x50); // push next RIP
+            code.EmitByte(0x48); code.EmitByte(0xcb); // retfq
+            code.EmitByte(0x66); code.EmitByte(0xb8); code.EmitByte(16); code.EmitByte(0);
+            code.EmitByte(0x8e); code.EmitByte(0xd8); // ds = ax
+            code.EmitByte(0x8e); code.EmitByte(0xc0); // es = ax
+            code.EmitByte(0x8e); code.EmitByte(0xd0); // ss = ax
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
+            code.EmitByte(0xc7); code.EmitByte(0x47); code.EmitByte(36); code.Emit32(255);
+            return failureCount;
+        }
+
+        private void EmitStoreInterruptGateAtR8(X64Assembler code) {
+            code.EmitByte(0x66); code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x00);
+            code.EmitByte(0x66); code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x40); code.EmitByte(2); code.EmitByte(8); code.EmitByte(0);
+            code.EmitByte(0x41); code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(4); code.EmitByte(0);
+            code.EmitByte(0x41); code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(5); code.EmitByte(142);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc2);
+            code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xea); code.EmitByte(16);
+            code.EmitByte(0x66); code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x50); code.EmitByte(6);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc2);
+            code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xea); code.EmitByte(32);
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x50); code.EmitByte(8);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x40); code.EmitByte(12); code.Emit32(0);
+        }
+
+        private void EmitStoreInterruptGate(X64Assembler code, int textRva, int targetOffset, int vector) {
+            code.EmitByte(0x4c); code.EmitByte(0x8d); code.EmitByte(0x87); code.Emit32(4096 + vector * 16);
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x05);
+            code.Emit32(textRva + targetOffset - (textRva + code.Position() + 4));
+            EmitStoreInterruptGateAtR8(code);
+        }
+
+        private int EmitInitializeIdt(X64Assembler code, int textRva, int bootInfoRva, int defaultStub, int[] exceptionStubs, int[] picStubs, int timerStub, int storageStub, int deviceStub, int[] failureJumps, int failureCount) {
+            code.EmitByte(0x81); code.EmitByte(0x7f); code.EmitByte(36); code.Emit32(255);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff); // r15 = boot info
+            code.EmitByte(0x4c); code.EmitByte(0x8d); code.EmitByte(0x87); code.Emit32(4096);
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x05);
+            code.Emit32(textRva + defaultStub - (textRva + code.Position() + 4));
+            code.EmitByte(0xb9); code.Emit32(256);
+            int defaultGateLoop = code.Position();
+            EmitStoreInterruptGateAtR8(code);
+            code.EmitByte(0x49); code.EmitByte(0x83); code.EmitByte(0xc0); code.EmitByte(16);
+            code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0xc9);
+            int moreDefaultGates = EmitConditionalJump(code, 0x85);
+            code.Patch32(moreDefaultGates, defaultGateLoop - (moreDefaultGates + 4));
+            int exceptionVector = 0;
+            while (exceptionVector < exceptionStubs.Length) {
+                EmitStoreInterruptGate(code, textRva, exceptionStubs[exceptionVector], exceptionVector);
+                exceptionVector = exceptionVector + 1;
+            }
+            int irqVector = 0;
+            while (irqVector < picStubs.Length) {
+                EmitStoreInterruptGate(code, textRva, picStubs[irqVector], irqVector + 32);
+                irqVector = irqVector + 1;
+            }
+            EmitStoreInterruptGate(code, textRva, timerStub, 48);
+            EmitStoreInterruptGate(code, textRva, storageStub, 49);
+            EmitStoreInterruptGate(code, textRva, deviceStub, 50);
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xec); code.EmitByte(16);
+            code.EmitByte(0x66); code.EmitByte(0xc7); code.EmitByte(0x04); code.EmitByte(0x24); code.EmitByte(255); code.EmitByte(15);
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x87); code.Emit32(4096);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(2);
+            code.EmitByte(0x0f); code.EmitByte(0x01); code.EmitByte(0x1c); code.EmitByte(0x24); // lidt [rsp]
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc4); code.EmitByte(16);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
+            code.EmitByte(0xc7); code.EmitByte(0x47); code.EmitByte(36); code.Emit32(511);
+            return failureCount;
+        }
+
+        private void EmitPicOut(X64Assembler code, int value, int port) {
+            code.EmitByte(0xb0); code.EmitByte(value);
+            code.EmitByte(0xe6); code.EmitByte(port);
+            code.EmitByte(0xe6); code.EmitByte(128); // ISA I/O delay
+        }
+
+        private void EmitInitializePic(X64Assembler code) {
+            EmitPicOut(code, 17, 32); EmitPicOut(code, 17, 160);
+            EmitPicOut(code, 32, 33); EmitPicOut(code, 40, 161);
+            EmitPicOut(code, 4, 33); EmitPicOut(code, 2, 161);
+            EmitPicOut(code, 1, 33); EmitPicOut(code, 1, 161);
+            EmitPicOut(code, 255, 33); EmitPicOut(code, 255, 161);
+        }
+
+        // Allocate and clear a page-table page, write the parent entry held in
+        // R8, and leave its address in R12. The current identity mappings are
+        // the same prerequisite already used by the allocator-owned page-table
+        // copier during the boot handoff.
+        private int EmitAllocateApicPageTable(X64Assembler code, int[] failureJumps, int failureCount) {
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xc2); // r10 = parent entry address
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xf0); // r8 = next page
+            code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xc6); code.Emit32(4096);
+            code.EmitByte(0x4d); code.EmitByte(0x39); code.EmitByte(0xc6);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x86); failureCount = failureCount + 1;
+            code.EmitByte(0x4d); code.EmitByte(0x39); code.EmitByte(0xee);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x87); failureCount = failureCount + 1;
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xc7);
+            code.EmitByte(0x31); code.EmitByte(0xc0);
+            code.EmitByte(0xb9); code.Emit32(512);
+            code.EmitByte(0xfc); code.EmitByte(0xf3); code.EmitByte(0x48); code.EmitByte(0xab);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xc0);
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc8); code.EmitByte(3);
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x02);
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xc4);
+            return failureCount;
+        }
+
+        private void EmitApicTableEntryAddress(X64Assembler code, int shift) {
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xd8); // r8 = APIC physical address
+            code.EmitByte(0x49); code.EmitByte(0xc1); code.EmitByte(0xe8); code.EmitByte(shift);
+            code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xe0); code.Emit32(511);
+            code.EmitByte(0x49); code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(3);
+            code.EmitByte(0x4d); code.EmitByte(0x01); code.EmitByte(0xe0); // r8 += current table
+        }
+
+        private void EmitLoadPageTableFromRax(X64Assembler code) {
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc4);
+            code.EmitByte(0x49); code.EmitByte(0xc1); code.EmitByte(0xe4); code.EmitByte(12);
+            code.EmitByte(0x49); code.EmitByte(0xc1); code.EmitByte(0xec); code.EmitByte(12);
+            code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xe4); code.Emit32(-4096);
+        }
+
+        // Map the local APIC physical page at its identity address with PCD and
+        // PWT set. Existing large or 4 KiB mappings are retained untouched.
+        private int EmitEnsureLocalApicMapping(X64Assembler code, int[] failureJumps, int failureCount) {
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff);
+            code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x77); code.EmitByte(40);
+            code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x6f); code.EmitByte(48);
+            code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x67); code.EmitByte(64);
+            code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x9f); code.Emit32(168);
+            code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xe3); code.Emit32(-4096);
+
+            EmitApicTableEntryAddress(code, 39);
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x00);
+            code.EmitByte(0xa8); code.EmitByte(1);
+            int pml4Present = EmitConditionalJump(code, 0x85);
+            failureCount = EmitAllocateApicPageTable(code, failureJumps, failureCount);
+            int pml4Ready = EmitForwardJump(code);
+            int pml4PresentAt = code.Position(); code.Patch32(pml4Present, pml4PresentAt - (pml4Present + 4));
+            EmitLoadPageTableFromRax(code);
+            int pml4ReadyAt = code.Position(); code.Patch32(pml4Ready, pml4ReadyAt - (pml4Ready + 4));
+
+            EmitApicTableEntryAddress(code, 30);
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x00);
+            code.EmitByte(0xa8); code.EmitByte(1);
+            int pdptPresent = EmitConditionalJump(code, 0x85);
+            failureCount = EmitAllocateApicPageTable(code, failureJumps, failureCount);
+            int pdptReady = EmitForwardJump(code);
+            int pdptPresentAt = code.Position(); code.Patch32(pdptPresent, pdptPresentAt - (pdptPresent + 4));
+            code.EmitByte(0xa8); code.EmitByte(128);
+            int pdptLarge = EmitConditionalJump(code, 0x85);
+            EmitLoadPageTableFromRax(code);
+            int pdptReadyAt = code.Position(); code.Patch32(pdptReady, pdptReadyAt - (pdptReady + 4));
+
+            EmitApicTableEntryAddress(code, 21);
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x00);
+            code.EmitByte(0xa8); code.EmitByte(1);
+            int pdPresent = EmitConditionalJump(code, 0x85);
+            failureCount = EmitAllocateApicPageTable(code, failureJumps, failureCount);
+            int pdReady = EmitForwardJump(code);
+            int pdPresentAt = code.Position(); code.Patch32(pdPresent, pdPresentAt - (pdPresent + 4));
+            code.EmitByte(0xa8); code.EmitByte(128);
+            int pdLarge = EmitConditionalJump(code, 0x85);
+            EmitLoadPageTableFromRax(code);
+            int pdReadyAt = code.Position(); code.Patch32(pdReady, pdReadyAt - (pdReady + 4));
+
+            EmitApicTableEntryAddress(code, 12);
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x00);
+            code.EmitByte(0xa8); code.EmitByte(1);
+            int ptePresent = EmitConditionalJump(code, 0x85);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xd8);
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc8); code.EmitByte(27);
+            code.EmitByte(0xba); code.EmitByte(0); code.EmitByte(0); code.EmitByte(0); code.EmitByte(128);
+            code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe2); code.EmitByte(32);
+            code.EmitByte(0x48); code.EmitByte(0x09); code.EmitByte(0xd0);
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x00);
+            int mappingComplete = code.Position();
+            code.Patch32(pdptLarge, mappingComplete - (pdptLarge + 4));
+            code.Patch32(pdLarge, mappingComplete - (pdLarge + 4));
+            code.Patch32(ptePresent, mappingComplete - (ptePresent + 4));
+            code.EmitByte(0x41); code.EmitByte(0x0f); code.EmitByte(0x01); code.EmitByte(0x3b); // invlpg [r11]
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x77); code.EmitByte(40);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
+            return failureCount;
+        }
+
+        private int EmitInitializeInterruptController(X64Assembler code, int[] failureJumps, int failureCount) {
+            code.EmitByte(0x81); code.EmitByte(0x7f); code.EmitByte(36); code.Emit32(511);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff);
+            EmitInitializePic(code);
+            code.EmitByte(0xb8); code.Emit32(1);
+            code.EmitByte(0x0f); code.EmitByte(0xa2); // cpuid leaf 1
+            code.EmitByte(0x0f); code.EmitByte(0xba); code.EmitByte(0xe2); code.EmitByte(9);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x83); failureCount = failureCount + 1; // jnc: no APIC
+            code.EmitByte(0xb9); code.Emit32(27);
+            code.EmitByte(0x0f); code.EmitByte(0x32); // rdmsr IA32_APIC_BASE
+            code.EmitByte(0xa9); code.Emit32(2048);
+            int apicEnabled = EmitConditionalJump(code, 0x85);
+            code.EmitByte(0x0d); code.Emit32(2048);
+            code.EmitByte(0x0f); code.EmitByte(0x30); // wrmsr
+            int apicEnabledAt = code.Position(); code.Patch32(apicEnabled, apicEnabledAt - (apicEnabled + 4));
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0xc3);
+            code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xe3); code.Emit32(-4096);
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0xd2);
+            code.EmitByte(0x49); code.EmitByte(0xc1); code.EmitByte(0xe2); code.EmitByte(32);
+            code.EmitByte(0x4d); code.EmitByte(0x09); code.EmitByte(0xd3);
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x9f); code.Emit32(168);
+            code.EmitByte(0xa9); code.Emit32(1024);
+            int xApic = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(192); code.Emit32(1);
+            code.EmitByte(0xb9); code.Emit32(2063);
+            code.EmitByte(0xb8); code.Emit32(511);
+            code.EmitByte(0x31); code.EmitByte(0xd2);
+            code.EmitByte(0x0f); code.EmitByte(0x30);
+            int controllerReady = EmitForwardJump(code);
+            int xApicAt = code.Position(); code.Patch32(xApic, xApicAt - (xApic + 4));
+            code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(192); code.Emit32(0);
+            failureCount = EmitEnsureLocalApicMapping(code, failureJumps, failureCount);
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0x9f); code.Emit32(168);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x83); code.Emit32(240); code.Emit32(511);
+            int controllerReadyAt = code.Position(); code.Patch32(controllerReady, controllerReadyAt - (controllerReady + 4));
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
+            code.EmitByte(0xc7); code.EmitByte(0x47); code.EmitByte(36); code.Emit32(1023);
+            return failureCount;
+        }
+
+        private int EmitInitializeTimer(X64Assembler code, int[] failureJumps, int failureCount) {
+            code.EmitByte(0x81); code.EmitByte(0x7f); code.EmitByte(36); code.Emit32(1023);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff);
+            code.EmitByte(0x83); code.EmitByte(0xbf); code.Emit32(192); code.EmitByte(1);
+            int xApicTimer = EmitConditionalJump(code, 0x85);
+            // x2APIC: divide-by-16, periodic vector 0x30, initial count 10M.
+            code.EmitByte(0xb9); code.Emit32(2110); code.EmitByte(0xb8); code.Emit32(3); code.EmitByte(0x31); code.EmitByte(0xd2); code.EmitByte(0x0f); code.EmitByte(0x30);
+            code.EmitByte(0xb9); code.Emit32(2098); code.EmitByte(0xb8); code.Emit32(131120); code.EmitByte(0x31); code.EmitByte(0xd2); code.EmitByte(0x0f); code.EmitByte(0x30);
+            code.EmitByte(0xb9); code.Emit32(2104); code.EmitByte(0xb8); code.Emit32(10000000); code.EmitByte(0x31); code.EmitByte(0xd2); code.EmitByte(0x0f); code.EmitByte(0x30);
+            int timerReady = EmitForwardJump(code);
+            int xApicTimerAt = code.Position(); code.Patch32(xApicTimer, xApicTimerAt - (xApicTimer + 4));
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0x87); code.Emit32(168);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x80); code.Emit32(992); code.Emit32(3);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x80); code.Emit32(800); code.Emit32(131120);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x80); code.Emit32(896); code.Emit32(10000000);
+            int timerReadyAt = code.Position(); code.Patch32(timerReady, timerReadyAt - (timerReady + 4));
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
+            code.EmitByte(0xc7); code.EmitByte(0x47); code.EmitByte(36); code.Emit32(2047);
+            return failureCount;
+        }
+
+        // PCI configuration mechanism #1 is universally available on the
+        // x86_64 platforms targeted here. Each read writes CONFIG_ADDRESS at
+        // 0xcf8 then reads CONFIG_DATA at 0xcfc; only enumeration runs before
+        // device drivers own a controller.
+        private void EmitPciReadConfigDword(X64Assembler code) {
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(248); code.EmitByte(12);
+            code.EmitByte(0xef); // out dx, eax
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(252); code.EmitByte(12);
+            code.EmitByte(0xed); // in eax, dx
+        }
+
+        private void EmitStoreCurrentPciBdfIfMissing(X64Assembler code, int offset) {
+            code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xbf); code.Emit32(offset); code.EmitByte(255);
+            int alreadyRecorded = EmitConditionalJump(code, 0x85);
+            code.EmitByte(0x89); code.EmitByte(0xd8); // eax = ebx (bus)
+            code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(8);
+            code.EmitByte(0x89); code.EmitByte(0xe9); // ecx = ebp (device)
+            code.EmitByte(0xc1); code.EmitByte(0xe1); code.EmitByte(3);
+            code.EmitByte(0x09); code.EmitByte(0xc8);
+            code.EmitByte(0x09); code.EmitByte(0xf0); // function
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(offset);
+            int alreadyRecordedAt = code.Position();
+            code.Patch32(alreadyRecorded, alreadyRecordedAt - (alreadyRecorded + 4));
+        }
+
+        private int EmitInitializePci(X64Assembler code, int[] failureJumps, int failureCount) {
+            code.EmitByte(0x81); code.EmitByte(0x7f); code.EmitByte(36); code.Emit32(2047);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff); // r15 = BootInfo
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(204); code.Emit32(-1);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(216); code.Emit32(-1);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(220); code.Emit32(-1);
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xe4); // r12d = device count
+            code.EmitByte(0x31); code.EmitByte(0xdb); // ebx = bus
+            int busLoop = code.Position();
+            code.EmitByte(0x31); code.EmitByte(0xed); // ebp = device
+            int deviceLoop = code.Position();
+            code.EmitByte(0x31); code.EmitByte(0xf6); // esi = function
+            int functionLoop = code.Position();
+            code.EmitByte(0x89); code.EmitByte(0xd8);
+            code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(16);
+            code.EmitByte(0x89); code.EmitByte(0xe9);
+            code.EmitByte(0xc1); code.EmitByte(0xe1); code.EmitByte(11);
+            code.EmitByte(0x09); code.EmitByte(0xc8);
+            code.EmitByte(0x89); code.EmitByte(0xf1);
+            code.EmitByte(0xc1); code.EmitByte(0xe1); code.EmitByte(8);
+            code.EmitByte(0x09); code.EmitByte(0xc8);
+            code.EmitByte(0x0d); code.EmitByte(0); code.EmitByte(0); code.EmitByte(0); code.EmitByte(128);
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0xc6); // r14d = config address
+            EmitPciReadConfigDword(code);
+            code.EmitByte(0x66); code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(255);
+            int absentFunction = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x41); code.EmitByte(0xff); code.EmitByte(0xc4);
+            code.EmitByte(0x44); code.EmitByte(0x89); code.EmitByte(0xf0);
+            code.EmitByte(0x83); code.EmitByte(0xc8); code.EmitByte(8);
+            EmitPciReadConfigDword(code);
+            code.EmitByte(0x25); code.Emit32(-256);
+            code.EmitByte(0x3d); code.Emit32(201535488); // USB xHCI: 0c/03/30
+            int notXhci = EmitConditionalJump(code, 0x85);
+            EmitStoreCurrentPciBdfIfMissing(code, 204);
+            int afterXhci = EmitForwardJump(code);
+            int notXhciAt = code.Position(); code.Patch32(notXhci, notXhciAt - (notXhci + 4));
+            code.EmitByte(0x3d); code.Emit32(17170688); // SATA AHCI: 01/06/01
+            int notAhci = EmitConditionalJump(code, 0x85);
+            EmitStoreCurrentPciBdfIfMissing(code, 216);
+            int afterAhci = EmitForwardJump(code);
+            int notAhciAt = code.Position(); code.Patch32(notAhci, notAhciAt - (notAhci + 4));
+            code.EmitByte(0x3d); code.Emit32(17302016); // NVMe: 01/08/02
+            int notNvme = EmitConditionalJump(code, 0x85);
+            EmitStoreCurrentPciBdfIfMissing(code, 220);
+            int notNvmeAt = code.Position(); code.Patch32(notNvme, notNvmeAt - (notNvme + 4));
+            int afterAhciAt = code.Position(); code.Patch32(afterAhci, afterAhciAt - (afterAhci + 4));
+            int afterXhciAt = code.Position(); code.Patch32(afterXhci, afterXhciAt - (afterXhci + 4));
+            int absentFunctionAt = code.Position(); code.Patch32(absentFunction, absentFunctionAt - (absentFunction + 4));
+            code.EmitByte(0xff); code.EmitByte(0xc6);
+            code.EmitByte(0x83); code.EmitByte(0xfe); code.EmitByte(8);
+            int nextFunction = EmitConditionalJump(code, 0x82);
+            code.Patch32(nextFunction, functionLoop - (nextFunction + 4));
+            code.EmitByte(0xff); code.EmitByte(0xc5);
+            code.EmitByte(0x83); code.EmitByte(0xfd); code.EmitByte(32);
+            int nextDevice = EmitConditionalJump(code, 0x82);
+            code.Patch32(nextDevice, deviceLoop - (nextDevice + 4));
+            code.EmitByte(0xff); code.EmitByte(0xc3);
+            code.EmitByte(0x81); code.EmitByte(0xfb); code.Emit32(256);
+            int nextBus = EmitConditionalJump(code, 0x82);
+            code.Patch32(nextBus, busLoop - (nextBus + 4));
+            code.EmitByte(0x45); code.EmitByte(0x89); code.EmitByte(0xa7); code.Emit32(200);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
+            code.EmitByte(0xc7); code.EmitByte(0x47); code.EmitByte(36); code.Emit32(8191);
+            return failureCount;
+        }
+
+        private int EmitAllocateMmioPageTable(X64Assembler code, int[] failureJumps, int failureCount) {
+            return EmitAllocateApicPageTable(code, failureJumps, failureCount);
+        }
+
+        private void EmitLeaR8R12(X64Assembler code, int offset) {
+            code.EmitByte(0x4d); code.EmitByte(0x8d); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(offset);
+        }
+
+        // Map a 64 KiB controller register aperture in an otherwise unused high
+        // kernel slot. PCD/PWT and NX make these device pages non-cacheable and
+        // non-executable without changing firmware's identity mappings.
+        private int EmitMapBootstrapMmioAperture(X64Assembler code, int pdIndex, int virtualSlot, int virtualOffset, int[] failureJumps, int failureCount) {
+		    // R10 carries the page-aligned physical BAR address. Preserve it while
+		    // table allocation uses the other scratch registers.
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xd3); // r11 = physical BAR
+            code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x77); code.EmitByte(40);
+            code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x6f); code.EmitByte(48);
+            code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x67); code.EmitByte(64);
+            EmitLeaR8R12(code, 3072); // PML4[384]
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x00);
+            code.EmitByte(0xa8); code.EmitByte(1);
+            int pml4Present = EmitConditionalJump(code, 0x85);
+            failureCount = EmitAllocateMmioPageTable(code, failureJumps, failureCount);
+            int pml4Ready = EmitForwardJump(code);
+            int pml4PresentAt = code.Position(); code.Patch32(pml4Present, pml4PresentAt - (pml4Present + 4));
+            EmitLoadPageTableFromRax(code);
+            int pml4ReadyAt = code.Position(); code.Patch32(pml4Ready, pml4ReadyAt - (pml4Ready + 4));
+            EmitLeaR8R12(code, 0); // PDPT[0]
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x00);
+            code.EmitByte(0xa8); code.EmitByte(1);
+            int pdptPresent = EmitConditionalJump(code, 0x85);
+            failureCount = EmitAllocateMmioPageTable(code, failureJumps, failureCount);
+            int pdptReady = EmitForwardJump(code);
+            int pdptPresentAt = code.Position(); code.Patch32(pdptPresent, pdptPresentAt - (pdptPresent + 4));
+            code.EmitByte(0xa8); code.EmitByte(128);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+            EmitLoadPageTableFromRax(code);
+            int pdptReadyAt = code.Position(); code.Patch32(pdptReady, pdptReadyAt - (pdptReady + 4));
+            EmitLeaR8R12(code, pdIndex * 8);
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x00);
+            code.EmitByte(0xa8); code.EmitByte(1);
+            int pdPresent = EmitConditionalJump(code, 0x85);
+            failureCount = EmitAllocateMmioPageTable(code, failureJumps, failureCount);
+            int pdReady = EmitForwardJump(code);
+            int pdPresentAt = code.Position(); code.Patch32(pdPresent, pdPresentAt - (pdPresent + 4));
+            code.EmitByte(0xa8); code.EmitByte(128);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+            EmitLoadPageTableFromRax(code);
+            int pdReadyAt = code.Position(); code.Patch32(pdReady, pdReadyAt - (pdReady + 4));
+
+		    // Refuse to replace a present mapping in the dedicated virtual slot.
+		    // The range belongs exclusively to these bootstrap controller apertures.
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xe0); // r8 = PT
+		    code.EmitByte(0xb9); code.Emit32(16);
+		    int emptyCheck = code.Position();
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x00);
+		    code.EmitByte(0xa8); code.EmitByte(1);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x83); code.EmitByte(0xc0); code.EmitByte(8);
+		    code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0xc9);
+		    int moreEmptyChecks = EmitConditionalJump(code, 0x85);
+		    code.Patch32(moreEmptyChecks, emptyCheck - (moreEmptyChecks + 4));
+
+		    // Materialize sixteen 4 KiB leaves. PCD/PWT select uncached device
+		    // memory, and NX prevents a controller BAR from being executable.
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xe0); // r8 = PT
+		    code.EmitByte(0x41); code.EmitByte(0xb9); code.Emit32(16);
+		    int leafLoop = code.Position();
+		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xd8); // rax = r11
+		    code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xc3); code.Emit32(4096);
+		    code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc8); code.EmitByte(27);
+		    code.EmitByte(0xba); code.EmitByte(0); code.EmitByte(0); code.EmitByte(0); code.EmitByte(128);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe2); code.EmitByte(32);
+		    code.EmitByte(0x48); code.EmitByte(0x09); code.EmitByte(0xd0);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x00);
+		    code.EmitByte(0x49); code.EmitByte(0x83); code.EmitByte(0xc0); code.EmitByte(8);
+		    code.EmitByte(0x49); code.EmitByte(0xff); code.EmitByte(0xc9);
+		    int moreLeaves = EmitConditionalJump(code, 0x85);
+		    code.Patch32(moreLeaves, leafLoop - (moreLeaves + 4));
+
+		    // Publish the canonical high virtual address and invalidate a stale
+		    // translation should firmware have speculatively touched that page.
+		    code.EmitByte(0x48); code.EmitByte(0xb8);
+		    code.Emit32(virtualSlot * 16777216); code.Emit32(-16384);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(virtualOffset);
+		    code.EmitByte(0x0f); code.EmitByte(0x01); code.EmitByte(0x38);
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x77); code.EmitByte(40);
+		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
+            return failureCount;
+        }
+
+		// Read a discovered controller BAR through PCI configuration mechanism #1
+		// and publish a fixed, non-cacheable 64 KiB high mapping when it is a
+		// valid memory BAR. This deliberately maps registers only; driver-specific
+		// queues and buffers come from the DMA allocator.
+		private int EmitReadPciBarAndMap(X64Assembler code, int bdfOffset, int barOffset, int physicalOffset, int virtualOffset, int pdIndex, int virtualSlot, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x31); code.EmitByte(0xc0);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(physicalOffset);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(virtualOffset);
+		    code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xbf); code.Emit32(bdfOffset); code.EmitByte(255);
+		    int noController = EmitConditionalJump(code, 0x84);
+		    code.EmitByte(0x45); code.EmitByte(0x8b); code.EmitByte(0xb7); code.Emit32(bdfOffset);
+		    code.EmitByte(0x41); code.EmitByte(0xc1); code.EmitByte(0xe6); code.EmitByte(8);
+		    code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0xce); code.EmitByte(0); code.EmitByte(0); code.EmitByte(0); code.EmitByte(128);
+		    code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xce); code.EmitByte(barOffset);
+		    code.EmitByte(0x44); code.EmitByte(0x89); code.EmitByte(0xf0);
+		    EmitPciReadConfigDword(code);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0xc3); // r11d = raw BAR
+		    code.EmitByte(0xa8); code.EmitByte(1);
+		    int notIoBar = EmitConditionalJump(code, 0x85);
+		    code.EmitByte(0x25); code.Emit32(-16);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0xc2); // r10d = BAR low base
+		    code.EmitByte(0x44); code.EmitByte(0x89); code.EmitByte(0xd8);
+		    code.EmitByte(0x83); code.EmitByte(0xe0); code.EmitByte(6);
+		    code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(4);
+		    int barIs32 = EmitConditionalJump(code, 0x85);
+		    code.EmitByte(0x44); code.EmitByte(0x89); code.EmitByte(0xf0);
+		    code.EmitByte(0x83); code.EmitByte(0xc0); code.EmitByte(4);
+		    EmitPciReadConfigDword(code);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0xc3);
+		    code.EmitByte(0x49); code.EmitByte(0xc1); code.EmitByte(0xe3); code.EmitByte(32);
+		    code.EmitByte(0x4d); code.EmitByte(0x09); code.EmitByte(0xda);
+		    int barReady = EmitForwardJump(code);
+		    int barIs32At = code.Position(); code.Patch32(barIs32, barIs32At - (barIs32 + 4));
+		    code.EmitByte(0x85); code.EmitByte(0xc0);
+		    int unsupportedBarType = EmitConditionalJump(code, 0x85);
+		    int barReadyAt = code.Position(); code.Patch32(barReady, barReadyAt - (barReady + 4));
+		    code.EmitByte(0x4d); code.EmitByte(0x85); code.EmitByte(0xd2); // high-only 64-bit BARs are valid
+		    int zeroBar = EmitConditionalJump(code, 0x84);
+		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xd0);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe8); code.EmitByte(52);
+		    code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc0);
+		    int barOutsidePhysicalAddressSpace = EmitConditionalJump(code, 0x85);
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x97); code.Emit32(physicalOffset);
+		    code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xe2); code.Emit32(-4096);
+		    failureCount = EmitMapBootstrapMmioAperture(code, pdIndex, virtualSlot, virtualOffset, failureJumps, failureCount);
+		    int noControllerAt = code.Position();
+		    code.Patch32(noController, noControllerAt - (noController + 4));
+		    code.Patch32(notIoBar, noControllerAt - (notIoBar + 4));
+		    code.Patch32(zeroBar, noControllerAt - (zeroBar + 4));
+		    code.Patch32(unsupportedBarType, noControllerAt - (unsupportedBarType + 4));
+		    code.Patch32(barOutsidePhysicalAddressSpace, noControllerAt - (barOutsidePhysicalAddressSpace + 4));
+		    return failureCount;
+		}
+
+		private int EmitInitializeMmio(X64Assembler code, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x81); code.EmitByte(0x7f); code.EmitByte(36); code.Emit32(8191);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff);
+		    failureCount = EmitReadPciBarAndMap(code, 204, 16, 208, 240, 0, 0, failureJumps, failureCount);
+		    failureCount = EmitReadPciBarAndMap(code, 216, 36, 224, 248, 8, 1, failureJumps, failureCount);
+		    failureCount = EmitReadPciBarAndMap(code, 220, 16, 232, 256, 16, 2, failureJumps, failureCount);
+		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
+		    code.EmitByte(0xc7); code.EmitByte(0x47); code.EmitByte(36); code.Emit32(16383);
+		    return failureCount;
+		}
+
+		// Choose the largest EfiConventionalMemory interval below 4 GiB, then
+		// reserve only the compile-time DMA request at its high end. When it is
+		// part of the primary page allocator, move that allocator's limit below
+		// the reserved slice so later page allocations cannot collide with DMA.
+		private int EmitInitializeDma(X64Assembler code, int reservationPages, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x81); code.EmitByte(0x7f); code.EmitByte(36); code.Emit32(16383);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff);
+		    code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x47); code.EmitByte(8);  // r8 = map
+		    code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x4f); code.EmitByte(16); // r9 = map size
+		    code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x57); code.EmitByte(24); // r10 = descriptor size
+		    code.EmitByte(0x4d); code.EmitByte(0x85); code.EmitByte(0xc0);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x84); failureCount = failureCount + 1;
+		    code.EmitByte(0x4d); code.EmitByte(0x85); code.EmitByte(0xc9);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x84); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x83); code.EmitByte(0xfa); code.EmitByte(40);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x82); failureCount = failureCount + 1;
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xc3); // r11 = map end
+		    code.EmitByte(0x4d); code.EmitByte(0x01); code.EmitByte(0xcb);
+		    code.EmitByte(0x4d); code.EmitByte(0x39); code.EmitByte(0xc3);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x86); failureCount = failureCount + 1;
+		    code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xe4); // r12 = best size
+		    code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xed); // r13 = best floor
+		    code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xf6); // r14 = best top
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x77); code.EmitByte(40); // rsi = primary next
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x7f); code.EmitByte(48); // rdi = primary limit
+
+		    int scanLoop = code.Position();
+		    code.EmitByte(0x4d); code.EmitByte(0x39); code.EmitByte(0xd8);
+		    int scanComplete = EmitConditionalJump(code, 0x83);
+		    code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0x38); code.EmitByte(7);
+		    int notConventional = EmitConditionalJump(code, 0x85);
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x40); code.EmitByte(8); // rax = physical start
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x50); code.EmitByte(24); // rdx = pages
+		    code.EmitByte(0x48); code.EmitByte(0xb9); code.Emit32(0); code.Emit32(1); // rcx = 4 GiB
+		    code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xc8);
+		    int aboveDmaLimit = EmitConditionalJump(code, 0x83);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc9);
+		    code.EmitByte(0x48); code.EmitByte(0x29); code.EmitByte(0xc1);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe9); code.EmitByte(12);
+		    code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xca);
+		    int countFits = EmitConditionalJump(code, 0x86);
+		    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xca);
+		    int countReady = code.Position(); code.Patch32(countFits, countReady - (countFits + 4));
+		    code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xd2);
+		    int zeroDmaRange = EmitConditionalJump(code, 0x84);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe2); code.EmitByte(12);
+		    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc3); // rbx = candidate floor
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc1); // r9 = candidate top
+		    code.EmitByte(0x49); code.EmitByte(0x01); code.EmitByte(0xd1);
+		    code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xf8);
+		    int noPrimaryOverlapBelow = EmitConditionalJump(code, 0x83);
+		    code.EmitByte(0x49); code.EmitByte(0x39); code.EmitByte(0xf1);
+		    int noPrimaryOverlapAbove = EmitConditionalJump(code, 0x86);
+		    code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xf3);
+		    int floorAlreadyHigh = EmitConditionalJump(code, 0x83);
+		    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xf3);
+		    int floorReady = code.Position(); code.Patch32(floorAlreadyHigh, floorReady - (floorAlreadyHigh + 4));
+		    int noPrimaryOverlapAt = code.Position();
+		    code.Patch32(noPrimaryOverlapBelow, noPrimaryOverlapAt - (noPrimaryOverlapBelow + 4));
+		    code.Patch32(noPrimaryOverlapAbove, noPrimaryOverlapAt - (noPrimaryOverlapAbove + 4));
+		    code.EmitByte(0x49); code.EmitByte(0x39); code.EmitByte(0xd9);
+		    int unusableCandidate = EmitConditionalJump(code, 0x86);
+		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xca);
+		    code.EmitByte(0x48); code.EmitByte(0x29); code.EmitByte(0xda);
+		    code.EmitByte(0x4c); code.EmitByte(0x39); code.EmitByte(0xe2);
+		    int smallerCandidate = EmitConditionalJump(code, 0x86);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xd4);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xdd);
+		    code.EmitByte(0x4c); code.EmitByte(0x8d); code.EmitByte(0x34); code.EmitByte(0x13);
+		    int scanAdvance = code.Position();
+		    code.Patch32(notConventional, scanAdvance - (notConventional + 4));
+		    code.Patch32(aboveDmaLimit, scanAdvance - (aboveDmaLimit + 4));
+		    code.Patch32(zeroDmaRange, scanAdvance - (zeroDmaRange + 4));
+		    code.Patch32(unusableCandidate, scanAdvance - (unusableCandidate + 4));
+		    code.Patch32(smallerCandidate, scanAdvance - (smallerCandidate + 4));
+		    code.EmitByte(0x4d); code.EmitByte(0x01); code.EmitByte(0xd0);
+		    EmitJumpTo(code, scanLoop);
+
+		    int scanCompleteAt = code.Position(); code.Patch32(scanComplete, scanCompleteAt - (scanComplete + 4));
+		    code.EmitByte(0x4d); code.EmitByte(0x85); code.EmitByte(0xe4);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x84); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xfc); code.Emit32(reservationPages * 4096);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x82); failureCount = failureCount + 1;
+		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xf0);
+		    code.EmitByte(0x48); code.EmitByte(0x2d); code.Emit32(reservationPages * 4096);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc5);
+
+		    // If the chosen range intersects the primary allocator, permanently
+		    // reserve it by lowering the primary allocator's exclusive limit.
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x77); code.EmitByte(40);
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x7f); code.EmitByte(48);
+		    code.EmitByte(0x49); code.EmitByte(0x39); code.EmitByte(0xfd);
+		    int noReservationBelow = EmitConditionalJump(code, 0x83);
+		    code.EmitByte(0x49); code.EmitByte(0x39); code.EmitByte(0xf6);
+		    int noReservationAbove = EmitConditionalJump(code, 0x86);
+		    code.EmitByte(0x49); code.EmitByte(0x39); code.EmitByte(0xf5);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x82); failureCount = failureCount + 1;
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x6f); code.EmitByte(48);
+		    int reservationDone = code.Position();
+		    code.Patch32(noReservationBelow, reservationDone - (noReservationBelow + 4));
+		    code.Patch32(noReservationAbove, reservationDone - (noReservationAbove + 4));
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xaf); code.Emit32(264);
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xb7); code.Emit32(272);
+		    code.EmitByte(0x31); code.EmitByte(0xc0);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(280);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(288);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(296); code.Emit32(0);
+		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
+		    code.EmitByte(0xc7); code.EmitByte(0x47); code.EmitByte(36); code.Emit32(32767);
+		    return failureCount;
+		}
+
+		// DMA buffers are physical, contiguous, zero-filled pages below 4 GiB.
+		// The selected DMA interval was removed from the primary allocator when
+		// both allocators share a descriptor, so these allocations cannot overlap.
+		private int EmitAllocateDmaPages(X64Assembler code, int pageCount, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x81); code.EmitByte(0x7f); code.EmitByte(36); code.Emit32(32767);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff);
+		    code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0xb7); code.Emit32(272);
+		    code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0xaf); code.Emit32(264);
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xf0);
+		    code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xe8); code.Emit32(pageCount * 4096);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x82); failureCount = failureCount + 1;
+		    code.EmitByte(0x4d); code.EmitByte(0x39); code.EmitByte(0xe8);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x82); failureCount = failureCount + 1;
+		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xc7);
+		    code.EmitByte(0x31); code.EmitByte(0xc0);
+		    code.EmitByte(0xb9); code.Emit32(pageCount * 512);
+		    code.EmitByte(0xfc); code.EmitByte(0xf3); code.EmitByte(0x48); code.EmitByte(0xab);
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(272);
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(280);
+		    code.EmitByte(0x48); code.EmitByte(0xb8); code.Emit32(pageCount * 4096); code.Emit32(0);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(288);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(296); code.Emit32(pageCount);
+		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
+            return failureCount;
+        }
+
+		// Complete one READ DMA EXT after its six LBA bytes have been written to
+		// the command FIS. R11 is the selected port's high virtual register base
+		// and R13 is the physical start of the DMA reservation. The current
+		// bootstrap reader caps a transfer at 32 512-byte sectors, which fits the
+		// 16-page reservation requested by the kernel program.
+		private int EmitAhciIssueRead(X64Assembler code, int sectorCount, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(8192);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(12); code.EmitByte(sectorCount % 256);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(13); code.EmitByte(sectorCount / 256);
+		    code.EmitByte(0xc7); code.EmitByte(0x80); code.Emit32(140); code.Emit32(-2147483648 + sectorCount * 512 - 1);
+		    code.EmitByte(0xba); code.Emit32(1000000);
+		    int readyLoop = code.Position();
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(32);
+		    code.EmitByte(0xa9); code.Emit32(136);
+		    int deviceReady = EmitConditionalJump(code, 0x84);
+		    code.EmitByte(0xf3); code.EmitByte(0x90);
+		    code.EmitByte(0xff); code.EmitByte(0xca);
+		    int readyAgain = EmitConditionalJump(code, 0x85);
+		    code.Patch32(readyAgain, readyLoop - (readyAgain + 4));
+		    failureJumps[failureCount] = EmitForwardJump(code); failureCount = failureCount + 1;
+		    int deviceReadyAt = code.Position(); code.Patch32(deviceReady, deviceReadyAt - (deviceReady + 4));
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x43); code.EmitByte(16); code.Emit32(-1);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(56);
+		    code.EmitByte(0x83); code.EmitByte(0xc8); code.EmitByte(1);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x43); code.EmitByte(56);
+		    code.EmitByte(0xba); code.Emit32(1000000);
+		    int completionLoop = code.Position();
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(56);
+		    code.EmitByte(0xa9); code.Emit32(1);
+		    int complete = EmitConditionalJump(code, 0x84);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(32);
+		    code.EmitByte(0xa9); code.Emit32(1);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0xf3); code.EmitByte(0x90);
+		    code.EmitByte(0xff); code.EmitByte(0xca);
+		    int completionAgain = EmitConditionalJump(code, 0x85);
+		    code.Patch32(completionAgain, completionLoop - (completionAgain + 4));
+		    failureJumps[failureCount] = EmitForwardJump(code); failureCount = failureCount + 1;
+		    int completeAt = code.Position(); code.Patch32(complete, completeAt - (complete + 4));
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(32);
+		    code.EmitByte(0xa9); code.Emit32(1);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    return failureCount;
+		}
+
+		// Dynamic sector count variant used for a GPT entry array. ECX contains a
+		// nonzero count no greater than 64, already range-checked by the caller.
+		private int EmitAhciIssueReadFromEcx(X64Assembler code, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(8192);
+		    code.EmitByte(0x88); code.EmitByte(0x48); code.EmitByte(12);
+		    code.EmitByte(0x89); code.EmitByte(0xca);
+		    code.EmitByte(0xc1); code.EmitByte(0xea); code.EmitByte(8);
+		    code.EmitByte(0x88); code.EmitByte(0x50); code.EmitByte(13);
+		    code.EmitByte(0x89); code.EmitByte(0xca);
+		    code.EmitByte(0xc1); code.EmitByte(0xe2); code.EmitByte(9);
+		    code.EmitByte(0xff); code.EmitByte(0xca);
+		    code.EmitByte(0x81); code.EmitByte(0xca); code.EmitByte(0); code.EmitByte(0); code.EmitByte(0); code.EmitByte(128);
+		    code.EmitByte(0x89); code.EmitByte(0x90); code.Emit32(140);
+		    code.EmitByte(0xba); code.Emit32(1000000);
+		    int readyLoop = code.Position();
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(32);
+		    code.EmitByte(0xa9); code.Emit32(136);
+		    int deviceReady = EmitConditionalJump(code, 0x84);
+		    code.EmitByte(0xf3); code.EmitByte(0x90);
+		    code.EmitByte(0xff); code.EmitByte(0xca);
+		    int readyAgain = EmitConditionalJump(code, 0x85);
+		    code.Patch32(readyAgain, readyLoop - (readyAgain + 4));
+		    failureJumps[failureCount] = EmitForwardJump(code); failureCount = failureCount + 1;
+		    int deviceReadyAt = code.Position(); code.Patch32(deviceReady, deviceReadyAt - (deviceReady + 4));
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x43); code.EmitByte(16); code.Emit32(-1);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(56);
+		    code.EmitByte(0x83); code.EmitByte(0xc8); code.EmitByte(1);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x43); code.EmitByte(56);
+		    code.EmitByte(0xba); code.Emit32(1000000);
+		    int completionLoop = code.Position();
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(56);
+		    code.EmitByte(0xa9); code.Emit32(1);
+		    int complete = EmitConditionalJump(code, 0x84);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(32);
+		    code.EmitByte(0xa9); code.Emit32(1);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0xf3); code.EmitByte(0x90);
+		    code.EmitByte(0xff); code.EmitByte(0xca);
+		    int completionAgain = EmitConditionalJump(code, 0x85);
+		    code.Patch32(completionAgain, completionLoop - (completionAgain + 4));
+		    failureJumps[failureCount] = EmitForwardJump(code); failureCount = failureCount + 1;
+		    int completeAt = code.Position(); code.Patch32(complete, completeAt - (complete + 4));
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(32);
+		    code.EmitByte(0xa9); code.Emit32(1);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    return failureCount;
+		}
+
+		// Issue a fixed-LBA read. The FIS carries all six address bytes so the
+		// emitted transport does not silently truncate a future 48-bit request.
+		private int EmitAhciReadLba(X64Assembler code, int lba, int sectorCount, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(8192);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(4); code.EmitByte(lba % 256);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(5); code.EmitByte((lba / 256) % 256);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(6); code.EmitByte((lba / 65536) % 256);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(7); code.EmitByte(64);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(8); code.EmitByte(0);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(9); code.EmitByte(0);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(10); code.EmitByte(0);
+		    return EmitAhciIssueRead(code, sectorCount, failureJumps, failureCount);
+		}
+
+		// Issue a bounded 48-bit-LBA read. RAX supplies the LBA, allowing the GPT
+		// entry-array location from a verified on-disk header to drive the actual
+		// controller request instead of assuming that it lives at LBA 2.
+		private int EmitAhciReadLbaFromRax(X64Assembler code, int sectorCount, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc3); // RBX = LBA
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(8192);
+		    code.EmitByte(0x88); code.EmitByte(0x58); code.EmitByte(4);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xeb); code.EmitByte(8);
+		    code.EmitByte(0x88); code.EmitByte(0x58); code.EmitByte(5);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xeb); code.EmitByte(8);
+		    code.EmitByte(0x88); code.EmitByte(0x58); code.EmitByte(6);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(7); code.EmitByte(64);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xeb); code.EmitByte(8);
+		    code.EmitByte(0x88); code.EmitByte(0x58); code.EmitByte(8);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xeb); code.EmitByte(8);
+		    code.EmitByte(0x88); code.EmitByte(0x58); code.EmitByte(9);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xeb); code.EmitByte(8);
+		    code.EmitByte(0x88); code.EmitByte(0x58); code.EmitByte(10);
+		    return EmitAhciIssueRead(code, sectorCount, failureJumps, failureCount);
+		}
+
+		private int EmitAhciReadLbaFromRaxAndEcx(X64Assembler code, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc3);
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(8192);
+		    code.EmitByte(0x88); code.EmitByte(0x58); code.EmitByte(4);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xeb); code.EmitByte(8);
+		    code.EmitByte(0x88); code.EmitByte(0x58); code.EmitByte(5);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xeb); code.EmitByte(8);
+		    code.EmitByte(0x88); code.EmitByte(0x58); code.EmitByte(6);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(7); code.EmitByte(64);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xeb); code.EmitByte(8);
+		    code.EmitByte(0x88); code.EmitByte(0x58); code.EmitByte(8);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xeb); code.EmitByte(8);
+		    code.EmitByte(0x88); code.EmitByte(0x58); code.EmitByte(9);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xeb); code.EmitByte(8);
+		    code.EmitByte(0x88); code.EmitByte(0x58); code.EmitByte(10);
+		    return EmitAhciIssueReadFromEcx(code, failureJumps, failureCount);
+		}
+
+		// CRC-32 (IEEE 802.3 reflected polynomial) for a fixed byte range. GPT
+		// uses this checksum for the header; the four-byte stored value is fed as
+		// zeros by the caller. EAX holds the running CRC, RSI the data pointer.
+		private void EmitGptCrc32Bytes(X64Assembler code, int byteCount) {
+		    code.EmitByte(0xb9); code.Emit32(byteCount);
+		    EmitGptCrc32BytesFromEcx(code);
+		}
+
+		// ECX is the byte count, EAX the running CRC, and RSI the input pointer.
+		// Kept separate from the fixed-length helper so a validated GPT header can
+		// select the precise primary entry-array length at run time.
+		private void EmitGptCrc32BytesFromEcx(X64Assembler code) {
+		    int byteLoop = code.Position();
+		    code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0x16);
+		    code.EmitByte(0x31); code.EmitByte(0xd0);
+		    code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0xc6);
+		    code.EmitByte(0xbf); code.Emit32(8);
+		    int bitLoop = code.Position();
+		    code.EmitByte(0xd1); code.EmitByte(0xe8);
+		    int noPolynomial = EmitConditionalJump(code, 0x83);
+		    code.EmitByte(0x35); code.Emit32(-306674912);
+		    int noPolynomialAt = code.Position(); code.Patch32(noPolynomial, noPolynomialAt - (noPolynomial + 4));
+		    code.EmitByte(0xff); code.EmitByte(0xcf);
+		    int nextBit = EmitConditionalJump(code, 0x85);
+		    code.Patch32(nextBit, bitLoop - (nextBit + 4));
+		    code.EmitByte(0xff); code.EmitByte(0xc9);
+		    int nextByte = EmitConditionalJump(code, 0x85);
+		    code.Patch32(nextByte, byteLoop - (nextByte + 4));
+		}
+
+		private void EmitGptCrc32Zeros(X64Assembler code, int byteCount) {
+		    code.EmitByte(0xb9); code.Emit32(byteCount);
+		    int byteLoop = code.Position();
+		    code.EmitByte(0xbf); code.Emit32(8);
+		    int bitLoop = code.Position();
+		    code.EmitByte(0xd1); code.EmitByte(0xe8);
+		    int noPolynomial = EmitConditionalJump(code, 0x83);
+		    code.EmitByte(0x35); code.Emit32(-306674912);
+		    int noPolynomialAt = code.Position(); code.Patch32(noPolynomial, noPolynomialAt - (noPolynomial + 4));
+		    code.EmitByte(0xff); code.EmitByte(0xcf);
+		    int nextBit = EmitConditionalJump(code, 0x85);
+		    code.Patch32(nextBit, bitLoop - (nextBit + 4));
+		    code.EmitByte(0xff); code.EmitByte(0xc9);
+		    int nextByte = EmitConditionalJump(code, 0x85);
+		    code.Patch32(nextByte, byteLoop - (nextByte + 4));
+		}
+
+		// The bootstrap NVMe controller uses depth-two admin and I/O queues in
+		// DMA pages 0..3. The fifth page is its single-page PRP; pages 5..12 hold
+		// the checked GPT transfer. R12 is the uncached register aperture, R13 the
+		// physical DMA base, and R15 the boot record. Queue cursors live at 416..436.
+		private void EmitNvmePrepare(X64Assembler code, bool admin) {
+		    int tailOffset = 428; int sqOffset = 8192;
+		    if (admin) { tailOffset = 416; sqOffset = 0; }
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x87); code.Emit32(tailOffset);
+		    code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(6);
+		    code.EmitByte(0x4d); code.EmitByte(0x8d); code.EmitByte(0x9d); code.Emit32(sqOffset);
+		    code.EmitByte(0x49); code.EmitByte(0x01); code.EmitByte(0xc3);
+		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xdf);
+		    code.EmitByte(0x31); code.EmitByte(0xc0);
+		    code.EmitByte(0xb9); code.Emit32(8);
+		    code.EmitByte(0xf3); code.EmitByte(0x48); code.EmitByte(0xab);
+		}
+
+		private int EmitNvmeWaitReady(X64Assembler code, bool ready, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0xba); code.Emit32(100000000);
+		    int poll = code.Position();
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(28);
+		    code.EmitByte(0xa9); code.Emit32(2);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x83); code.EmitByte(0xe0); code.EmitByte(1);
+		    int expected = 0;
+		    if (ready) { expected = 1; }
+		    code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(expected);
+		    int done = EmitConditionalJump(code, 0x84);
+		    code.EmitByte(0xf3); code.EmitByte(0x90); code.EmitByte(0xff); code.EmitByte(0xca);
+		    int again = EmitConditionalJump(code, 0x85); code.Patch32(again, poll - (again + 4));
+		    failureJumps[failureCount] = EmitForwardJump(code); failureCount = failureCount + 1;
+		    int doneAt = code.Position(); code.Patch32(done, doneAt - (done + 4));
+		    return failureCount;
+		}
+
+		private int EmitNvmeSubmit(X64Assembler code, bool admin, int[] failureJumps, int failureCount) {
+		    int tailOffset = 428; int headOffset = 432; int phaseOffset = 436;
+		    int cqOffset = 12288; int sqDoorbell = 2; int cqDoorbell = 3; int queueId = 1;
+		    if (admin) { tailOffset = 416; headOffset = 420; phaseOffset = 424; cqOffset = 4096; sqDoorbell = 0; cqDoorbell = 1; queueId = 0; }
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x87); code.Emit32(tailOffset);
+		    code.EmitByte(0xff); code.EmitByte(0xc0); code.EmitByte(0x83); code.EmitByte(0xe0); code.EmitByte(1);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(tailOffset);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x8f); code.Emit32(444);
+		    if (sqDoorbell == 0) { code.EmitByte(0x31); code.EmitByte(0xc9); }
+		    else { code.EmitByte(0x69); code.EmitByte(0xc9); code.Emit32(sqDoorbell); }
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x94); code.EmitByte(0x0c); code.Emit32(4096);
+		    code.EmitByte(0x89); code.EmitByte(0x02); // SQ tail doorbell
+		    code.EmitByte(0xba); code.Emit32(100000000);
+		    int poll = code.Position();
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x87); code.Emit32(headOffset);
+		    code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(4);
+		    code.EmitByte(0x4d); code.EmitByte(0x8d); code.EmitByte(0x9d); code.Emit32(cqOffset);
+		    code.EmitByte(0x49); code.EmitByte(0x01); code.EmitByte(0xc3);
+		    code.EmitByte(0x41); code.EmitByte(0x0f); code.EmitByte(0xb7); code.EmitByte(0x43); code.EmitByte(14);
+		    code.EmitByte(0x83); code.EmitByte(0xe0); code.EmitByte(1);
+		    code.EmitByte(0x41); code.EmitByte(0x3b); code.EmitByte(0x87); code.Emit32(phaseOffset);
+		    int complete = EmitConditionalJump(code, 0x84);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(28);
+		    code.EmitByte(0xa9); code.Emit32(2);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0xf3); code.EmitByte(0x90); code.EmitByte(0xff); code.EmitByte(0xca);
+		    int again = EmitConditionalJump(code, 0x85); code.Patch32(again, poll - (again + 4));
+		    failureJumps[failureCount] = EmitForwardJump(code); failureCount = failureCount + 1;
+		    int completeAt = code.Position(); code.Patch32(complete, completeAt - (complete + 4));
+		    code.EmitByte(0x66); code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0x7b); code.EmitByte(10); code.EmitByte(queueId);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x66); code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0x7b); code.EmitByte(12); code.EmitByte(0);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x41); code.EmitByte(0x0f); code.EmitByte(0xb7); code.EmitByte(0x43); code.EmitByte(14);
+		    code.EmitByte(0xd1); code.EmitByte(0xe8); code.EmitByte(0x85); code.EmitByte(0xc0);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x87); code.Emit32(headOffset);
+		    code.EmitByte(0xff); code.EmitByte(0xc0); code.EmitByte(0x83); code.EmitByte(0xe0); code.EmitByte(1);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(headOffset);
+		    code.EmitByte(0x85); code.EmitByte(0xc0);
+		    int noPhaseFlip = EmitConditionalJump(code, 0x85);
+		    code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xb7); code.Emit32(phaseOffset); code.EmitByte(1);
+		    int afterFlip = code.Position(); code.Patch32(noPhaseFlip, afterFlip - (noPhaseFlip + 4));
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x8f); code.Emit32(444);
+		    if (cqDoorbell != 1) { code.EmitByte(0x69); code.EmitByte(0xc9); code.Emit32(cqDoorbell); }
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x94); code.EmitByte(0x0c); code.Emit32(4096);
+		    code.EmitByte(0x89); code.EmitByte(0x02); // CQ head doorbell
+		    return failureCount;
+		}
+
+		private int EmitNvmeRead(X64Assembler code, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc0);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x88); failureCount = failureCount + 1;
+		    code.EmitByte(0x85); code.EmitByte(0xc9);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x8e); failureCount = failureCount + 1;
+		    code.EmitByte(0x83); code.EmitByte(0xf9); code.EmitByte(64);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x87); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x97); code.Emit32(464);
+		    code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xd0);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x83); failureCount = failureCount + 1;
+		    code.EmitByte(0x48); code.EmitByte(0x29); code.EmitByte(0xc2);
+		    code.EmitByte(0x48); code.EmitByte(0x63); code.EmitByte(0xd9);
+		    code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xd3);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x87); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(448);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x8f); code.Emit32(456);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(460); code.Emit32(0);
+		    int readLoop = code.Position();
+		    EmitNvmePrepare(code, false);
+		    code.EmitByte(0x41); code.EmitByte(0xc6); code.EmitByte(0x03); code.EmitByte(2);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x43); code.EmitByte(4); code.Emit32(1);
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(16384);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x43); code.EmitByte(24);
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x87); code.Emit32(448);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x43); code.EmitByte(40);
+		    failureCount = EmitNvmeSubmit(code, false, failureJumps, failureCount);
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0xb5); code.Emit32(16384);
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0xbd); code.Emit32(20480);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x87); code.Emit32(460);
+		    code.EmitByte(0x48); code.EmitByte(0x01); code.EmitByte(0xc7);
+		    code.EmitByte(0xb9); code.Emit32(64);
+		    code.EmitByte(0xfc); code.EmitByte(0xf3); code.EmitByte(0x48); code.EmitByte(0xa5);
+		    code.EmitByte(0x49); code.EmitByte(0xff); code.EmitByte(0x87); code.Emit32(448);
+		    code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0x87); code.Emit32(460); code.Emit32(512);
+		    code.EmitByte(0x41); code.EmitByte(0xff); code.EmitByte(0x8f); code.Emit32(456);
+		    int more = EmitConditionalJump(code, 0x85); code.Patch32(more, readLoop - (more + 4));
+		    return failureCount;
+		}
+
+		private int EmitStorageRead(X64Assembler code, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xbf); code.Emit32(304); code.EmitByte(2);
+		    int nvme = EmitConditionalJump(code, 0x84);
+		    failureCount = EmitAhciReadLbaFromRaxAndEcx(code, failureJumps, failureCount);
+		    int done = EmitForwardJump(code);
+		    int nvmeAt = code.Position(); code.Patch32(nvme, nvmeAt - (nvme + 4));
+		    failureCount = EmitNvmeRead(code, failureJumps, failureCount);
+		    int doneAt = code.Position(); code.Patch32(done, doneAt - (done + 4));
+		    return failureCount;
+		}
+
+		private int EmitInitializeNvme(X64Assembler code, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0xa7); code.Emit32(256); // R12 = MMIO
+		    code.EmitByte(0x4d); code.EmitByte(0x85); code.EmitByte(0xe4);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x84); failureCount = failureCount + 1;
+		    code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0xaf); code.Emit32(280); // R13 = DMA
+		    code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xbf); code.Emit32(296); code.EmitByte(16);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x82); failureCount = failureCount + 1;
+		    // Enable memory decoding and bus-master DMA on the selected PCI
+		    // function. A booted optical image does not guarantee firmware did so.
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x87); code.Emit32(220);
+		    code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(8);
+		    code.EmitByte(0x0d); code.Emit32(-2147483644);
+		    code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(248); code.EmitByte(12);
+		    code.EmitByte(0xef);
+		    code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(252); code.EmitByte(12);
+		    code.EmitByte(0x66); code.EmitByte(0xed);
+		    code.EmitByte(0x66); code.EmitByte(0x83); code.EmitByte(0xc8); code.EmitByte(6);
+		    code.EmitByte(0x66); code.EmitByte(0xef);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x04); code.EmitByte(0x24); // CAP low
+		    code.EmitByte(0x25); code.Emit32(65535); code.EmitByte(0x85); code.EmitByte(0xc0);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x84); failureCount = failureCount + 1;
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(4); // CAP high
+		    code.EmitByte(0xa9); code.Emit32(32); // CSS.NVM
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x84); failureCount = failureCount + 1;
+		    code.EmitByte(0xa9); code.Emit32(983040); // MPSMIN must be zero
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x83); code.EmitByte(0xe0); code.EmitByte(15); // DSTRD
+		    code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(7);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x87); failureCount = failureCount + 1;
+		    code.EmitByte(0x89); code.EmitByte(0xc1); code.EmitByte(0xb8); code.Emit32(4);
+		    code.EmitByte(0xd3); code.EmitByte(0xe0);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(444);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(20);
+		    code.EmitByte(0x83); code.EmitByte(0xe0); code.EmitByte(254);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(20);
+		    failureCount = EmitNvmeWaitReady(code, false, failureJumps, failureCount);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(36); code.Emit32(65537); // AQA
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x6c); code.EmitByte(0x24); code.EmitByte(40); // ASQ
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(4096);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(48); // ACQ
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(20); code.Emit32(4587521); // CC
+		    failureCount = EmitNvmeWaitReady(code, true, failureJumps, failureCount);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(424); code.Emit32(1);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(436); code.Emit32(1);
+		    EmitNvmePrepare(code, true);
+		    code.EmitByte(0x41); code.EmitByte(0xc6); code.EmitByte(0x03); code.EmitByte(6);
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(16384);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x43); code.EmitByte(24);
+		    code.EmitByte(0x41); code.EmitByte(0xc6); code.EmitByte(0x43); code.EmitByte(40); code.EmitByte(1); // CNS controller
+		    failureCount = EmitNvmeSubmit(code, true, failureJumps, failureCount);
+		    code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xbd); code.Emit32(16900); code.EmitByte(0); // NN
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x84); failureCount = failureCount + 1;
+		    EmitNvmePrepare(code, true);
+		    code.EmitByte(0x41); code.EmitByte(0xc6); code.EmitByte(0x03); code.EmitByte(6);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x43); code.EmitByte(4); code.Emit32(1); // NSID 1
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(16384);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x43); code.EmitByte(24);
+		    failureCount = EmitNvmeSubmit(code, true, failureJumps, failureCount);
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x85); code.Emit32(16384); // NSZE
+		    code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc0);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x8e); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(464);
+		    code.EmitByte(0x41); code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0x85); code.Emit32(16410); // FLBAS
+		    code.EmitByte(0x83); code.EmitByte(0xe0); code.EmitByte(15);
+		    code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(2);
+		    code.EmitByte(0x4d); code.EmitByte(0x8d); code.EmitByte(0x9d); code.Emit32(16512);
+		    code.EmitByte(0x49); code.EmitByte(0x01); code.EmitByte(0xc3);
+		    code.EmitByte(0x66); code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0x3b); code.EmitByte(0); // MS=0
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x41); code.EmitByte(0x80); code.EmitByte(0x7b); code.EmitByte(2); code.EmitByte(9); // LBADS=9
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    EmitNvmePrepare(code, true);
+		    code.EmitByte(0x41); code.EmitByte(0xc6); code.EmitByte(0x03); code.EmitByte(5); // Create I/O CQ
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(12288);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x43); code.EmitByte(24);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x43); code.EmitByte(40); code.Emit32(65537);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x43); code.EmitByte(44); code.Emit32(1);
+		    failureCount = EmitNvmeSubmit(code, true, failureJumps, failureCount);
+		    EmitNvmePrepare(code, true);
+		    code.EmitByte(0x41); code.EmitByte(0xc6); code.EmitByte(0x03); code.EmitByte(1); // Create I/O SQ
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(8192);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x43); code.EmitByte(24);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x43); code.EmitByte(40); code.Emit32(65537);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x43); code.EmitByte(44); code.Emit32(65537);
+		    failureCount = EmitNvmeSubmit(code, true, failureJumps, failureCount);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(304); code.Emit32(2);
+		    return failureCount;
+		}
+
+		// Prefer a mapped NVMe namespace; otherwise use the first active AHCI
+		// SATA port. Both paths feed the same checked MBR/GPT bootstrap parser.
+		private int EmitInitializeStorage(X64Assembler code, int[] failureJumps, int failureCount) {
+		    code.EmitByte(0x81); code.EmitByte(0x7f); code.EmitByte(36); code.Emit32(32767);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff);
+		    code.EmitByte(0x49); code.EmitByte(0x83); code.EmitByte(0xbf); code.Emit32(256); code.EmitByte(0);
+		    int useNvme = EmitConditionalJump(code, 0x85);
+		    code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0xa7); code.Emit32(248);
+		    code.EmitByte(0x4d); code.EmitByte(0x85); code.EmitByte(0xe4);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x84); failureCount = failureCount + 1;
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(4);
+		    code.EmitByte(0x0d); code.EmitByte(0); code.EmitByte(0); code.EmitByte(0); code.EmitByte(128);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(4);
+		    code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xbf); code.Emit32(296); code.EmitByte(4);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x82); failureCount = failureCount + 1;
+		    code.EmitByte(0x45); code.EmitByte(0x8b); code.EmitByte(0x74); code.EmitByte(0x24); code.EmitByte(12);
+		    code.EmitByte(0x45); code.EmitByte(0x85); code.EmitByte(0xf6);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x84); failureCount = failureCount + 1;
+		    code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xed);
+		    int portLoop = code.Position();
+		    code.EmitByte(0x45); code.EmitByte(0x0f); code.EmitByte(0xa3); code.EmitByte(0xee);
+		    int nextPortA = EmitConditionalJump(code, 0x83);
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xe3);
+		    code.EmitByte(0x44); code.EmitByte(0x89); code.EmitByte(0xe9);
+		    code.EmitByte(0xc1); code.EmitByte(0xe1); code.EmitByte(7);
+		    code.EmitByte(0x49); code.EmitByte(0x01); code.EmitByte(0xcb);
+		    code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xc3); code.Emit32(256);
+		    code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0x7b); code.EmitByte(36); code.Emit32(257);
+		    int nextPortB = EmitConditionalJump(code, 0x85);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(40);
+		    code.EmitByte(0x83); code.EmitByte(0xe0); code.EmitByte(15);
+		    code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(3);
+		    int nextPortC = EmitConditionalJump(code, 0x85);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(40);
+		    code.EmitByte(0xc1); code.EmitByte(0xe8); code.EmitByte(8);
+		    code.EmitByte(0x83); code.EmitByte(0xe0); code.EmitByte(15);
+		    code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(1);
+		    int nextPortD = EmitConditionalJump(code, 0x85);
+		    int portFound = EmitForwardJump(code);
+		    int nextPortAt = code.Position();
+		    code.Patch32(nextPortA, nextPortAt - (nextPortA + 4));
+		    code.Patch32(nextPortB, nextPortAt - (nextPortB + 4));
+		    code.Patch32(nextPortC, nextPortAt - (nextPortC + 4));
+		    code.Patch32(nextPortD, nextPortAt - (nextPortD + 4));
+		    code.EmitByte(0x41); code.EmitByte(0xff); code.EmitByte(0xc5);
+		    code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xfd); code.EmitByte(32);
+		    int continuePorts = EmitConditionalJump(code, 0x82);
+		    code.Patch32(continuePorts, portLoop - (continuePorts + 4));
+		    failureJumps[failureCount] = EmitForwardJump(code); failureCount = failureCount + 1;
+		    int portFoundAt = code.Position(); code.Patch32(portFound, portFoundAt - (portFound + 4));
+		    code.EmitByte(0x45); code.EmitByte(0x89); code.EmitByte(0xaf); code.Emit32(312);
+		    code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0xaf); code.Emit32(280);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(24);
+		    code.EmitByte(0x25); code.Emit32(-18);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x43); code.EmitByte(24);
+		    code.EmitByte(0xba); code.Emit32(1000000);
+		    int stopLoop = code.Position();
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(24);
+		    code.EmitByte(0xa9); code.Emit32(49152);
+		    int stopped = EmitConditionalJump(code, 0x84);
+		    code.EmitByte(0xf3); code.EmitByte(0x90); code.EmitByte(0xff); code.EmitByte(0xca);
+		    int stopAgain = EmitConditionalJump(code, 0x85); code.Patch32(stopAgain, stopLoop - (stopAgain + 4));
+		    failureJumps[failureCount] = EmitForwardJump(code); failureCount = failureCount + 1;
+		    int stoppedAt = code.Position(); code.Patch32(stopped, stoppedAt - (stopped + 4));
+		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x2b);
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(4096);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x43); code.EmitByte(8);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x43); code.EmitByte(16); code.Emit32(-1);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x43); code.EmitByte(48); code.Emit32(-1);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x45); code.EmitByte(0); code.Emit32(65541);
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x85); code.Emit32(8192);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x45); code.EmitByte(8);
+		    code.EmitByte(0xc6); code.EmitByte(0x00); code.EmitByte(39);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(1); code.EmitByte(128);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(2); code.EmitByte(37);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(12); code.EmitByte(1);
+		    code.EmitByte(0xc6); code.EmitByte(0x40); code.EmitByte(13); code.EmitByte(0);
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x95); code.Emit32(20480);
+		    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0x90); code.Emit32(128);
+		    code.EmitByte(0xc7); code.EmitByte(0x80); code.Emit32(140); code.Emit32(-2147483137);
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x43); code.EmitByte(24);
+		    code.EmitByte(0x83); code.EmitByte(0xc8); code.EmitByte(17);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x43); code.EmitByte(24);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(304); code.Emit32(1);
+		    int controllerReady = EmitForwardJump(code);
+		    int nvmeStart = code.Position(); code.Patch32(useNvme, nvmeStart - (useNvme + 4));
+		    failureCount = EmitInitializeNvme(code, failureJumps, failureCount);
+		    int controllerReadyAt = code.Position(); code.Patch32(controllerReady, controllerReadyAt - (controllerReady + 4));
+		    code.EmitByte(0xb8); code.Emit32(0); code.EmitByte(0xb9); code.Emit32(1);
+		    failureCount = EmitStorageRead(code, failureJumps, failureCount);
+		    code.EmitByte(0x4d); code.EmitByte(0x8d); code.EmitByte(0x95); code.Emit32(20480);
+		    code.EmitByte(0x41); code.EmitByte(0x0f); code.EmitByte(0xb7); code.EmitByte(0x82); code.Emit32(510);
+		    code.EmitByte(0x3d); code.Emit32(43605);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(320); code.Emit32(1);
+		    code.EmitByte(0x41); code.EmitByte(0x80); code.EmitByte(0xba); code.Emit32(450); code.EmitByte(238);
+		    int notProtective = EmitConditionalJump(code, 0x85);
+		    code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0xba); code.Emit32(454); code.Emit32(1);
+		    int notProtectiveStart = EmitConditionalJump(code, 0x85);
+		    code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0x8f); code.Emit32(320); code.EmitByte(2);
+		    int notProtectiveAt = code.Position(); code.Patch32(notProtective, notProtectiveAt - (notProtective + 4)); code.Patch32(notProtectiveStart, notProtectiveAt - (notProtectiveStart + 4));
+		    code.EmitByte(0xb8); code.Emit32(1); code.EmitByte(0xb9); code.Emit32(1);
+		    failureCount = EmitStorageRead(code, failureJumps, failureCount);
+		    code.EmitByte(0x4d); code.EmitByte(0x8d); code.EmitByte(0x95); code.Emit32(20480);
+		    code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0x3a); code.Emit32(541673029);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0x7a); code.EmitByte(4); code.Emit32(1414676816);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0x7a); code.EmitByte(8); code.Emit32(65536);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0x7a); code.EmitByte(12); code.EmitByte(92);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x45); code.EmitByte(0x8b); code.EmitByte(0x42); code.EmitByte(16);
+		    code.EmitByte(0xb8); code.Emit32(-1);
+		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xd6);
+		    EmitGptCrc32Bytes(code, 16);
+		    EmitGptCrc32Zeros(code, 4);
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x72); code.EmitByte(20);
+		    EmitGptCrc32Bytes(code, 72);
+		    code.EmitByte(0x83); code.EmitByte(0xf0); code.EmitByte(0xff);
+		    code.EmitByte(0x44); code.EmitByte(0x39); code.EmitByte(0xc0);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+
+		    // GPT permits different entry counts. This boot transport accepts the
+		    // standard 128-byte format with up to 256 entries, or 32 KiB. That is
+		    // the largest exact transfer that fits after command structures in the
+		    // 16-page DMA reservation.
+		    code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x4a); code.EmitByte(80); // ECX = entry count
+		    code.EmitByte(0x85); code.EmitByte(0xc9);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x84); failureCount = failureCount + 1;
+		    code.EmitByte(0x81); code.EmitByte(0xf9); code.Emit32(256);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x87); failureCount = failureCount + 1;
+		    code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0x7a); code.EmitByte(84); code.Emit32(128);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x8f); code.Emit32(364); // entry count
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(368); code.Emit32(128);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0xc9); // R9D = entry bytes
+		    code.EmitByte(0x41); code.EmitByte(0xc1); code.EmitByte(0xe1); code.EmitByte(7);
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x42); code.EmitByte(72); // RAX = entry-array LBA
+		    code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(2);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x82); failureCount = failureCount + 1;
+		    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc3);
+		    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xeb); code.EmitByte(48);
+		    code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xdb);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(356); // entry-array LBA
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x42); code.EmitByte(40);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(400); // first usable LBA
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x42); code.EmitByte(48);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(408); // last usable LBA
+		    code.EmitByte(0x45); code.EmitByte(0x8b); code.EmitByte(0x42); code.EmitByte(88); // R8D = entry CRC
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x42); code.EmitByte(72);
+		    code.EmitByte(0x44); code.EmitByte(0x89); code.EmitByte(0xc9); // ECX = entry bytes
+		    code.EmitByte(0x81); code.EmitByte(0xc1); code.Emit32(511);
+		    code.EmitByte(0xc1); code.EmitByte(0xe9); code.EmitByte(9); // round up to sectors
+		    failureCount = EmitStorageRead(code, failureJumps, failureCount);
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0xb5); code.Emit32(20480);
+		    code.EmitByte(0xb8); code.Emit32(-1);
+		    code.EmitByte(0x44); code.EmitByte(0x89); code.EmitByte(0xc9); // ECX = exact entry bytes
+		    EmitGptCrc32BytesFromEcx(code);
+		    code.EmitByte(0x83); code.EmitByte(0xf0); code.EmitByte(0xff);
+		    code.EmitByte(0x44); code.EmitByte(0x39); code.EmitByte(0xc0);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(352); code.Emit32(3);
+		    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x95); code.Emit32(20480); // R10 = entry array
+		    code.EmitByte(0x31); code.EmitByte(0xc9); // ECX = entry index
+		    int entryScan = code.Position();
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x02);
+		    code.EmitByte(0x49); code.EmitByte(0x0b); code.EmitByte(0x42); code.EmitByte(8);
+		    int entryFound = EmitConditionalJump(code, 0x85);
+		    code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xc2); code.Emit32(128);
+		    code.EmitByte(0xff); code.EmitByte(0xc1);
+		    code.EmitByte(0x45); code.EmitByte(0x8b); code.EmitByte(0x8f); code.Emit32(364);
+		    code.EmitByte(0x44); code.EmitByte(0x39); code.EmitByte(0xc9);
+		    int moreEntries = EmitConditionalJump(code, 0x82);
+		    code.Patch32(moreEntries, entryScan - (moreEntries + 4));
+		    int noEntry = EmitForwardJump(code);
+		    int entryFoundAt = code.Position(); code.Patch32(entryFound, entryFoundAt - (entryFound + 4));
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x42); code.EmitByte(32);
+		    code.EmitByte(0x49); code.EmitByte(0x3b); code.EmitByte(0x87); code.Emit32(400);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x82); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x52); code.EmitByte(40);
+		    code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xc2);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x82); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x3b); code.EmitByte(0x97); code.Emit32(408);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x87); failureCount = failureCount + 1;
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(376);
+		    code.EmitByte(0x48); code.EmitByte(0x29); code.EmitByte(0xc2);
+		    code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0xc2);
+		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x97); code.Emit32(384);
+		    code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x8f); code.Emit32(392);
+		    code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0x8f); code.Emit32(352); code.EmitByte(4);
+		    int entryParsed = EmitForwardJump(code);
+		    int noEntryAt = code.Position(); code.Patch32(noEntry, noEntryAt - (noEntry + 4));
+		    int entryParsedAt = code.Position(); code.Patch32(entryParsed, entryParsedAt - (entryParsed + 4));
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(316); code.Emit32(512);
+		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(36); code.Emit32(131071);
+		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
+		    return failureCount;
+		}
+
+		private int EmitEnableInterrupts(X64Assembler code, bool hardwareFoundation, bool storageFoundation, int[] failureJumps, int failureCount) {
+		    int expectedState = 2047;
+		    int readyState = 4095;
+		    if (hardwareFoundation) {
+		        expectedState = 32767;
+		        readyState = 65535;
+		    }
+		    if (storageFoundation) {
+		        expectedState = 131071;
+		        readyState = 262143;
+		    }
+		    code.EmitByte(0x81); code.EmitByte(0x7f); code.EmitByte(36); code.Emit32(expectedState);
+		    failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
+		    code.EmitByte(0xc7); code.EmitByte(0x47); code.EmitByte(36); code.Emit32(readyState);
+		    return failureCount;
+		}
+
+        private void EmitInterruptIdle(X64Assembler code) {
+            code.EmitByte(0xfb); // sti
+            code.EmitByte(0xf4); // hlt
+            code.EmitByte(0xeb); code.EmitByte(0xfd); // wait for the next IRQ
+        }
+
+        // Switch to a dedicated 64 KiB kernel stack and call the AUKR entry.
+        // Any return is a boot failure; the kernel owns its interrupt loop.
+        private int EmitExecuteRawKernel(X64Assembler code, int[] failureJumps, int failureCount) {
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x47); code.EmitByte(40); // next page
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc2); // rdx = base
+            code.EmitByte(0x48); code.EmitByte(0x81); code.EmitByte(0xc2); code.Emit32(65536);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x82); failureCount = failureCount + 1;
+            code.EmitByte(0x49); code.EmitByte(0x3b); code.EmitByte(0x57); code.EmitByte(48);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x87); failureCount = failureCount + 1;
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x57); code.EmitByte(40); // advance allocator
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(1048); // stack base
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x97); code.Emit32(1056); // stack top
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xa7); code.Emit32(1064); // old rsp
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc7); // rdi = base
+            code.EmitByte(0xb9); code.Emit32(8192); // 64 KiB / 8
+            code.EmitByte(0x31); code.EmitByte(0xc0); code.EmitByte(0xfc);
+            code.EmitByte(0xf3); code.EmitByte(0x48); code.EmitByte(0xab);
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0xa7); code.Emit32(1056); // rsp = top
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x87); code.Emit32(1024); // raw entry
+            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc0);
+            failureJumps[failureCount] = EmitConditionalJump(code, 0x84); failureCount = failureCount + 1;
+            code.EmitByte(0x41); code.EmitByte(0x57); // bootInfo argument
+            code.EmitByte(0xff); code.EmitByte(0xd0); // call rax
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0xa7); code.Emit32(1064);
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(476);
+            failureJumps[failureCount] = EmitForwardJump(code); failureCount = failureCount + 1;
+            return failureCount;
+        }
+
         private void EmitKernelHalt(X64Assembler code) {
             code.EmitByte(0xfa); // cli
             code.EmitByte(0xf4); // hlt
@@ -1457,7 +3657,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
         private void EmitStore32Rva(X64Assembler code, int textRva, int targetRva, int value) {
             code.EmitByte(0xc7); code.EmitByte(0x05);
-            code.Emit32(targetRva - (textRva + code.Position() + 4));
+            // c7 /0 also carries a four-byte immediate after the RIP-relative
+            // displacement, so RIP points eight bytes beyond this position.
+            code.Emit32(targetRva - (textRva + code.Position() + 8));
             code.Emit32(value);
         }
 
@@ -1556,11 +3758,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         // KernelBootInfo: magic "AUBI", ABI version, EFI memory-map pointer,
         // byte size, descriptor size, descriptor version, state flags, then
         // physical-page next, limit, metadata-page, active PML4, physical-page
-        // allocation, heap range/allocation addresses, and framebuffer data
-        // captured before firmware services are released.
+        // allocation, heap range/allocation addresses, framebuffer data captured
+        // before firmware services are released, PCI controller records, MMIO
+        // apertures, and DMA allocation state.
         private void WriteKernelBootInfo(byte[] image, int offset) {
             Write32(image, offset, 1229083969); // "AUBI" in little-endian order
-            Write32(image, offset + 4, 4);
+            Write32(image, offset + 4, 7);
         }
 
         private void WriteGraphicsOutputGuid(byte[] image, int offset) {

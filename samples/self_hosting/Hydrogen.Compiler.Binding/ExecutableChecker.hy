@@ -415,6 +415,16 @@ namespace Hydrogen.Compiler.Binding {
         }
         private string Call(IrExpression e) {
             string qualified = Qualified(e.Target());
+            if (qualified == "System.Kernel.Managed.Release") {
+                if (e.Arguments().Length != 1) { Error("managed release requires one value"); }
+                int i = 0;
+                while (i < e.Arguments().Length) {
+                    string type = Expression(e.Arguments()[i]);
+                    if (!module.Reference(type)) { Error("managed release requires an object, array, or string"); }
+                    i = i + 1;
+                }
+                e.SetResolvedOwner("System.Kernel.Managed"); return "bool";
+            }
             if (qualified == "System.Console.WriteLine" || qualified == "System.Console.Write") {
                 int n = e.Arguments().Length;
                 if (n > 1 || (n == 0 && qualified == "System.Console.Write")) { Error("console output requires one value"); }
@@ -422,7 +432,32 @@ namespace Hydrogen.Compiler.Binding {
                 e.SetResolvedOwner("System.Console"); return "void";
             }
             if (qualified == "System.Console.ReadLine") { return Intrinsic(e, qualified, "", "", "string"); }
+            if (qualified == "System.Australis.Terminal.Write" ||
+                qualified == "System.Australis.Terminal.WriteLine") {
+                return Intrinsic(e, qualified, "string", "", "void");
+            }
+            if (qualified == "System.Australis.Terminal.ReadLine") {
+                return Intrinsic(e, qualified, "int", "", "void");
+            }
+            if (qualified == "System.Australis.Terminal.WriteResult") {
+                return Intrinsic(e, qualified, "", "", "void");
+            }
+            if (qualified == "System.Australis.Files.Open") {
+                return Intrinsic(e, qualified, "string", "", "void");
+            }
+            if (qualified == "System.Australis.Files.Read") {
+                return Intrinsic(e, qualified, "int", "", "void");
+            }
+            if (qualified == "System.Australis.Files.Close" ||
+                qualified == "System.Australis.Process.Yield") {
+                return Intrinsic(e, qualified, "", "", "void");
+            }
+            if (qualified == "System.Australis.Memory.StoreByte") {
+                return Intrinsic(e, qualified, "long", "int", "void");
+            }
             if (qualified == "System.Uefi.StartImage") { return Intrinsic(e, qualified, "string", "", "void"); }
+            if (qualified == "System.Kernel.Boot.Load") { return Intrinsic(e, qualified, "string", "", "void"); }
+            if (qualified == "System.Kernel.Cpu.EnableInterrupts") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.Uefi.ClearScreen") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.Uefi.Await") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.Uefi.ExitBootServices") { return Intrinsic(e, qualified, "", "", "void"); }
@@ -436,6 +471,39 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.Kernel.Heap.Allocate") { return Intrinsic(e, qualified, "int", "", "void"); }
             if (qualified == "System.Kernel.Framebuffer.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.Kernel.Framebuffer.WriteLine") { return Intrinsic(e, qualified, "string", "", "void"); }
+            if (qualified == "System.Kernel.Gdt.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Idt.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Interrupts.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Timer.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Interrupts.Enable") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Interrupts.Idle") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Pci.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Mmio.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Dma.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Dma.AllocatePages") { return Intrinsic(e, qualified, "int", "", "void"); }
+            if (qualified == "System.Kernel.Storage.Initialize") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Runtime.Execute") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Memory.Read8" || qualified == "System.Kernel.Memory.Read16" ||
+                qualified == "System.Kernel.Memory.Read32" || qualified == "System.Kernel.Memory.Read64") {
+                return Intrinsic(e, qualified, "long", "", "long");
+            }
+            if (qualified == "System.Kernel.Memory.NoExecute") { return Intrinsic(e, qualified, "", "", "long"); }
+            if (qualified == "System.Kernel.Memory.Fence") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Memory.Write8" || qualified == "System.Kernel.Memory.Write16" ||
+                qualified == "System.Kernel.Memory.Write32" || qualified == "System.Kernel.Memory.Write64") {
+                return Intrinsic(e, qualified, "long", "long", "void");
+            }
+            if (qualified == "System.Kernel.Port.Read8") { return Intrinsic(e, qualified, "int", "", "int"); }
+            if (qualified == "System.Kernel.Port.Write8") { return Intrinsic(e, qualified, "int", "int", "void"); }
+            if (qualified == "System.Kernel.Port.Read32") { return Intrinsic(e, qualified, "int", "", "long"); }
+            if (qualified == "System.Kernel.Port.Write32") { return Intrinsic(e, qualified, "int", "long", "void"); }
+            if (qualified == "System.Kernel.String.ByteAt") { return Intrinsic(e, qualified, "string", "int", "int"); }
+            if (qualified == "System.Kernel.String.FromBytes") { return Intrinsic(e, qualified, "byte[]", "int", "string"); }
+            if (qualified == "System.Kernel.Cpu.Pause" || qualified == "System.Kernel.Cpu.Halt") {
+                return Intrinsic(e, qualified, "", "", "void");
+            }
+            if (qualified == "System.Kernel.Cpu.Timestamp") { return Intrinsic(e, qualified, "", "", "long"); }
+            if (qualified == "System.Kernel.Cpu.InvalidatePage") { return Intrinsic(e, qualified, "long", "", "void"); }
             if (qualified == "System.IO.File.Exists") { return Intrinsic(e, qualified, "string", "", "bool"); }
             if (qualified == "System.IO.File.ReadAllText") { return Intrinsic(e, qualified, "string", "", "string"); }
             if (qualified == "System.IO.File.ReadAllBytes") { return Intrinsic(e, qualified, "string", "", "byte[]"); }

@@ -26,14 +26,26 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
     public class NativeCompiler {
         public NativeCompilerResult BuildProject(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false);
         }
 
         public NativeCompilerResult BuildProjectUefi(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, true);
+            return ProcessProject(projectPath, outputPath, false, false, true, false, false);
         }
 
-        private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi) {
+        public NativeCompilerResult BuildProjectKernel(string projectPath, string outputPath) {
+            return ProcessProject(projectPath, outputPath, false, false, false, true, false);
+        }
+
+        public NativeCompilerResult BuildProjectAustralis(string projectPath, string outputPath) {
+			return ProcessProject(projectPath, outputPath, false, false, false, false, true);
+		}
+
+        public NativeCompilerResult CheckProjectAustralis(string projectPath, bool emitIr) {
+            return ProcessProject(projectPath, "", true, emitIr, false, false, true);
+        }
+
+        private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel, bool australis) {
             ProjectClosure closure = ProjectClosure.Collect(projectPath);
             string[] projects = closure.Projects();
             if (projects.Length == 1 && StartsWith(projects[0], "<cycle:")) {
@@ -75,8 +87,19 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return new NativeCompilerResult(false, projectPath + ":\n" + diagnostics.ToText());
             }
 
-            if (check) { return new NativeCompilerResult(true, DebugProgram(program, emitIr)); }
+            if (check) {
+                if (australis) {
+                    AustralisExecImageBuilder validationBuilder = new AustralisExecImageBuilder();
+                    if (validationBuilder.Build(program) == null) {
+                        return new NativeCompilerResult(false,
+                            projectPath + ": unsupported Australis program\n");
+                    }
+                }
+                return new NativeCompilerResult(true, DebugProgram(program, emitIr));
+            }
+            if (kernel) { return EmitKernelImage(program, projectPath, outputPath); }
             if (uefi) { return EmitUefiImage(program, projectPath, outputPath); }
+			if (australis) { return EmitAustralisImage(program, projectPath, outputPath); }
             return EmitNativeImage(program, projectPath, outputPath);
         }
 
@@ -140,12 +163,74 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
         private NativeCompilerResult EmitUefiImage(BoundProgram program, string inputPath, string outputPath) {
             IrLowering lowering = new IrLowering();
+            IrEntryPoint entryPoint = lowering.LowerEntryPoint(program);
+            byte[] kernelCode = new byte[0];
+            IrOp[] ops = entryPoint.Ops();
+            bool rawKernelLoad = false;
+            int i = 0;
+            while (i < ops.Length) {
+                if (ops[i].Kind() == IrOp.KindLoadRawKernelLiteral()) { rawKernelLoad = true; }
+                i = i + 1;
+            }
+            i = 0;
+            while (i < ops.Length) {
+                if (ops[i].Kind() == IrOp.KindExecuteKernel() && !rawKernelLoad) {
+                    DirectMainCompiler direct = new DirectMainCompiler();
+                    DirectImageResult compiled = direct.CompileFreestanding(lowering.Lower(program), "KernelMain", "Run");
+                    if (!compiled.Success()) {
+                        return new NativeCompilerResult(false, inputPath + ": error: freestanding kernel compilation failed: " + compiled.Message() + "\n");
+                    }
+                    kernelCode = compiled.Image();
+                    break;
+                }
+                i = i + 1;
+            }
             UefiImageBuilder builder = new UefiImageBuilder();
-            UefiImageResult result = builder.Build(lowering.LowerEntryPoint(program));
+            UefiImageResult result = builder.Build(entryPoint, kernelCode);
             if (!result.Success()) {
                 return new NativeCompilerResult(false, inputPath + ": error: UEFI compilation failed: " + result.Message() + "\n");
             }
             System.IO.File.WriteAllBytes(outputPath, result.Image());
+            return new NativeCompilerResult(true, "");
+        }
+
+		private NativeCompilerResult EmitAustralisImage(BoundProgram program, string inputPath, string outputPath) {
+			AustralisExecImageBuilder builder = new AustralisExecImageBuilder();
+			byte[] executable = builder.Build(program);
+			if (executable == null) {
+				return new NativeCompilerResult( false, inputPath + ": unsupported Australis program\n");
+			}
+			System.IO.File.WriteAllBytes(outputPath, executable);
+			return new NativeCompilerResult(true, "");
+		}
+
+        // AUKR v1: 16-byte header followed by raw position-independent code.
+        // The loader validates size and entry offset before ending boot services.
+        private NativeCompilerResult EmitKernelImage(BoundProgram program, string inputPath, string outputPath) {
+            IrLowering lowering = new IrLowering();
+            DirectMainCompiler direct = new DirectMainCompiler();
+            DirectImageResult compiled = direct.CompileFreestanding(lowering.Lower(program), "KernelMain", "Run");
+            if (!compiled.Success()) {
+                return new NativeCompilerResult(false, inputPath + ": error: kernel compilation failed: " + compiled.Message() + "\n");
+            }
+            byte[] code = compiled.Image();
+            if (code.Length == 0 || code.Length > 1048560) {
+                return new NativeCompilerResult(false, inputPath + ": error: kernel code exceeds the 1 MiB loader limit\n");
+            }
+            byte[] image = new byte[16 + code.Length];
+            image[0] = (byte)65; image[1] = (byte)85; image[2] = (byte)75; image[3] = (byte)82;
+            image[4] = (byte)1; // version
+            int length = code.Length;
+            int i = 0;
+            while (i < 4) {
+                image[8 + i] = (byte)(length % 256);
+                length = length / 256;
+                i = i + 1;
+            }
+            image[12] = (byte)16; // entry offset
+            i = 0;
+            while (i < code.Length) { image[16 + i] = code[i]; i = i + 1; }
+            System.IO.File.WriteAllBytes(outputPath, image);
             return new NativeCompilerResult(true, "");
         }
 
@@ -158,7 +243,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private NativeCompilerResult CheckFileInternal(string inputPath, bool emitIr) {
-            if (IsProject(inputPath)) { return ProcessProject(inputPath, "", true, emitIr, false); }
+            if (IsProject(inputPath)) { return ProcessProject(inputPath, "", true, emitIr, false, false, false); }
             SourceText source = SourceText.FromFile(inputPath);
             DiagnosticBag subsetDiagnostics = new DiagnosticBag();
             SelfHostSubsetValidator subset = new SelfHostSubsetValidator();

@@ -1,12 +1,14 @@
 # Hydrogen (Hylang)
 
+<img src="assets/hydrogen.icon.svg" style="display: block;margin-left: auto; margin-right: auto; width: 30%;" />
+
 Hydrogen is a C#-inspired language with classes, methods, managed strings and arrays, and explicit low-level facilities. Source files use `.hy`; project manifests use `.hyproj`.
 
-The Hydrogen-written compiler produces standalone Linux x86-64 executables, a constrained x86_64 UEFI proof image, and can compile itself. The C++ SDK provides additional language features, an interpreter, project scaffolding, packaging, formatting, and editor integration. Choose the tool according to the features your program needs.
+The Hydrogen-written compiler produces standalone Linux x86-64 executables, constrained x86-64 UEFI images, and can compile itself. The C++ SDK provides additional language features, an interpreter, packaging, formatting, and editor integration. Choose the tool according to the features your program needs.
 
 | Tool | Use it for | Output or execution |
 | --- | --- | --- |
-| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI console and chain-loading proof | Linux x64 ELF or constrained `uefi-x64` PE32+ output; no external compiler or linker |
+| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI boot/kernel images, and project scaffolding | Linux x64 ELF or constrained `uefi-x64` PE32+ output; no external compiler or linker |
 | `hy` (C++ SDK) | Build/run/test/check/fmt/new/package/LSP workflows; UEFI console proof | Interpreter, host C backend, or constrained `uefi-x64` PE32+ output |
 | `hyrun` | Direct interpreted execution | Shares the SDK semantic pipeline |
 | `hyc build` | Compatibility build command | Host C backend, executables or static libraries |
@@ -19,10 +21,11 @@ After you have verified and renamed the final self-hosted compiler to `safe/hy`,
 create a Linux x86-64 release archive with:
 
 ```bash
-cmake -DSOURCE_DIR="$PWD" -DVERSION=alpha-0.0.1 -P cmake/PackageHydrogenRelease.cmake
+RELEASE_VERSION=your-next-version
+cmake -DSOURCE_DIR="$PWD" -DVERSION="$RELEASE_VERSION" -P cmake/PackageHydrogenRelease.cmake
 ```
 
-This writes `releases/hydrogen-alpha-0.0.1-linux-x86_64.tar.gz` and its adjacent
+This writes `releases/hydrogen-<version>-linux-x86_64.tar.gz` and its adjacent
 `.sha256` checksum. The archive contains `bin/hy`, a release README, build
 metadata, and `SHA256SUMS` for the executable. The command refuses to overwrite
 an existing release; pass `-DFORCE=ON` only when intentionally rebuilding it.
@@ -30,7 +33,7 @@ an existing release; pass `-DFORCE=ON` only when intentionally rebuilding it.
 If CMake is already configured, the equivalent target is:
 
 ```bash
-cmake -S . -B build -DHYDROGEN_RELEASE_VERSION=alpha-0.0.1
+cmake -S . -B build -DHYDROGEN_RELEASE_VERSION="$RELEASE_VERSION"
 cmake --build build --target hydrogen_package_release
 ```
 
@@ -39,7 +42,7 @@ cmake --build build --target hydrogen_package_release
 Run these commands from this repository's root. The SDK requires CMake 3.20 or newer and a C++20 compiler. Its executable builds also require a host C compiler; static-library builds require an archiver. The direct native compiler targets Linux x86-64.
 
 ```bash
-cd /home/rsmith/Projects/Aurora-Softwares/Hylang-Compiler
+cd /path/to/Hylang-Compiler
 
 # Build the C++ stage 0 compiler.
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -148,7 +151,7 @@ Hello, Hydrogen
 
 Native output files need execute permission. Compilation failures return a nonzero status and do not create or overwrite the output; check that status before running an existing artifact.
 
-## UEFI console proof
+## UEFI and early kernel output
 
 The self-hosted compiler can emit a bootable x86_64 UEFI PE32+ application.
 Its `Main` method can call `System.Uefi.ClearScreen()` before console output,
@@ -177,13 +180,34 @@ present PML4, PDPT, PD, and PT page into allocator pages, records the new root,
 and switches `CR3` to it. Leaf mappings retain their existing physical frames
 and attributes. The PE32+ image has a zero image base and RIP-relative internal
 references. Post-handoff Hydrogen code receives the record pointer in `RDI`; its
-state is `127` after the framebuffer console is active, before interrupts are
-disabled and the CPU idles. Each `AllocatePage()` call reserves and zeros one 4 KiB page and
+state is `127` after the framebuffer console is active. An interrupt-enabled
+kernel then calls `Gdt.Initialize()`, `Idt.Initialize()`,
+`Interrupts.Initialize()`, and `Timer.Initialize()`. It may call
+`Pci.Initialize()`, `Mmio.Initialize()`, `Dma.Initialize()`, and one or more
+literal `Dma.AllocatePages(<1..1024>)` calls before it enables interrupts and
+idles. PCI enumeration uses configuration mechanism #1 at ports `0xcf8` and
+`0xcfc`, records the first xHCI, AHCI, and NVMe functions, and maps a guarded,
+uncached, non-executable 64 KiB high register aperture for each valid memory
+BAR. DMA pages are contiguous, zeroed, and selected from conventional memory
+below 4 GiB. The compiler reserves the literal DMA requests from that interval;
+if the reserved slice overlaps the main page allocator, that slice is removed
+before allocations begin. Each `AllocatePage()` call reserves and zeros one 4 KiB page and
 writes its physical address to `KernelBootInfo + 72`. `Heap.Initialize()` adds
 a zeroed heap page; `Heap.Allocate()` accepts a literal size from 1 through
 1 MiB, aligns it to 16 bytes, grows the heap with contiguous physical pages,
 and writes its address to `KernelBootInfo + 104`. This bootstrap heap is
 monotonic and does not free or reuse allocations.
+After a DMA allocation, the interrupt kernel may call
+`System.Kernel.Storage.Initialize()` before `Interrupts.Enable()`. The emitted
+transport prefers a discovered NVMe controller, using depth-two admin and I/O
+queues, namespace Identify, and bounded polling reads. It falls back to AHCI
+READ DMA EXT when no NVMe aperture is mapped. Both paths read LBA 0, LBA 1,
+and the GPT primary entry array. The builder validates the
+protective MBR, the GPT 1.0 header and CRC, and the primary entry-array CRC;
+the current bootstrap accepts 512-byte logical sectors and up to 256 standard
+128-byte GPT entries. It records the controller kind and first present GPT
+partition in KernelBootInfo ABI version 7. The image does not yet mount a
+filesystem.
 Framebuffer initialization locates GOP before `ExitBootServices`, stores its
 base, size, geometry, and pixel format in `KernelBootInfo`, clears the display
 directly after the handoff, and renders printable ASCII with an embedded 8x8
@@ -241,10 +265,10 @@ chmod +x build/hello-project
 ```
 
 For OS development, the self-hosted compiler supports `type = "efi"` for a
-UEFI application, `type = "kernel"` for a kernel image, and `type = "os"` for
-an aggregate project. Both `efi` and `kernel` currently emit x86-64 PE32+ UEFI
-applications. The `kernel` type identifies the image's role; a raw freestanding
-kernel format is not yet available.
+UEFI application, `type = "kernel"` for a raw freestanding kernel image,
+`type = "exec"` for an Australis AUEX v1 program, and `type = "os"` for an
+aggregate project. The older `type = "australis"` spelling remains accepted
+for existing AUEX projects.
 
 An OS project lists component `.hyproj` files in `project_references` and has
 no sources of its own. Each component sets an `output` path relative to the
@@ -266,9 +290,10 @@ project_references = ["Boot/Boot.hyproj", "Kernel/Kernel.hyproj"]
 ```
 
 The output directory contains separate EFI applications ready for image
-packaging. You can also build an `efi` or `kernel` project directly with `-o`
-pointing to one EFI file. Scaffold them with `hydrogen-stage1 new efi <name>`,
-`hydrogen-stage1 new kernel <name>`, or `hydrogen-stage1 new os <name>`.
+packaging. You can also build an `efi`, `kernel`, or `exec` project directly
+with `-o` pointing to its output file. Scaffold them with
+`hydrogen-stage1 new efi <name>`, `hydrogen-stage1 new kernel <name>`,
+`hydrogen-stage1 new exec <name>`, or `hydrogen-stage1 new os <name>`.
 These project types are currently available in
 `hydrogen-stage1`.
 
@@ -284,11 +309,11 @@ SDK projects additionally support workspaces, test projects, local package depen
 
 ## Language and runtime
 
-The direct native route supports classes with instance fields and constructors, static/instance methods, recursion, `var`, enums, `int`/`byte`/`bool`, strings, arrays, `if`/`else`, `while`, `break`, `continue`, and returns. `int` is signed 64-bit. Strings have byte-based length/indexing; indexing returns a one-byte string. Native literals accept ASCII and common escaped control characters; file contents and arguments preserve raw bytes.
+The direct native route supports classes, inheritance, interfaces, virtual dispatch, structs, overloads, static and instance fields/methods, constructors, recursion, enums, signed and unsigned integer widths, `bool`, strings, arrays, `var`, `if`/`else`, `while`, `for`, `break`, `continue`, and returns. `int` is signed 32-bit. Strings have byte-based length/indexing; indexing returns a one-byte string. Native literals accept ASCII and common escaped control characters; file contents and arguments preserve raw bytes.
 
 Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings. File reads require seekable files.
 
-The SDK also supports inheritance, virtual/interface dispatch, structs with value semantics, generics, overloads, static fields, `for`, string exceptions, `List<T>`, checked unsafe/manual-memory operations, `Buffer`, and `BinaryPrimitives`. These additional facilities are not implemented by the native compiler. The SDK interpreter evaluates both sides of `&&` and `||`; generated native and C-backed programs short-circuit. Write explicit conditional guards when sharing code with the interpreter.
+The SDK additionally supports generics, string exceptions, `List<T>`, checked unsafe/manual-memory operations, `Buffer`, and `BinaryPrimitives`. These additional facilities are not implemented by the native compiler. The SDK interpreter evaluates both sides of `&&` and `||`; generated native and C-backed programs short-circuit. Write explicit conditional guards when sharing code with the interpreter.
 
 ## Examples and editor support
 
