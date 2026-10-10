@@ -481,6 +481,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             int[] exceptionInterruptStubs = new int[0];
             int[] picIrqStubs = new int[0];
             int timerInterruptStub = 0;
+            int storageInterruptStub = 0;
+            int deviceInterruptStub = 0;
             if (initializeIdt) {
                 // Firmware enters at the beginning of .text, so jump over the
                 // handlers. The IDT later receives their position-independent
@@ -500,6 +502,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     irqVector = irqVector + 1;
                 }
                 timerInterruptStub = EmitLocalApicTimerStub(code, textRva, bootInfoRva);
+                storageInterruptStub = EmitStorageInterruptStub(code, textRva, bootInfoRva);
+                deviceInterruptStub = EmitDeviceInterruptStub(code, textRva, bootInfoRva);
                 int entryStart = code.Position();
                 code.Patch32(entryJump, entryStart - (entryJump + 4));
             }
@@ -574,7 +578,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     kernelFailureCount = EmitInitializeGdt(code, kernelFailureJumps, kernelFailureCount);
                 }
                 if (initializeIdt) {
-                    kernelFailureCount = EmitInitializeIdt(code, textRva, bootInfoRva, defaultInterruptStub, exceptionInterruptStubs, picIrqStubs, timerInterruptStub, kernelFailureJumps, kernelFailureCount);
+                    kernelFailureCount = EmitInitializeIdt(code, textRva, bootInfoRva, defaultInterruptStub, exceptionInterruptStubs, picIrqStubs, timerInterruptStub, storageInterruptStub, deviceInterruptStub, kernelFailureJumps, kernelFailureCount);
                 }
                 if (initializeInterruptController) {
                     kernelFailureCount = EmitInitializeInterruptController(code, kernelFailureJumps, kernelFailureCount);
@@ -1882,6 +1886,64 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return start;
         }
 
+        // Vector 0x31 is reserved for PCI MSI/MSI-X storage completions. The
+        // device driver owns controller-specific acknowledgement; the common
+        // entry acknowledges the local APIC and publishes a monotonic delivery
+        // counter that waiters can observe without touching device registers.
+        private int EmitStorageInterruptStub(X64Assembler code, int textRva, int bootInfoRva) {
+            int start = code.Position();
+            EmitPushInterruptRegisters(code);
+            EmitLeaRdxRva(code, textRva, bootInfoRva);
+            code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0x82); code.Emit32(1224);
+            code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(184); code.Emit32(49);
+            code.EmitByte(0x83); code.EmitByte(0xba); code.Emit32(192); code.EmitByte(1);
+            int xApicEoi = EmitConditionalJump(code, 0x85);
+            code.EmitByte(0xb9); code.Emit32(2059); code.EmitByte(0x31); code.EmitByte(0xc0);
+            code.EmitByte(0x31); code.EmitByte(0xd2); code.EmitByte(0x0f); code.EmitByte(0x30);
+            int done = EmitForwardJump(code);
+            int xApicAt = code.Position(); code.Patch32(xApicEoi, xApicAt - (xApicEoi + 4));
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0x92); code.Emit32(168);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(176); code.Emit32(0);
+            int doneAt = code.Position(); code.Patch32(done, doneAt - (done + 4));
+            EmitPopInterruptRegisters(code); code.EmitByte(0x48); code.EmitByte(0xcf);
+            return start;
+        }
+
+        // Vector 0x32 is the first reusable device vector. The registered owner
+        // publishes a W1C status register address and mask. The handler only
+        // acknowledges hardware and increments a pending counter; all command
+        // completion work runs later in normal kernel context.
+        private int EmitDeviceInterruptStub(X64Assembler code, int textRva, int bootInfoRva) {
+            int start = code.Position();
+            EmitPushInterruptRegisters(code);
+            EmitLeaRdxRva(code, textRva, bootInfoRva);
+            code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0x82); code.Emit32(2304);
+            code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(184); code.Emit32(50);
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0x9a); code.Emit32(2320); // r11 = status address
+            code.EmitByte(0x4d); code.EmitByte(0x85); code.EmitByte(0xdb);
+            int noStatus = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x03); // eax = [r11]
+            code.EmitByte(0x89); code.EmitByte(0x82); code.Emit32(2332);
+            code.EmitByte(0x8b); code.EmitByte(0x8a); code.Emit32(2328);
+            code.EmitByte(0x85); code.EmitByte(0xc1);
+            int noPending = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x03); // write raw value: W1C + preserve IE
+            code.EmitByte(0xff); code.EmitByte(0x82); code.Emit32(2336);
+            int noPendingAt = code.Position(); code.Patch32(noPending, noPendingAt - (noPending + 4));
+            int noStatusAt = code.Position(); code.Patch32(noStatus, noStatusAt - (noStatus + 4));
+            code.EmitByte(0x83); code.EmitByte(0xba); code.Emit32(192); code.EmitByte(1);
+            int xApicEoi = EmitConditionalJump(code, 0x85);
+            code.EmitByte(0xb9); code.Emit32(2059); code.EmitByte(0x31); code.EmitByte(0xc0);
+            code.EmitByte(0x31); code.EmitByte(0xd2); code.EmitByte(0x0f); code.EmitByte(0x30);
+            int done = EmitForwardJump(code);
+            int xApicAt = code.Position(); code.Patch32(xApicEoi, xApicAt - (xApicEoi + 4));
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0x92); code.Emit32(168);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(176); code.Emit32(0);
+            int doneAt = code.Position(); code.Patch32(done, doneAt - (done + 4));
+            EmitPopInterruptRegisters(code); code.EmitByte(0x48); code.EmitByte(0xcf);
+            return start;
+        }
+
         // The minimal long-mode GDT contains null, ring-0 code, and ring-0
         // data descriptors. An explicit far return reloads CS after LGDT.
         private int EmitInitializeGdt(X64Assembler code, int[] failureJumps, int failureCount) {
@@ -1937,7 +1999,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             EmitStoreInterruptGateAtR8(code);
         }
 
-        private int EmitInitializeIdt(X64Assembler code, int textRva, int bootInfoRva, int defaultStub, int[] exceptionStubs, int[] picStubs, int timerStub, int[] failureJumps, int failureCount) {
+        private int EmitInitializeIdt(X64Assembler code, int textRva, int bootInfoRva, int defaultStub, int[] exceptionStubs, int[] picStubs, int timerStub, int storageStub, int deviceStub, int[] failureJumps, int failureCount) {
             code.EmitByte(0x81); code.EmitByte(0x7f); code.EmitByte(36); code.Emit32(255);
             failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
             code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xff); // r15 = boot info
@@ -1962,6 +2024,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 irqVector = irqVector + 1;
             }
             EmitStoreInterruptGate(code, textRva, timerStub, 48);
+            EmitStoreInterruptGate(code, textRva, storageStub, 49);
+            EmitStoreInterruptGate(code, textRva, deviceStub, 50);
             code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xec); code.EmitByte(16);
             code.EmitByte(0x66); code.EmitByte(0xc7); code.EmitByte(0x04); code.EmitByte(0x24); code.EmitByte(255); code.EmitByte(15);
             code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x87); code.Emit32(4096);

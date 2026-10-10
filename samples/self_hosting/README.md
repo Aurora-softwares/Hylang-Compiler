@@ -80,11 +80,17 @@ position-independent binary. Its 16-byte `AUKR` header records version 1,
 code length, and entry offset 16. The bootloader verifies the header and exact
 file size, then loads it in executable memory before the final map capture.
 Freestanding code supports direct 8/16/32/64-bit memory loads and stores, byte
-port I/O, CPU pause/halt/interrupt enable, and a page-backed allocator for
+and dword port I/O, CPU pause/halt/interrupt enable, `RDTSC` timestamps,
+`MFENCE` DMA synchronization, and a page-backed allocator for
 objects, arrays, and ASCII string literals. Managed strings support content
 equality, byte-based indexing, `System.Kernel.String.ByteAt`, and
 `System.Kernel.String.FromBytes` in freestanding code. The kernel runtime consumes the page
-range in `KernelBootInfo`; a failed checked runtime allocation records error
+range in `KernelBootInfo`. Each allocation has a 16-byte owner header and
+`System.Kernel.Managed.Release(value)` explicitly releases an object, array,
+or string. Released pages enter the kernel free-page list; one-page managed
+allocations reuse them. An active shell command marker defers reuse above its
+rewind point until the command completes. Callers must release a value only
+after every reference to it has gone out of use. A failed checked runtime allocation records error
 code `5` at `KernelBootInfo + 1160` before it traps, and it does not invoke UEFI
 or Linux. Static fields,
 other string operations, and unsupported runtime intrinsics are rejected during

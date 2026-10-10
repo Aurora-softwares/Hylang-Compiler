@@ -4,6 +4,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
     // its primary physical range and never calls firmware or Linux.
     public class FreestandingRuntimeEmitter {
         private int allocOffset;
+        private int releaseOffset;
         private int arrayOffset;
         private int indexOffset;
         private int checkOffset;
@@ -37,10 +38,29 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc0); code.EmitByte(15);
             int alignOverflow = JumpIf(code, 0x82); // jc
             code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xe0); code.EmitByte(240); // 16-byte align
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc0); code.EmitByte(16); // ownership header
+            int headerOverflow = JumpIf(code, 0x82);
             code.EmitByte(0x48); code.EmitByte(0x05); code.Emit32(4095);
             int pageOverflow = JumpIf(code, 0x82);
             code.EmitByte(0x48); code.EmitByte(0x25); code.Emit32(-4096); // round to pages
             code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc6); // rsi = reserved bytes
+            // A released one-page managed object can be reused outside the
+            // shell command's transient region. The header is regenerated.
+            code.EmitByte(0x48); code.EmitByte(0x81); code.EmitByte(0xfe); code.Emit32(4096);
+            int notOnePage = JumpIf(code, 0x85);
+            code.EmitByte(0x49); code.EmitByte(0x83); code.EmitByte(0xbf); code.Emit32(1208); code.EmitByte(0);
+            int transientAllocation = JumpIf(code, 0x85);
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x9f); code.Emit32(1184);
+            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xdb);
+            int noFreePage = JumpIf(code, 0x84);
+            code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x13); // next free link
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x97); code.Emit32(1184);
+            code.EmitByte(0x49); code.EmitByte(0xff); code.EmitByte(0x8f); code.Emit32(1192);
+            int reuseJump = code.Position(); code.EmitByte(0xe9); code.Emit32(0);
+            int bumpStart = code.Position();
+            Patch(code, notOnePage, bumpStart);
+            Patch(code, transientAllocation, bumpStart);
+            Patch(code, noFreePage, bumpStart);
             code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x5f); code.EmitByte(40); // rbx = next
             code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xc3); code.Emit32(4095);
             int unaligned = JumpIf(code, 0x85);
@@ -50,15 +70,72 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.EmitByte(0x49); code.EmitByte(0x3b); code.EmitByte(0x57); code.EmitByte(48);
             int exhausted = JumpIf(code, 0x87); // ja limit
             code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x57); code.EmitByte(40);
+            Patch(code, reuseJump + 1, code.Position());
             code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x5f); code.EmitByte(72);
             code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xdf); // rdi = start
             code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xf1); // rcx = bytes
             code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe9); code.EmitByte(3);
             code.EmitByte(0x31); code.EmitByte(0xc0); code.EmitByte(0xfc);
             code.EmitByte(0xf3); code.EmitByte(0x48); code.EmitByte(0xab); // zero pages
-            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd8); // return start
+            code.EmitByte(0xc7); code.EmitByte(0x03); code.Emit32(1296125511); // MANG owner tag
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0x73); code.EmitByte(8); // reserved span
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x43); code.EmitByte(16); // payload
             code.EmitByte(0x5e); code.EmitByte(0x5f); code.EmitByte(0x5a);
             code.EmitByte(0x59); code.EmitByte(0x5b); code.EmitByte(0xc3);
+
+            // Explicit release accepts an object, array, or string payload.
+            // A live owner tag prevents duplicate release; pages from a shell
+            // command are left to its scoped rewind instead of entering the
+            // persistent free list above the rewind cursor.
+            releaseOffset = code.Position() - start;
+            code.EmitByte(0x53); code.EmitByte(0x51); code.EmitByte(0x52); code.EmitByte(0x56);
+            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xff);
+            int badRelease = JumpIf(code, 0x84);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xfb);
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xeb); code.EmitByte(16);
+            code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xc3); code.Emit32(4095);
+            int badAlignment = JumpIf(code, 0x85);
+            code.EmitByte(0x81); code.EmitByte(0x3b); code.Emit32(1296125511);
+            int badOwner = JumpIf(code, 0x85);
+            code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x73); code.EmitByte(8);
+            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xf6);
+            int badSpan = JumpIf(code, 0x84);
+            code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xc6); code.Emit32(4095);
+            int badSpanAlignment = JumpIf(code, 0x85);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xda);
+            code.EmitByte(0x48); code.EmitByte(0x01); code.EmitByte(0xf2);
+            int badOverflow = JumpIf(code, 0x82);
+            code.EmitByte(0x49); code.EmitByte(0x3b); code.EmitByte(0x57); code.EmitByte(40);
+            int badBound = JumpIf(code, 0x87);
+            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0x03); code.Emit32(0); // retired
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x8f); code.Emit32(1208);
+            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc9);
+            int persistentRelease = JumpIf(code, 0x84);
+            code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xcb);
+            int scopedRelease = JumpIf(code, 0x83); // base >= marker
+            Patch(code, persistentRelease, code.Position());
+            int releaseLoop = code.Position();
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x8f); code.Emit32(1184);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0x0b);
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x9f); code.Emit32(1184);
+            code.EmitByte(0x49); code.EmitByte(0xff); code.EmitByte(0x87); code.Emit32(1192);
+            code.EmitByte(0x48); code.EmitByte(0x81); code.EmitByte(0xc3); code.Emit32(4096);
+            code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xd3);
+            int morePages = JumpIf(code, 0x82);
+            Patch(code, morePages, releaseLoop);
+            int releaseOk = code.Position();
+            Patch(code, scopedRelease, releaseOk);
+            code.EmitByte(0xb8); code.Emit32(1);
+            int releaseDone = code.Position(); code.EmitByte(0x5e); code.EmitByte(0x5a);
+            code.EmitByte(0x59); code.EmitByte(0x5b); code.EmitByte(0xc3);
+            int releaseBad = code.Position();
+            Patch(code, badRelease, releaseBad); Patch(code, badAlignment, releaseBad);
+            Patch(code, badOwner, releaseBad); Patch(code, badSpan, releaseBad);
+            Patch(code, badSpanAlignment, releaseBad); Patch(code, badOverflow, releaseBad);
+            Patch(code, badBound, releaseBad);
+            code.EmitByte(0x31); code.EmitByte(0xc0);
+            code.EmitByte(0xe9); int releaseBadJump = code.Position(); code.Emit32(0);
+            Patch(code, releaseBadJump, releaseDone);
 
             arrayOffset = code.Position() - start;
             code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xff);
@@ -214,6 +291,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.EmitByte(0x0f); code.EmitByte(0x0b); // ud2: fatal kernel exception
             Patch(code, negativeSize, start + errorOffset);
             Patch(code, alignOverflow, start + errorOffset);
+            Patch(code, headerOverflow, start + errorOffset);
             Patch(code, pageOverflow, start + errorOffset);
             Patch(code, unaligned, start + errorOffset);
             Patch(code, rangeOverflow, start + errorOffset);
@@ -238,6 +316,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
         public int Offset(string name) {
             if (name == "rt_alloc") { return allocOffset; }
+            if (name == "rt_release") { return releaseOffset; }
             if (name == "rt_array") { return arrayOffset; }
             if (name == "rt_index") { return indexOffset; }
             if (name == "rt_check") { return checkOffset; }

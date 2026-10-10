@@ -891,6 +891,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private bool CompileInvocation(IrExpression expression) {
             IrExpression[] arguments = expression.Arguments();
             string intrinsic = QualifiedName(expression.Target());
+            if (intrinsic == "System.Kernel.Managed.Release") {
+                if (!freestanding || arguments.Length != 1 || !CompileExpression(arguments[0]) ||
+                    !Reference(valueType)) { failure = "invalid managed release"; return false; }
+                MoveRdiRax(); EmitRuntime("rt_release"); valueType = "bool"; return true;
+            }
             if (intrinsic == "System.Kernel.Memory.Read8" || intrinsic == "System.Kernel.Memory.Read16" ||
                 intrinsic == "System.Kernel.Memory.Read32" || intrinsic == "System.Kernel.Memory.Read64") {
                 if (!freestanding || arguments.Length != 1 || !CompileExpression(arguments[0]) ||
@@ -936,6 +941,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 valueType = "void"; return true;
             }
+            if (intrinsic == "System.Kernel.Memory.Fence") {
+                if (!freestanding || arguments.Length != 0) { failure = "invalid freestanding memory fence"; return false; }
+                code.EmitByte(0x0f); code.EmitByte(0xae); code.EmitByte(0xf0); // mfence
+                valueType = "void"; return true;
+            }
             if (intrinsic == "System.Kernel.Cpu.Pause" || intrinsic == "System.Kernel.Cpu.Halt" ||
                 intrinsic == "System.Kernel.Cpu.EnableInterrupts") {
                 if (!freestanding || arguments.Length != 0) { failure = "invalid freestanding CPU operation"; return false; }
@@ -951,6 +961,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 // current address space without relying on firmware services.
                 code.EmitByte(0x0f); code.EmitByte(0x01); code.EmitByte(0x38);
                 valueType = "void"; return true;
+            }
+            if (intrinsic == "System.Kernel.Cpu.Timestamp") {
+                if (!freestanding || arguments.Length != 0) { failure = "invalid freestanding timestamp"; return false; }
+                code.EmitByte(0x0f); code.EmitByte(0x31); // rdtsc -> edx:eax
+                code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe2); code.EmitByte(32);
+                code.EmitByte(0x48); code.EmitByte(0x09); code.EmitByte(0xd0);
+                valueType = "long"; return true;
             }
             if (intrinsic == "System.Kernel.Port.Read8") {
                 if (!freestanding || arguments.Length != 1 || !CompileExpression(arguments[0]) ||
@@ -970,6 +987,24 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.EmitByte(0x59); // rcx = port
                 code.EmitByte(0x66); code.EmitByte(0x89); code.EmitByte(0xca); // mov dx, cx
                 code.EmitByte(0xee); // out dx, al
+                valueType = "void"; return true;
+            }
+            if (intrinsic == "System.Kernel.Port.Read32") {
+                if (!freestanding || arguments.Length != 1 || !CompileExpression(arguments[0]) ||
+                    !Assignable(valueType, "int")) { failure = "invalid freestanding dword port read"; return false; }
+                code.EmitByte(0x66); code.EmitByte(0x89); code.EmitByte(0xc2); // mov dx, ax
+                code.EmitByte(0xed); // in eax, dx
+                valueType = "long"; return true;
+            }
+            if (intrinsic == "System.Kernel.Port.Write32") {
+                if (!freestanding || arguments.Length != 2 || !CompileExpression(arguments[0]) ||
+                    !Assignable(valueType, "int")) { failure = "invalid freestanding dword port write address"; return false; }
+                code.EmitByte(0x50);
+                if (!CompileExpression(arguments[1]) || !Assignable(valueType, "long")) {
+                    failure = "invalid freestanding dword port write value"; return false;
+                }
+                code.EmitByte(0x59); code.EmitByte(0x66); code.EmitByte(0x89); code.EmitByte(0xca);
+                code.EmitByte(0xef); // out dx, eax
                 valueType = "void"; return true;
             }
             if (intrinsic == "System.Kernel.String.ByteAt") {
