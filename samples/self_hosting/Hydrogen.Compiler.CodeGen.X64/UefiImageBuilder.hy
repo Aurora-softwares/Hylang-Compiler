@@ -420,6 +420,32 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             int framebufferErrorOffset = 0;
             int graphicsOutputGuidOffset = 0;
             int framebufferFontOffset = 0;
+            int panicMessageOffset = 0;
+            string panicHeader = "\r\n*** AUSTRALIS KERNEL PANIC ***\r\nFatal CPU exception; interrupts are disabled.\r\n";
+            string panicMessage = panicHeader +
+                "VECTOR  =0x0000000000000000\r\n" +
+                "ERROR   =0x0000000000000000\r\n" +
+                "RIP     =0x0000000000000000\r\n" +
+                "CS      =0x0000000000000000\r\n" +
+                "RFLAGS  =0x0000000000000000\r\n" +
+                "RSP     =0x0000000000000000\r\n" +
+                "CR2     =0x0000000000000000\r\n" +
+                "RAX     =0x0000000000000000\r\n" +
+                "RBX     =0x0000000000000000\r\n" +
+                "RCX     =0x0000000000000000\r\n" +
+                "RDX     =0x0000000000000000\r\n" +
+                "RSI     =0x0000000000000000\r\n" +
+                "RDI     =0x0000000000000000\r\n" +
+                "RBP     =0x0000000000000000\r\n" +
+                "R8      =0x0000000000000000\r\n" +
+                "R9      =0x0000000000000000\r\n" +
+                "R10     =0x0000000000000000\r\n" +
+                "R11     =0x0000000000000000\r\n" +
+                "R12     =0x0000000000000000\r\n" +
+                "R13     =0x0000000000000000\r\n" +
+                "R14     =0x0000000000000000\r\n" +
+                "R15     =0x0000000000000000\r\n" +
+                "System halted. Power cycle or reset to continue.\r\n";
             int[] framebufferMessageOffsets = new int[framebufferWriteCount];
             bool chainLoad = kernelPath.Length != 0 && !rawKernelLoad;
             if (chainLoad || rawKernelLoad) {
@@ -455,6 +481,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     framebufferDataEnd = framebufferDataEnd + framebufferMessages[framebufferMessage].Length + 1;
                     framebufferMessage = framebufferMessage + 1;
                 }
+                panicMessageOffset = framebufferDataEnd;
+                framebufferDataEnd = framebufferDataEnd + panicMessage.Length + 1;
                 dataSize = framebufferDataEnd;
             }
             int dataRawSize = ((dataSize + 511) / 512) * 512;
@@ -488,11 +516,15 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 // handlers. The IDT later receives their position-independent
                 // code addresses through RIP-relative gate construction.
                 int entryJump = EmitForwardJump(code);
-                defaultInterruptStub = EmitUnexpectedInterruptStub(code, textRva, bootInfoRva);
+                int panicHandler = EmitKernelPanicHandler(code, textRva, bootInfoRva,
+                    dataRva + framebufferFontOffset, dataRva + panicMessageOffset,
+                    panicHeader.Length, panicMessage.Length);
+                defaultInterruptStub = EmitUnexpectedInterruptStub(code, panicHandler);
                 exceptionInterruptStubs = new int[32];
                 int exceptionVector = 0;
                 while (exceptionVector < 32) {
-                    exceptionInterruptStubs[exceptionVector] = EmitExceptionInterruptStub(code, textRva, bootInfoRva, exceptionVector);
+                    exceptionInterruptStubs[exceptionVector] = EmitExceptionInterruptStub(code,
+                        panicHandler, exceptionVector);
                     exceptionVector = exceptionVector + 1;
                 }
                 picIrqStubs = new int[16];
@@ -787,6 +819,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     WriteAscii(image, dataOffset + framebufferMessageOffsets[framebufferMessage], framebufferMessages[framebufferMessage], ascii);
                     framebufferMessage = framebufferMessage + 1;
                 }
+                WriteAscii(image, dataOffset + panicMessageOffset, panicMessage, ascii);
             }
             if (initializeMemoryMap) {
                 WriteKernelBootInfo(image, bootInfoOffset);
