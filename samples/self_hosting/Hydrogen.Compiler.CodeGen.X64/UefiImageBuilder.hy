@@ -515,18 +515,35 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 // Firmware enters at the beginning of .text, so jump over the
                 // handlers. The IDT later receives their position-independent
                 // code addresses through RIP-relative gate construction.
-                int entryJump = EmitForwardJump(code);
-                int panicHandler = EmitKernelPanicHandler(code, textRva, bootInfoRva,
-                    dataRva + framebufferFontOffset, dataRva + panicMessageOffset,
-                    panicHeader.Length, panicMessage.Length);
-                defaultInterruptStub = EmitUnexpectedInterruptStub(code, panicHandler);
-                exceptionInterruptStubs = new int[32];
-                int exceptionVector = 0;
-                while (exceptionVector < 32) {
-                    exceptionInterruptStubs[exceptionVector] = EmitExceptionInterruptStub(code,
-                        panicHandler, exceptionVector);
-                    exceptionVector = exceptionVector + 1;
-                }
+                //int entryJump = EmitForwardJump(code);
+                //int panicHandler = EmitKernelPanicHandler(code, textRva, bootInfoRva,
+                //    dataRva + framebufferFontOffset, dataRva + panicMessageOffset,
+                //    panicHeader.Length, panicMessage.Length);
+                //defaultInterruptStub = EmitUnexpectedInterruptStub(code, panicHandler);
+                //exceptionInterruptStubs = new int[32];
+                //int exceptionVector = 0;
+                //while (exceptionVector < 32) {
+                //    exceptionInterruptStubs[exceptionVector] = EmitExceptionInterruptStub(code,
+                //        panicHandler, exceptionVector);
+                //    exceptionVector = exceptionVector + 1;
+                //}
+				int entryJump = EmitForwardJump(code);
+
+				defaultInterruptStub = EmitUnexpectedInterruptStub(
+					code, textRva, bootInfoRva
+				);
+
+				exceptionInterruptStubs = new int[32];
+				int exceptionVector = 0;
+
+				while (exceptionVector < 32) {
+					exceptionInterruptStubs[exceptionVector] = EmitExceptionInterruptStub(
+						code, textRva, bootInfoRva, exceptionVector
+					);
+
+					exceptionVector = exceptionVector + 1;
+				}
+				///
                 picIrqStubs = new int[16];
                 int irqVector = 0;
                 while (irqVector < 16) {

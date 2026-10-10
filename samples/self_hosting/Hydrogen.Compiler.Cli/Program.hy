@@ -262,16 +262,25 @@ namespace Hydrogen.Compiler.Cli {
             if (manifest.Type() == "os") {
                 return ProcessOsProject(projectPath, manifest, args[3], false, false);
             }
-            if (manifest.Type() != "exe" && manifest.Type() != "efi" && manifest.Type() != "kernel") {
-                System.Console.WriteLine("error: hy build supports exe, efi, kernel, and os projects");
+            if (manifest.Type() != "exe" &&
+				manifest.Type() != "efi" &&
+				manifest.Type() != "kernel" &&
+				manifest.Type() != "australis") {
+                System.Console.WriteLine("error: hy build supports exe, efi, kernel, australis, and os projects");
                 return 1;
             }
 
             NativeCompiler compiler = new NativeCompiler();
             NativeCompilerResult result;
-            if (manifest.Type() == "exe") { result = compiler.BuildProject(projectPath, args[3]); }
-            else if (manifest.Type() == "kernel") { result = compiler.BuildProjectKernel(projectPath, args[3]); }
-            else { result = compiler.BuildProjectUefi(projectPath, args[3]); }
+            if (manifest.Type() == "exe") {
+				result = compiler.BuildProject(projectPath, args[3]);
+			} else if (manifest.Type() == "kernel") {
+				result = compiler.BuildProjectKernel(projectPath, args[3]);
+			} else if (manifest.Type() == "australis") {
+				result = compiler.BuildProjectAustralis(projectPath, args[3]);
+			} else {
+				result = compiler.BuildProjectUefi(projectPath, args[3]);
+			}
             if (!result.Success()) {
                 System.Console.Write(result.DiagnosticsText());
                 return 1;

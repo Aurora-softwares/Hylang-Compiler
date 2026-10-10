@@ -26,18 +26,22 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
     public class NativeCompiler {
         public NativeCompilerResult BuildProject(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false);
         }
 
         public NativeCompilerResult BuildProjectUefi(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, true, false);
+            return ProcessProject(projectPath, outputPath, false, false, true, false, false);
         }
 
         public NativeCompilerResult BuildProjectKernel(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, true);
+            return ProcessProject(projectPath, outputPath, false, false, false, true, false);
         }
 
-        private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel) {
+		public NativeCompilerResult BuildProjectAustralis(string projectPath, string outputPath) {
+			return ProcessProject(projectPath, outputPath, false, false, false, false, true);
+		}
+
+        private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel, bool australis) {
             ProjectClosure closure = ProjectClosure.Collect(projectPath);
             string[] projects = closure.Projects();
             if (projects.Length == 1 && StartsWith(projects[0], "<cycle:")) {
@@ -82,6 +86,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (check) { return new NativeCompilerResult(true, DebugProgram(program, emitIr)); }
             if (kernel) { return EmitKernelImage(program, projectPath, outputPath); }
             if (uefi) { return EmitUefiImage(program, projectPath, outputPath); }
+			if (australis) { return EmitAustralisImage(program, projectPath, outputPath); }
             return EmitNativeImage(program, projectPath, outputPath);
         }
 
@@ -176,6 +181,16 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return new NativeCompilerResult(true, "");
         }
 
+		private NativeCompilerResult EmitAustralisImage(BoundProgram program, string inputPath, string outputPath) {
+			AustralisExecImageBuilder builder = new AustralisExecImageBuilder();
+			byte[] executable = builder.Build(program);
+			if (executable == null) {
+				return new NativeCompilerResult( false, inputPath + ": unsupported Australis program\n");
+			}
+			System.IO.File.WriteAllBytes(outputPath, executable);
+			return new NativeCompilerResult(true, "");
+		}
+
         // AUKR v1: 16-byte header followed by raw position-independent code.
         // The loader validates size and entry offset before ending boot services.
         private NativeCompilerResult EmitKernelImage(BoundProgram program, string inputPath, string outputPath) {
@@ -215,7 +230,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private NativeCompilerResult CheckFileInternal(string inputPath, bool emitIr) {
-            if (IsProject(inputPath)) { return ProcessProject(inputPath, "", true, emitIr, false, false); }
+            if (IsProject(inputPath)) { return ProcessProject(inputPath, "", true, emitIr, false, false, false); }
             SourceText source = SourceText.FromFile(inputPath);
             DiagnosticBag subsetDiagnostics = new DiagnosticBag();
             SelfHostSubsetValidator subset = new SelfHostSubsetValidator();
