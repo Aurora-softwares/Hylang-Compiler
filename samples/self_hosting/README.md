@@ -114,6 +114,12 @@ The native tool has `new` scaffolding, but not the SDK's `run`, `test`, `fmt`, `
 | Statements | Blocks, `var`, `if`/`else`, `while`, `for`, `break`, `continue`, returns |
 | Entry | Static `Main`, `int`/`void`, zero parameters or `string[]` user arguments |
 
+Fatal freestanding CPU exceptions use an allocation-free IDT panic path. It
+captures the CPU exception frame, `CR2`, and all general registers, writes a
+fixed hexadecimal report directly to polled COM1 and the initialized GOP
+framebuffer, and halts with interrupts disabled. The report does not depend on
+UEFI services or the managed runtime.
+
 Static fields and struct value semantics are supported. Generics, exceptions, pointers/manual memory, `Buffer`, `BinaryPrimitives`, and `List<T>` remain outside native compilation.
 
 Use fully qualified builtin names such as `System.Console.WriteLine`. The SDK interpreter evaluates both logical operands; native code short-circuits. Explicit conditional guards make code safe to execute in both routes.

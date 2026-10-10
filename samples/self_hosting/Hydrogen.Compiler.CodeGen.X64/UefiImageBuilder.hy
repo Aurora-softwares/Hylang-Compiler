@@ -515,35 +515,18 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 // Firmware enters at the beginning of .text, so jump over the
                 // handlers. The IDT later receives their position-independent
                 // code addresses through RIP-relative gate construction.
-                //int entryJump = EmitForwardJump(code);
-                //int panicHandler = EmitKernelPanicHandler(code, textRva, bootInfoRva,
-                //    dataRva + framebufferFontOffset, dataRva + panicMessageOffset,
-                //    panicHeader.Length, panicMessage.Length);
-                //defaultInterruptStub = EmitUnexpectedInterruptStub(code, panicHandler);
-                //exceptionInterruptStubs = new int[32];
-                //int exceptionVector = 0;
-                //while (exceptionVector < 32) {
-                //    exceptionInterruptStubs[exceptionVector] = EmitExceptionInterruptStub(code,
-                //        panicHandler, exceptionVector);
-                //    exceptionVector = exceptionVector + 1;
-                //}
-				int entryJump = EmitForwardJump(code);
-
-				defaultInterruptStub = EmitUnexpectedInterruptStub(
-					code, textRva, bootInfoRva
-				);
-
-				exceptionInterruptStubs = new int[32];
-				int exceptionVector = 0;
-
-				while (exceptionVector < 32) {
-					exceptionInterruptStubs[exceptionVector] = EmitExceptionInterruptStub(
-						code, textRva, bootInfoRva, exceptionVector
-					);
-
-					exceptionVector = exceptionVector + 1;
-				}
-				///
+                int entryJump = EmitForwardJump(code);
+                int panicHandler = EmitKernelPanicHandler(code, textRva, bootInfoRva,
+                    dataRva + framebufferFontOffset, dataRva + panicMessageOffset,
+                    panicHeader.Length, panicMessage.Length);
+                defaultInterruptStub = EmitUnexpectedInterruptStub(code, panicHandler);
+                exceptionInterruptStubs = new int[32];
+                int exceptionVector = 0;
+                while (exceptionVector < 32) {
+                    exceptionInterruptStubs[exceptionVector] = EmitExceptionInterruptStub(code,
+                        panicHandler, exceptionVector);
+                    exceptionVector = exceptionVector + 1;
+                }
                 picIrqStubs = new int[16];
                 int irqVector = 0;
                 while (irqVector < 16) {
@@ -1812,27 +1795,305 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return failureCount;
         }
 
-        // These stubs deliberately avoid firmware services and only touch the
-        // image's writable KernelBootInfo page. Fatal CPU exceptions record the
-        // vector then stop with interrupts disabled; masked legacy IRQs and the
-        // local-APIC timer acknowledge their controller and return with IRETQ.
-        private int EmitUnexpectedInterruptStub(X64Assembler code, int textRva, int bootInfoRva) {
+        // Write the value in RAX as sixteen uppercase hexadecimal digits into
+        // the fixed panic report buffer. The exception path cannot allocate or
+        // call the normal terminal because it can interrupt either subsystem.
+        private void EmitPanicHex(X64Assembler code, int destination) {
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe7); // rdi = BootInfo
+            code.EmitByte(0x48); code.EmitByte(0x81); code.EmitByte(0xc7); code.Emit32(2688 + destination);
+            code.EmitByte(0xb9); code.Emit32(16);
+            int digitLoop = code.Position();
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc2); // rdx = value
+            code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xea); code.EmitByte(60);
+            code.EmitByte(0x80); code.EmitByte(0xfa); code.EmitByte(9);
+            int decimalDigit = EmitConditionalJump(code, 0x86); // jbe
+            code.EmitByte(0x80); code.EmitByte(0xc2); code.EmitByte(55); // A-F
+            int storeDigit = EmitForwardJump(code);
+            int decimalAt = code.Position();
+            code.Patch32(decimalDigit, decimalAt - (decimalDigit + 4));
+            code.EmitByte(0x80); code.EmitByte(0xc2); code.EmitByte(48); // 0-9
+            int storeAt = code.Position();
+            code.Patch32(storeDigit, storeAt - (storeDigit + 4));
+            code.EmitByte(0x88); code.EmitByte(0x17); // *rdi = dl
+            code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0xc7);
+            code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(4);
+            code.EmitByte(0xff); code.EmitByte(0xc9);
+            int nextDigit = EmitConditionalJump(code, 0x85);
+            code.Patch32(nextDigit, digitLoop - (nextDigit + 4));
+        }
+
+        private void EmitPanicHexFromBootInfo(X64Assembler code, int destination, int source) {
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(source);
+            EmitPanicHex(code, destination);
+        }
+
+        private void EmitPanicHex32FromBootInfo(X64Assembler code, int destination, int source) {
+            code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(source);
+            EmitPanicHex(code, destination);
+        }
+
+        private void EmitPanicHexFromStack(X64Assembler code, int destination, int source) {
+            code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(source);
+            EmitPanicHex(code, destination);
+        }
+
+        private void EmitInitializePanicSerial(X64Assembler code) {
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(249); code.EmitByte(3);
+            code.EmitByte(0x30); code.EmitByte(0xc0); code.EmitByte(0xee); // interrupts off
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(251); code.EmitByte(3);
+            code.EmitByte(0xb0); code.EmitByte(128); code.EmitByte(0xee); // divisor latch
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(248); code.EmitByte(3);
+            code.EmitByte(0xb0); code.EmitByte(1); code.EmitByte(0xee); // 115200 baud
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(249); code.EmitByte(3);
+            code.EmitByte(0x30); code.EmitByte(0xc0); code.EmitByte(0xee);
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(251); code.EmitByte(3);
+            code.EmitByte(0xb0); code.EmitByte(3); code.EmitByte(0xee); // 8N1
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(250); code.EmitByte(3);
+            code.EmitByte(0xb0); code.EmitByte(199); code.EmitByte(0xee); // FIFO
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(252); code.EmitByte(3);
+            code.EmitByte(0xb0); code.EmitByte(3); code.EmitByte(0xee); // DTR, RTS
+        }
+
+        private void EmitPanicSerialReport(X64Assembler code) {
+            EmitInitializePanicSerial(code);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe6); // rsi = BootInfo
+            code.EmitByte(0x48); code.EmitByte(0x81); code.EmitByte(0xc6); code.Emit32(2688);
+            int nextCharacter = code.Position();
+            code.EmitByte(0x8a); code.EmitByte(0x1e); // bl = *rsi
+            code.EmitByte(0x84); code.EmitByte(0xdb);
+            int reportDone = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0xc6);
+            code.EmitByte(0xb9); code.Emit32(1000000);
+            int waitForTransmitter = code.Position();
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(253); code.EmitByte(3);
+            code.EmitByte(0xec); code.EmitByte(0xa8); code.EmitByte(32);
+            int transmitterReady = EmitConditionalJump(code, 0x85);
+            code.EmitByte(0xf3); code.EmitByte(0x90);
+            code.EmitByte(0xff); code.EmitByte(0xc9);
+            int keepWaiting = EmitConditionalJump(code, 0x85);
+            code.Patch32(keepWaiting, waitForTransmitter - (keepWaiting + 4));
+            EmitJumpTo(code, nextCharacter); // omit one byte if the UART disappeared
+            int readyAt = code.Position();
+            code.Patch32(transmitterReady, readyAt - (transmitterReady + 4));
+            code.EmitByte(0x66); code.EmitByte(0xba); code.EmitByte(248); code.EmitByte(3);
+            code.EmitByte(0x88); code.EmitByte(0xd8); code.EmitByte(0xee); // out dx, bl
+            EmitJumpTo(code, nextCharacter);
+            int doneAt = code.Position();
+            code.Patch32(reportDone, doneAt - (reportDone + 4));
+        }
+
+        // Clear and render the same report buffer through the already validated
+        // GOP mapping. CR/LF handling keeps the serial and framebuffer reports
+        // byte-for-byte equivalent without using the normal terminal object.
+        private void EmitPanicFramebufferReport(X64Assembler code, int textRva, int fontRva) {
+            code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0xbc); code.EmitByte(0x24); code.Emit32(36); code.Emit32(127);
+            int unavailable = EmitConditionalJump(code, 0x82); // jb
+            code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(112); // r8 = framebuffer
+            code.EmitByte(0x4d); code.EmitByte(0x85); code.EmitByte(0xc0);
+            int noFramebuffer = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0x9c); code.EmitByte(0x24); code.Emit32(128); // ebx = width
+            code.EmitByte(0x41); code.EmitByte(0x8b); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(132); // ebp = height
+            code.EmitByte(0x45); code.EmitByte(0x8b); code.EmitByte(0xb4); code.EmitByte(0x24); code.Emit32(136); // r14d = stride
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xc7); // rdi = framebuffer
+            code.EmitByte(0x31); code.EmitByte(0xc0);
+            code.EmitByte(0x44); code.EmitByte(0x89); code.EmitByte(0xf1); // ecx = stride
+            code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xaf); code.EmitByte(0xcd); // rcx *= rbp
+            code.EmitByte(0xfc); code.EmitByte(0xf3); code.EmitByte(0xab); // clear pixels
+            code.EmitByte(0x49); code.EmitByte(0xc1); code.EmitByte(0xe6); code.EmitByte(2); // stride bytes
+            EmitLeaR9Rva(code, textRva, fontRva);
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xe2); // r10 = BootInfo
+            code.EmitByte(0x49); code.EmitByte(0x81); code.EmitByte(0xc2); code.Emit32(2688);
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xdb); // x = 0
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xed); // y = 0
+
+            int characterLoop = code.Position();
+            code.EmitByte(0x41); code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0x02);
+            code.EmitByte(0x84); code.EmitByte(0xc0);
+            int renderingDone = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x49); code.EmitByte(0xff); code.EmitByte(0xc2);
+            code.EmitByte(0x3c); code.EmitByte(13);
+            int skipCarriageReturn = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x3c); code.EmitByte(10);
+            int newline = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x2c); code.EmitByte(32);
+            code.EmitByte(0x3c); code.EmitByte(94);
+            int glyphReady = EmitConditionalJump(code, 0x86);
+            code.EmitByte(0xb0); code.EmitByte(31);
+            int glyphAt = code.Position(); code.Patch32(glyphReady, glyphAt - (glyphReady + 4));
+            code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0xc0);
+            code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(3);
+            code.EmitByte(0x4d); code.EmitByte(0x8d); code.EmitByte(0x3c); code.EmitByte(0x01); // r15 = glyph
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xd8);
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc0); code.EmitByte(8);
+            code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xd8);
+            int xReady = EmitConditionalJump(code, 0x86);
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xdb);
+            code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xc5); code.EmitByte(8);
+            int xAt = code.Position(); code.Patch32(xReady, xAt - (xReady + 4));
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe8);
+            code.EmitByte(0x49); code.EmitByte(0x0f); code.EmitByte(0xaf); code.EmitByte(0xc6);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xda);
+            code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe2); code.EmitByte(2);
+            code.EmitByte(0x48); code.EmitByte(0x01); code.EmitByte(0xd0);
+            code.EmitByte(0x4c); code.EmitByte(0x01); code.EmitByte(0xc0);
+            code.EmitByte(0xb9); code.Emit32(8);
+            int rowLoop = code.Position();
+            code.EmitByte(0x41); code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0x17);
+            code.EmitByte(0x49); code.EmitByte(0xff); code.EmitByte(0xc7);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc6);
+            code.EmitByte(0xbf); code.Emit32(8);
+            int pixelLoop = code.Position();
+            code.EmitByte(0xf6); code.EmitByte(0xc2); code.EmitByte(128);
+            int blackPixel = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0xc7); code.EmitByte(0x06); code.Emit32(16777215);
+            int pixelDone = EmitForwardJump(code);
+            int blackAt = code.Position(); code.Patch32(blackPixel, blackAt - (blackPixel + 4));
+            code.EmitByte(0xc7); code.EmitByte(0x06); code.Emit32(0);
+            int pixelAt = code.Position(); code.Patch32(pixelDone, pixelAt - (pixelDone + 4));
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc6); code.EmitByte(4);
+            code.EmitByte(0xd0); code.EmitByte(0xe2);
+            code.EmitByte(0xff); code.EmitByte(0xcf);
+            int nextPixel = EmitConditionalJump(code, 0x85);
+            code.Patch32(nextPixel, pixelLoop - (nextPixel + 4));
+            code.EmitByte(0x4c); code.EmitByte(0x01); code.EmitByte(0xf0);
+            code.EmitByte(0xff); code.EmitByte(0xc9);
+            int nextRow = EmitConditionalJump(code, 0x85);
+            code.Patch32(nextRow, rowLoop - (nextRow + 4));
+            code.EmitByte(0x49); code.EmitByte(0x83); code.EmitByte(0xc3); code.EmitByte(8);
+            EmitJumpTo(code, characterLoop);
+
+            int newlineAt = code.Position(); code.Patch32(newline, newlineAt - (newline + 4));
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xdb);
+            code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xc5); code.EmitByte(8);
+            code.EmitByte(0x41); code.EmitByte(0x39); code.EmitByte(0xed); // cmp r13d, ebp
+            int yReady = EmitConditionalJump(code, 0x82);
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xed);
+            int yAt = code.Position(); code.Patch32(yReady, yAt - (yReady + 4));
+            int skipAt = code.Position(); code.Patch32(skipCarriageReturn, skipAt - (skipCarriageReturn + 4));
+            EmitJumpTo(code, characterLoop);
+
+            int doneAt = code.Position(); code.Patch32(renderingDone, doneAt - (renderingDone + 4));
+            code.EmitByte(0x45); code.EmitByte(0x89); code.EmitByte(0x9c); code.EmitByte(0x24); code.Emit32(144);
+            code.EmitByte(0x45); code.EmitByte(0x89); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(148);
+            int unavailableAt = code.Position();
+            code.Patch32(unavailable, unavailableAt - (unavailable + 4));
+            code.Patch32(noFramebuffer, unavailableAt - (noFramebuffer + 4));
+        }
+
+        // Every exception stub pushes only its vector before entering this
+        // common handler. All registers are saved before the handler derives
+        // the x86 exception frame, so the report describes the interrupted
+        // instruction rather than the reporter itself.
+        private int EmitKernelPanicHandler(X64Assembler code, int textRva, int bootInfoRva,
+            int fontRva, int messageRva, int headerLength, int messageLength) {
             int start = code.Position();
-            code.EmitByte(0xfa); // cli
-            EmitLeaRdxRva(code, textRva, bootInfoRva);
-            code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(184); code.Emit32(255);
-            code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(188); code.Emit32(255);
+            code.EmitByte(0xfa);
+            EmitPushInterruptRegisters(code);
+            EmitLeaR10Rva(code, textRva, bootInfoRva);
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xd4); // r12 = BootInfo
+            code.EmitByte(0x8b); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(120); // vector
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(184);
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(188);
+            code.EmitByte(0x41); code.EmitByte(0x83); code.EmitByte(0xbc); code.EmitByte(0x24); code.Emit32(2672); code.EmitByte(0);
+            int nestedPanic = EmitConditionalJump(code, 0x85);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(2672); code.Emit32(1);
+            code.EmitByte(0x41); code.EmitByte(0x89); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(2600);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(2604); code.Emit32(0);
+
+            int[] errorJumps = new int[10];
+            int[] errorVectors = new int[10];
+            errorVectors[0] = 8; errorVectors[1] = 10; errorVectors[2] = 11; errorVectors[3] = 12;
+            errorVectors[4] = 13; errorVectors[5] = 14; errorVectors[6] = 17; errorVectors[7] = 21;
+            errorVectors[8] = 29; errorVectors[9] = 30;
+            int errorIndex = 0;
+            while (errorIndex < errorVectors.Length) {
+                code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(errorVectors[errorIndex]);
+                errorJumps[errorIndex] = EmitConditionalJump(code, 0x84);
+                errorIndex = errorIndex + 1;
+            }
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xed); // error = 0
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0xb4); code.EmitByte(0x24); code.Emit32(128); // RIP
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0xbc); code.EmitByte(0x24); code.Emit32(136); // CS
+            code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(144); // RFLAGS
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x9c); code.EmitByte(0x24); code.Emit32(152); // original RSP
+            int frameReady = EmitForwardJump(code);
+            int errorAt = code.Position();
+            errorIndex = 0;
+            while (errorIndex < errorJumps.Length) {
+                code.Patch32(errorJumps[errorIndex], errorAt - (errorJumps[errorIndex] + 4));
+                errorIndex = errorIndex + 1;
+            }
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(2604); code.Emit32(1);
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(128);
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0xb4); code.EmitByte(0x24); code.Emit32(136);
+            code.EmitByte(0x4c); code.EmitByte(0x8b); code.EmitByte(0xbc); code.EmitByte(0x24); code.Emit32(144);
+            code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(152);
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x9c); code.EmitByte(0x24); code.Emit32(160);
+            int frameAt = code.Position(); code.Patch32(frameReady, frameAt - (frameReady + 4));
+            code.EmitByte(0x49); code.EmitByte(0x0f); code.EmitByte(0x20); code.EmitByte(0xd3); // r11 = CR2
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(2608);
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xb4); code.EmitByte(0x24); code.Emit32(2616);
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0xbc); code.EmitByte(0x24); code.Emit32(2624);
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xac); code.EmitByte(0x24); code.Emit32(2632);
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x9c); code.EmitByte(0x24); code.Emit32(2640);
+            code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x9c); code.EmitByte(0x24); code.Emit32(2648);
+
+            EmitLeaR10Rva(code, textRva, messageRva);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xd6);
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe7);
+            code.EmitByte(0x48); code.EmitByte(0x81); code.EmitByte(0xc7); code.Emit32(2688);
+            code.EmitByte(0xb9); code.Emit32(messageLength + 1);
+            code.EmitByte(0xfc); code.EmitByte(0xf3); code.EmitByte(0xa4);
+
+            int line = 0;
+            int lineSize = 29;
+            int digits = headerLength + 11;
+            EmitPanicHex32FromBootInfo(code, digits + lineSize * line, 2600); line = line + 1;
+            EmitPanicHexFromBootInfo(code, digits + lineSize * line, 2608); line = line + 1;
+            EmitPanicHexFromBootInfo(code, digits + lineSize * line, 2616); line = line + 1;
+            EmitPanicHexFromBootInfo(code, digits + lineSize * line, 2624); line = line + 1;
+            EmitPanicHexFromBootInfo(code, digits + lineSize * line, 2632); line = line + 1;
+            EmitPanicHexFromBootInfo(code, digits + lineSize * line, 2640); line = line + 1;
+            EmitPanicHexFromBootInfo(code, digits + lineSize * line, 2648); line = line + 1;
+            EmitPanicHexFromStack(code, digits + lineSize * line, 112); line = line + 1; // RAX
+            EmitPanicHexFromStack(code, digits + lineSize * line, 88); line = line + 1;  // RBX
+            EmitPanicHexFromStack(code, digits + lineSize * line, 104); line = line + 1; // RCX
+            EmitPanicHexFromStack(code, digits + lineSize * line, 96); line = line + 1;  // RDX
+            EmitPanicHexFromStack(code, digits + lineSize * line, 72); line = line + 1;  // RSI
+            EmitPanicHexFromStack(code, digits + lineSize * line, 64); line = line + 1;  // RDI
+            EmitPanicHexFromStack(code, digits + lineSize * line, 80); line = line + 1;  // RBP
+            EmitPanicHexFromStack(code, digits + lineSize * line, 56); line = line + 1;  // R8
+            EmitPanicHexFromStack(code, digits + lineSize * line, 48); line = line + 1;  // R9
+            EmitPanicHexFromStack(code, digits + lineSize * line, 40); line = line + 1;  // R10
+            EmitPanicHexFromStack(code, digits + lineSize * line, 32); line = line + 1;  // R11
+            EmitPanicHexFromStack(code, digits + lineSize * line, 24); line = line + 1;  // R12
+            EmitPanicHexFromStack(code, digits + lineSize * line, 16); line = line + 1;  // R13
+            EmitPanicHexFromStack(code, digits + lineSize * line, 8); line = line + 1;   // R14
+            EmitPanicHexFromStack(code, digits + lineSize * line, 0);                   // R15
+            EmitPanicSerialReport(code);
+            EmitPanicFramebufferReport(code, textRva, fontRva);
+            code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(2672); code.Emit32(2);
+            int haltAt = code.Position(); code.Patch32(nestedPanic, haltAt - (nestedPanic + 4));
             EmitKernelHalt(code);
             return start;
         }
 
-        private int EmitExceptionInterruptStub(X64Assembler code, int textRva, int bootInfoRva, int vector) {
+        // Stubs avoid firmware services and enter a single allocation-free
+        // panic reporter. Masked IRQs and APIC handlers still acknowledge their
+        // controller and return with IRETQ.
+        private int EmitUnexpectedInterruptStub(X64Assembler code, int panicHandler) {
             int start = code.Position();
             code.EmitByte(0xfa); // cli
-            EmitLeaRdxRva(code, textRva, bootInfoRva);
-            code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(184); code.Emit32(vector);
-            code.EmitByte(0xc7); code.EmitByte(0x82); code.Emit32(188); code.Emit32(vector);
-            EmitKernelHalt(code);
+            code.EmitByte(0x68); code.Emit32(255);
+            EmitJumpTo(code, panicHandler);
+            return start;
+        }
+
+        private int EmitExceptionInterruptStub(X64Assembler code, int panicHandler, int vector) {
+            int start = code.Position();
+            code.EmitByte(0xfa); // cli
+            code.EmitByte(0x6a); code.EmitByte(vector);
+            EmitJumpTo(code, panicHandler);
             return start;
         }
 
