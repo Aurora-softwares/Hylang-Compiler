@@ -1,10 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(HylangCompiler VERSION 0.1.0 LANGUAGES CXX)
 
-set(HYDROGEN_RELEASE_VERSION "" CACHE STRING
-    "Version for hydrogen_package_release, for example alpha-0.0.1")
-set(HYDROGEN_RELEASE_BINARY "${CMAKE_CURRENT_SOURCE_DIR}/safe/hy" CACHE FILEPATH
-    "Verified self-hosted hy binary to package")
+set(HYDROGEN_RELEASE_VERSION "" CACHE STRING "Version for hydrogen_package_release, for example alpha-0.0.1")
+set(HYDROGEN_RELEASE_BINARY "${CMAKE_CURRENT_SOURCE_DIR}/safe/hy" CACHE FILEPATH "Verified self-hosted hy binary to package")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
