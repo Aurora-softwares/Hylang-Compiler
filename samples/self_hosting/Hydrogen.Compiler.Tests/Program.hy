@@ -53,6 +53,12 @@ namespace Hydrogen.Compiler.Tests {
                 bytes[offset + 2] * 65536 + (long)bytes[offset + 3] * 16777216;
         }
 
+        private static bool ContainsByte(byte[] bytes, int start, int value) {
+            int i = start;
+            while (i < bytes.Length) { if (bytes[i] == (byte)value) { return true; } i = i + 1; }
+            return false;
+        }
+
         public static int Main(string[] args) {
             SyntaxTree hello = SyntaxTree.Parse(new SourceText("public class Program { public static void Main(string[] args) { System.Console.WriteLine(\"Hello\"); } }"));
             Assert.Equal("Public", SyntaxFacts.KindName(hello.Tokens().Get(0).Kind()), "first token should be public");
@@ -135,6 +141,24 @@ namespace Hydrogen.Compiler.Tests {
                 "Australis backend should allocate literals and the largest read buffer");
             Assert.True(execImage[32] == 2 && execImage[41] == 3,
                 "Australis backend should emit write then terminal read opcodes");
+
+            string advancedExecSource = "public class Program { public static int Helper() { return 3; } " +
+                "public static int Main(string[] args) { " +
+                "int total = 0; for (int i = 0; i < 8; i = i + 1) { " +
+                "if (i % 2 == 0) { continue; } total = total + i; " +
+                "if (total > 10) { break; } } while (total < 20) { total = total + 2; } " +
+                "System.Console.WriteLine(total); return total; } }";
+            SyntaxTree advancedExecTree = SyntaxTree.ParseFast(new SourceText(advancedExecSource));
+            DiagnosticBag advancedExecDiagnostics = new DiagnosticBag();
+            BoundProgram advancedExecProgram = new Hydrogen.Compiler.Binding.Binder().Bind(
+                advancedExecTree.Root(), advancedExecDiagnostics);
+            Assert.True(!advancedExecDiagnostics.HasErrors(), "structured Australis program should bind");
+            byte[] advancedExecImage = new AustralisExecImageBuilder().Build(advancedExecProgram);
+            Assert.True(advancedExecImage != null && advancedExecImage.Length > 64,
+                "Australis backend should emit arithmetic and loop bytecode");
+            Assert.True(ContainsByte(advancedExecImage, 32, 19) &&
+                ContainsByte(advancedExecImage, 32, 28) && ContainsByte(advancedExecImage, 32, 32),
+                "Australis bytecode should include modulo, conditional branch, and scalar output");
 
             DirectMainCompiler directMain = new DirectMainCompiler();
             SyntaxTree directTree = SyntaxTree.ParseFast(new SourceText("public class Program { public static int Main(string[] args) { int x = 1; if (x == 1) { System.Console.WriteLine(\"x was 1\"); return 7; } System.Console.WriteLine(\"x was not 1\"); return 3; } }"));

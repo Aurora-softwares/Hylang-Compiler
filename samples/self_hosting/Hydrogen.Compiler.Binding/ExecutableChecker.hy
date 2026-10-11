@@ -452,6 +452,47 @@ namespace Hydrogen.Compiler.Binding {
                 qualified == "System.Australis.Process.Yield") {
                 return Intrinsic(e, qualified, "", "", "void");
             }
+            if (qualified == "System.Australis.Files.StatKind" ||
+                qualified == "System.Australis.Files.StatTimeFlags" ||
+                qualified == "System.Australis.Files.DirectoryCount" ||
+                qualified == "System.Australis.Files.Delete" ||
+                qualified == "System.Australis.Files.Mkdir" ||
+                qualified == "System.Australis.Files.Rmdir" ||
+                qualified == "System.Australis.Files.OpenRead" ||
+                qualified == "System.Australis.Files.OpenWrite") {
+                return Intrinsic(e, qualified, "string", "", "int");
+            }
+            if (qualified == "System.Australis.Files.StatSize" ||
+                qualified == "System.Australis.Files.StatId" ||
+                qualified == "System.Australis.Files.StatCreated" ||
+                qualified == "System.Australis.Files.StatModified" ||
+                qualified == "System.Australis.Files.StatAttributes") {
+                return Intrinsic(e, qualified, "string", "", "long");
+            }
+            if (qualified == "System.Australis.Files.DirectoryName") {
+                return Intrinsic(e, qualified, "string", "int", "int");
+            }
+            if (qualified == "System.Australis.Files.Create" ||
+                qualified == "System.Australis.Files.Rename") {
+                return Intrinsic(e, qualified, "string", "string", "int");
+            }
+            if (qualified == "System.Australis.Files.Replace" ||
+                qualified == "System.Australis.Files.Append") {
+                return Intrinsic(e, qualified, "string", "", "int");
+            }
+            if (qualified == "System.Australis.Files.Truncate") {
+                return Intrinsic(e, qualified, "long", "", "int");
+            }
+            if (qualified == "System.Australis.Files.ReadChecked") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Files.Status" ||
+                qualified == "System.Australis.Files.CloseChecked") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Files.WriteResult") {
+                return Intrinsic(e, qualified, "", "", "void");
+            }
             if (qualified == "System.Australis.Memory.StoreByte") {
                 return Intrinsic(e, qualified, "long", "int", "void");
             }

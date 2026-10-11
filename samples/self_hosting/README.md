@@ -29,7 +29,7 @@ hydrogen-stage1 new app|lib|tool|test|workspace|os|efi|kernel|exec <name>
 hydrogen-stage1 stage-compare <project.hyproj> --stage1 <artifact> --stage2 <artifact>
 ```
 
-`tokens` prints lexer tokens/locations. `parse` prints a syntax outline. `check` performs semantic checking; `--emit-ir` prints typed executable method-body IR. `compile` emits a Linux executable by default, or a constrained PE32+ UEFI application with `--target uefi-x64`; `build` accepts format-2 `exe`, `efi`, `kernel`, `exec`, and `os` projects. An `exec` project emits an Australis AUEX v1 program. OS builds emit referenced images below the specified output directory and may include `exec` projects. `stage-compare` compares existing files exactly; it does not build or behaviorally test them.
+`tokens` prints lexer tokens/locations. `parse` prints a syntax outline. `check` performs semantic checking; `--emit-ir` prints typed executable method-body IR. `compile` emits a Linux executable by default, or a constrained PE32+ UEFI application with `--target uefi-x64`; `build` accepts format-2 `exe`, `efi`, `kernel`, `exec`, and `os` projects. An `exec` project emits an Australis AUEX v1 program. Its structured backend supports scalar locals, integer and Boolean expressions, comparisons, short-circuit logic, branches, `if`, `while`, `for`, `break`, `continue`, scalar console output, and computed exit codes, along with the Australis terminal, file, metadata, and directory intrinsics. OS builds emit referenced images below the specified output directory and may include `exec` projects. `stage-compare` compares existing files exactly; it does not build or behaviorally test them.
 
 ## UEFI console and chain-loading target
 
