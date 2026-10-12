@@ -280,14 +280,18 @@ UEFI application, `type = "kernel"` for a raw freestanding kernel image,
 aggregate project. The older `type = "australis"` spelling remains accepted
 for existing AUEX projects.
 
-The AUEX backend supports scalar integer and Boolean locals, assignment,
+The AUEX backend supports scalar and string locals, assignment,
 arithmetic including division and remainder, comparisons, short-circuit
 Boolean expressions, `if`/`else`, `while`, `for`, `break`, and `continue`.
-`System.Console.Write` and `WriteLine` accept ASCII string literals and scalar
-values. `Main` may return a computed integer exit code. Australis terminal,
-file, metadata, directory, yield, and checked-memory intrinsics are available. User
-arguments, application method calls, general strings and arrays, and process
-creation are later AUEX features.
+`System.Console.Write` and `WriteLine` accept strings and scalar values, and
+`System.Console.ReadLine()` returns a string. `System.IO.File.Exists(path)`
+and `ReadAllText(path)`, `System.IO.File.WriteAllText(path, text)`, and
+`System.Convert.ToInt32(text)` use the same source API as native programs.
+AUEX text values are currently limited to 255 bytes. `Main` may return a
+computed integer exit code. Australis-specific file, metadata, directory,
+yield, and checked-memory intrinsics remain available for lower-level work.
+Application method calls, general arrays, and process creation are later AUEX
+features.
 
 An OS project lists component `.hyproj` files in `project_references` and has
 no sources of its own. Each component sets an `output` path relative to the

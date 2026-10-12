@@ -32,11 +32,15 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private AustralisBytecodeBuilder code;
         private byte[] data; private int dataLength; private int scratchCapacity;
         private int[] scratchPatches; private int scratchPatchCount;
+        private int[] heapPatches; private int heapPatchCount; private bool needsHeap;
         private string[] localNames; private string[] localTypes; private int localCount;
         private int[] breakPatches; private int breakCount;
         private int[] continuePatches; private int continueCount;
         private int loopDepth; private string valueType; private ElfImageBuilder ascii;
         private string entryArgumentName;
+        private IrFunction[] functions; private int[] functionStarts;
+        private int[] callPatches; private int[] callTargets; private int callCount;
+        private bool compilingMain;
 
         private static long DataBase() { return 5242880; }
 
@@ -45,23 +49,48 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             IrFunction main = FindMain(program.Module());
             if (main == null || main.Body() == null) { return null; }
             entryArgumentName = "args";
+            functions = program.Module().Functions();
+            functionStarts = new int[functions.Length];
+            int functionIndex = 0;
+            while (functionIndex < functionStarts.Length) {
+                functionStarts[functionIndex] = -1; functionIndex = functionIndex + 1;
+            }
+            callPatches = new int[0]; callTargets = new int[0]; callCount = 0;
+            compilingMain = true;
             if (main.Declaration() != null && main.Declaration().Parameters().Length == 1) {
                 entryArgumentName = main.Declaration().Parameters()[0].Name();
             }
             code = new AustralisBytecodeBuilder(); data = new byte[65536]; dataLength = 0;
             scratchCapacity = 0; scratchPatches = new int[0]; scratchPatchCount = 0;
+            heapPatches = new int[0]; heapPatchCount = 0; needsHeap = false;
             localNames = new string[0]; localTypes = new string[0]; localCount = 0;
             breakPatches = new int[0]; breakCount = 0;
             continuePatches = new int[0]; continueCount = 0;
             loopDepth = 0; valueType = "void"; ascii = new ElfImageBuilder();
             if (!CompileStatement(main.Body())) { return null; }
             code.Byte(1); code.Byte(0);
-            if (!code.IsValid() || dataLength + scratchCapacity > 65536) { return null; }
+            int pending = 0;
+            while (pending < callCount) {
+                int target = callTargets[pending];
+                if (functionStarts[target] < 0 && !CompileFunction(target)) { return null; }
+                pending = pending + 1;
+            }
+            pending = 0;
+            while (pending < callCount) {
+                code.Patch32(callPatches[pending], functionStarts[callTargets[pending]]);
+                pending = pending + 1;
+            }
+            if (!code.IsValid() || dataLength + scratchCapacity > 65536 ||
+                (needsHeap && dataLength + scratchCapacity >= 65536)) { return null; }
             long scratchAddress = DataBase() + dataLength; int sp = 0;
             while (sp < scratchPatchCount) { code.Patch32(scratchPatches[sp], scratchAddress); sp = sp + 1; }
+            long heapAddress = scratchAddress + scratchCapacity; sp = 0;
+            while (sp < heapPatchCount) { code.Patch32(heapPatches[sp], heapAddress); sp = sp + 1; }
             byte[] codeBytes = code.Bytes();
             if (codeBytes == null || codeBytes.Length < 1) { return null; }
-            int dataCapacity = dataLength + scratchCapacity; int dataOffset = 32 + codeBytes.Length;
+            int dataCapacity = dataLength + scratchCapacity;
+            if (needsHeap) { dataCapacity = 65536; }
+            int dataOffset = 32 + codeBytes.Length;
             byte[] output = new byte[dataOffset + dataLength];
             output[0] = (byte)65; output[1] = (byte)85; output[2] = (byte)69; output[3] = (byte)88;
             output[4] = (byte)1; output[5] = (byte)32;
@@ -100,6 +129,32 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 name[start + 3] == "i" && name[start + 4] == "n";
         }
 
+        private bool CompileFunction(int index) {
+            IrFunction function = functions[index];
+            if (function == null || function.Body() == null ||
+                function.Declaration() == null || !function.Declaration().IsStatic()) {
+                return false;
+            }
+            IrParameter[] parameters = function.Declaration().Parameters();
+            if (parameters.Length > 255) { return false; }
+            functionStarts[index] = code.Position();
+            localNames = new string[0]; localTypes = new string[0]; localCount = 0;
+            breakPatches = new int[0]; breakCount = 0;
+            continuePatches = new int[0]; continueCount = 0; loopDepth = 0;
+            compilingMain = false;
+            int parameter = 0;
+            while (parameter < parameters.Length) {
+                string type = parameters[parameter].Type().DisplayName();
+                if (!Scalar(type)) { return false; }
+                AddLocal(parameters[parameter].Name(), type);
+                parameter = parameter + 1;
+            }
+            if (!CompileStatement(function.Body())) { return false; }
+            if (function.ReturnType() == "void") { code.Byte(62); }
+            else { EmitPush(0); code.Byte(61); }
+            return code.IsValid();
+        }
+
         private bool CompileStatement(IrStatement statement) {
             if (statement == null) { return true; }
             int kind = statement.Kind();
@@ -125,9 +180,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return code.IsValid();
             }
             if (kind == IrStatement.KindReturnStatement()) {
-                if (statement.Expression() == null) { code.Byte(1); code.Byte(0); return true; }
-                if (!CompileExpression(statement.Expression()) || !Numeric(valueType)) { return false; }
-                code.Byte(29); return code.IsValid();
+                if (statement.Expression() == null) {
+                    if (compilingMain) { code.Byte(1); code.Byte(0); }
+                    else { code.Byte(62); }
+                    return code.IsValid();
+                }
+                if (!CompileExpression(statement.Expression()) ||
+                    (compilingMain && !Numeric(valueType)) ||
+                    (!compilingMain && !Scalar(valueType))) { return false; }
+                if (compilingMain) { code.Byte(29); }
+                else { code.Byte(61); }
+                return code.IsValid();
             }
             if (kind == IrStatement.KindIfStatement()) {
                 if (!CompileExpression(statement.Condition()) || valueType != "bool") { return false; }
@@ -309,6 +372,38 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
         private bool CompileInvocation(IrExpression expression) {
             string name = QualifiedName(expression.Target()); IrExpression[] args = expression.Arguments();
+            if (name == "System.Console.ReadLine") {
+                if (args.Length != 0) { return false; }
+                code.Byte(57); EmitHeapAddress();
+                valueType = "string"; return code.IsValid();
+            }
+            if (name == "System.IO.File.ReadAllText") {
+                if (args.Length != 1 || !CompileExpression(args[0]) || valueType != "string") {
+                    return false;
+                }
+                code.Byte(56); EmitHeapAddress();
+                valueType = "string"; return code.IsValid();
+            }
+            if (name == "System.IO.File.Exists") {
+                if (args.Length != 1 || !CompileExpression(args[0]) || valueType != "string") {
+                    return false;
+                }
+                code.Byte(51); code.Byte(0); EmitPush(1); code.Byte(21);
+                valueType = "bool"; return code.IsValid();
+            }
+            if (name == "System.IO.File.WriteAllText") {
+                if (args.Length != 2 || !CompileExpression(args[0]) || valueType != "string" ||
+                    !CompileExpression(args[1]) || valueType != "string") {
+                    return false;
+                }
+                code.Byte(58); valueType = "void"; return code.IsValid();
+            }
+            if (name == "System.Convert.ToInt32") {
+                if (args.Length != 1 || !CompileExpression(args[0]) || valueType != "string") {
+                    return false;
+                }
+                code.Byte(59); valueType = "int"; return code.IsValid();
+            }
             if (name == "System.Console.Write" || name == "System.Console.WriteLine") {
                 bool newline = name == "System.Console.WriteLine";
                 if (args.Length == 0 && newline) {
@@ -528,6 +623,46 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (args.Length != 0) { return false; }
                 code.Byte(9); valueType = "void"; return code.IsValid();
             }
+            if (name == "System.Australis.SystemInfo.Query") {
+                if (!OneNumber(args)) { return false; }
+                int selector = ParseInt(args[0].LiteralText());
+                if (selector < 0 || selector > 255) { return false; }
+                code.Byte(63); code.Byte(selector);
+                valueType = "int"; return code.IsValid();
+            }
+            string resolved = expression.ResolvedOwner() + ".";
+            string methodName = ""; int dot = 0;
+            while (dot < name.Length) {
+                if (name[dot] == ".") { methodName = ""; }
+                else { methodName = methodName + name[dot]; }
+                dot = dot + 1;
+            }
+            resolved = resolved + methodName;
+            int function = 0;
+            while (function < functions.Length) {
+                IrFunction candidate = functions[function];
+                if (candidate.Name() == resolved &&
+                    candidate.ParameterTypes().Length == args.Length &&
+                    candidate.Declaration() != null && candidate.Declaration().IsStatic() &&
+                    candidate.ReturnType() != "string[]") {
+                    int argument = 0; bool compatible = true;
+                    while (argument < args.Length) {
+                        if (!CompileExpression(args[argument]) ||
+                            !Compatible(valueType, candidate.ParameterTypes()[argument])) {
+                            compatible = false; break;
+                        }
+                        argument = argument + 1;
+                    }
+                    if (!compatible) { return false; }
+                    code.Byte(60); int patch = code.Position(); code.U32(0);
+                    code.Byte(args.Length);
+                    callPatches = AppendInt(callPatches, callCount, patch);
+                    callTargets = AppendInt(callTargets, callCount, function);
+                    callCount = callCount + 1;
+                    valueType = candidate.ReturnType(); return code.IsValid();
+                }
+                function = function + 1;
+            }
             return false;
         }
 
@@ -564,6 +699,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             int patch = code.Position(); code.U32(0);
             scratchPatches = AppendInt(scratchPatches, scratchPatchCount, patch);
             scratchPatchCount = scratchPatchCount + 1;
+        }
+        private void EmitHeapAddress() {
+            int patch = code.Position(); code.U32(0);
+            heapPatches = AppendInt(heapPatches, heapPatchCount, patch);
+            heapPatchCount = heapPatchCount + 1; needsHeap = true;
         }
         private bool EmitLiteralWrite(string text, bool newline) {
             int offset = AddAscii(text, newline); if (offset < 0) { return false; }

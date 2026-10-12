@@ -142,6 +142,30 @@ namespace Hydrogen.Compiler.Tests {
             Assert.True(execImage[32] == 2 && execImage[41] == 3,
                 "Australis backend should emit write then terminal read opcodes");
 
+            string portableExecSource = "public class Program { public static int Main(string[] args) { " +
+                "System.Console.Write(\"user> \"); " +
+                "string input = System.Console.ReadLine(); " +
+                "System.Console.WriteLine(input); " +
+                "if (!System.IO.File.Exists(\"/hello.txt\")) { return 2; } " +
+                "string contents = System.IO.File.ReadAllText(\"/hello.txt\"); " +
+                "System.IO.File.WriteAllText(\"/data/new\", contents); " +
+                "if (System.Convert.ToInt32(\"42\") != 42) { return 3; } " +
+                "System.Console.Write(contents); return 0; } }";
+            SyntaxTree portableExecTree = SyntaxTree.ParseFast(new SourceText(portableExecSource));
+            DiagnosticBag portableExecDiagnostics = new DiagnosticBag();
+            BoundProgram portableExecProgram = new Hydrogen.Compiler.Binding.Binder().Bind(
+                portableExecTree.Root(), portableExecDiagnostics);
+            Assert.True(!portableExecDiagnostics.HasErrors(),
+                "portable console and file intrinsics should bind");
+            byte[] portableExecImage = new AustralisExecImageBuilder().Build(portableExecProgram);
+            Assert.True(portableExecImage != null && Read32(portableExecImage, 16) == 65536,
+                "portable Australis strings should reserve checked result storage");
+            Assert.True(ContainsByte(portableExecImage, 32, 56) &&
+                ContainsByte(portableExecImage, 32, 57) &&
+                ContainsByte(portableExecImage, 32, 58) &&
+                ContainsByte(portableExecImage, 32, 59),
+                "portable Australis program should emit shared console, file, and conversion calls");
+
             string advancedExecSource = "public class Program { public static int Helper() { return 3; } " +
                 "public static int Main(string[] args) { " +
                 "int total = 0; for (int i = 0; i < 8; i = i + 1) { " +

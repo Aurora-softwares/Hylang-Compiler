@@ -458,6 +458,9 @@ namespace Hydrogen.Compiler.Binding {
                 qualified == "System.Australis.Process.Yield") {
                 return Intrinsic(e, qualified, "", "", "void");
             }
+            if (qualified == "System.Australis.SystemInfo.Query") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
             if (qualified == "System.Australis.Files.StatKind" ||
                 qualified == "System.Australis.Files.StatTimeFlags" ||
                 qualified == "System.Australis.Files.DirectoryCount" ||
