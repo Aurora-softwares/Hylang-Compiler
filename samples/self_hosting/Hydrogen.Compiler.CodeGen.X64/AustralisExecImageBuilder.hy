@@ -278,17 +278,34 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     receiver.Name() == entryArgumentName) {
                     code.Byte(45); valueType = "int"; return code.IsValid();
                 }
-                if (!CompileExpression(receiver) || valueType != "string") { return false; }
-                code.Byte(49); valueType = "int"; return code.IsValid();
+                if (!CompileExpression(receiver)) { return false; }
+                if (valueType == "string") { code.Byte(49); }
+                else if (valueType == "byte[]") { code.Byte(65); }
+                else { return false; }
+                valueType = "int"; return code.IsValid();
             }
             if (kind == IrExpression.KindIndex()) {
                 IrExpression receiver2 = expression.Receiver();
-                if (receiver2 == null || receiver2.Kind() != IrExpression.KindName() ||
-                    receiver2.Name() != entryArgumentName ||
+                if (receiver2 != null && receiver2.Kind() == IrExpression.KindName() &&
+                    receiver2.Name() == entryArgumentName) {
+                    if (!CompileExpression(expression.Index()) || !Numeric(valueType)) {
+                        return false;
+                    }
+                    code.Byte(46); valueType = "string"; return code.IsValid();
+                }
+                if (!CompileExpression(receiver2) || valueType != "byte[]" ||
                     !CompileExpression(expression.Index()) || !Numeric(valueType)) {
                     return false;
                 }
-                code.Byte(46); valueType = "string"; return code.IsValid();
+                code.Byte(66); valueType = "byte"; return code.IsValid();
+            }
+            if (kind == IrExpression.KindArrayCreation()) {
+                if (expression.Type() == null || expression.Type().DisplayName() != "byte" ||
+                    !CompileExpression(expression.Size()) || !Numeric(valueType)) {
+                    return false;
+                }
+                code.Byte(64); EmitHeapAddress();
+                valueType = "byte[]"; return code.IsValid();
             }
             if (kind == IrExpression.KindName()) {
                 int slot = FindLocal(expression.Name());
@@ -297,6 +314,14 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             if (kind == IrExpression.KindAssignment()) {
                 IrExpression target = expression.Target();
+                if (target != null && target.Kind() == IrExpression.KindIndex()) {
+                    if (!CompileExpression(target.Receiver()) || valueType != "byte[]" ||
+                        !CompileExpression(target.Index()) || !Numeric(valueType) ||
+                        !CompileExpression(expression.Value()) || !Numeric(valueType)) {
+                        return false;
+                    }
+                    code.Byte(67); valueType = "byte"; return code.IsValid();
+                }
                 if (target == null || target.Kind() != IrExpression.KindName()) { return false; }
                 int slot2 = FindLocal(target.Name());
                 if (slot2 < 0 || !CompileExpression(expression.Value()) ||
@@ -732,7 +757,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             while (i >= 0) { if (localNames[i] == name) { return i; } i = i - 1; }
             return -1;
         }
-        private bool Scalar(string type) { return type == "bool" || type == "string" || Numeric(type); }
+        private bool Scalar(string type) {
+            return type == "bool" || type == "string" || type == "byte[]" || Numeric(type);
+        }
         private bool Numeric(string type) {
             return type == "byte" || type == "sbyte" || type == "short" || type == "ushort" ||
                 type == "int" || type == "uint" || type == "long" || type == "ulong" ||
