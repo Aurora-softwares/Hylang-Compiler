@@ -189,7 +189,7 @@ namespace Hydrogen.Compiler.Cli {
             if (EndsWith(path, ".hyproj")) {
                 HyprojManifest manifest = HyprojManifest.Load(path);
                 if (manifest.Type() == "os") {
-                    return ProcessOsProject(path, manifest, "", true, emitIr);
+                    return ProcessOsProject(path, manifest, "", true, emitIr, null);
                 }
                 if (manifest.Type() == "exec" || manifest.Type() == "australis") {
                     NativeCompiler execCompiler = new NativeCompiler();
@@ -252,12 +252,35 @@ namespace Hydrogen.Compiler.Cli {
         }
 
         private static int Build(string[] args) {
-            if (args.Length != 4) {
-                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory>");
-                return 1;
+            string output = "";
+            bool hideProgress = false;
+            bool hideSpinner = false;
+            bool hideLog = false;
+            int option = 2;
+            while (option < args.Length) {
+                if (args[option] == "-o" || args[option] == "--output") {
+                    if (option + 1 >= args.Length || output != "") {
+                        System.Console.WriteLine("error: missing or repeated output path");
+                        return 1;
+                    }
+                    output = args[option + 1];
+                    option = option + 2;
+                } else if (args[option] == "--hide-progress") {
+                    hideProgress = true;
+                    option = option + 1;
+                } else if (args[option] == "--hide-spinner") {
+                    hideSpinner = true;
+                    option = option + 1;
+                } else if (args[option] == "--hide-log") {
+                    hideLog = true;
+                    option = option + 1;
+                } else {
+                    System.Console.WriteLine("error: unknown build argument: " + args[option]);
+                    return 1;
+                }
             }
-            if (args[2] != "-o") {
-                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory>");
+            if (output == "") {
+                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--hide-progress] [--hide-spinner] [--hide-log]");
                 return 1;
             }
 
@@ -272,8 +295,9 @@ namespace Hydrogen.Compiler.Cli {
                 System.Console.WriteLine("error: unsupported project format (expected format = 2)");
                 return 1;
             }
+            BuildProgress progress = new BuildProgress(hideProgress, hideSpinner, hideLog);
             if (manifest.Type() == "os") {
-                return ProcessOsProject(projectPath, manifest, args[3], false, false);
+                return ProcessOsProject(projectPath, manifest, output, false, false, progress);
             }
             if (manifest.Type() != "exe" &&
 				manifest.Type() != "efi" &&
@@ -285,25 +309,27 @@ namespace Hydrogen.Compiler.Cli {
             }
 
             NativeCompiler compiler = new NativeCompiler();
+            compiler.SetBuildProgress(progress);
             NativeCompilerResult result;
             if (manifest.Type() == "exe") {
-				result = compiler.BuildProject(projectPath, args[3]);
+				result = compiler.BuildProject(projectPath, output);
 			} else if (manifest.Type() == "kernel") {
-				result = compiler.BuildProjectKernel(projectPath, args[3]);
+				result = compiler.BuildProjectKernel(projectPath, output);
 			} else if (manifest.Type() == "australis" || manifest.Type() == "exec") {
-				result = compiler.BuildProjectAustralis(projectPath, args[3]);
+				result = compiler.BuildProjectAustralis(projectPath, output);
 			} else {
-				result = compiler.BuildProjectUefi(projectPath, args[3]);
+				result = compiler.BuildProjectUefi(projectPath, output);
 			}
+            progress.Stop();
             if (!result.Success()) {
                 System.Console.Write(result.DiagnosticsText());
                 return 1;
             }
-            System.Console.WriteLine("wrote " + args[3]);
+            if (!progress.ReportsResult()) { System.Console.WriteLine("wrote " + output); }
             return 0;
         }
 
-        private static int ProcessOsProject(string projectPath, HyprojManifest manifest, string outputDirectory, bool check, bool emitIr) {
+        private static int ProcessOsProject(string projectPath, HyprojManifest manifest, string outputDirectory, bool check, bool emitIr, BuildProgress progress) {
             if (manifest.Format() != 2) {
                 System.Console.WriteLine("error: unsupported OS project format (expected format = 2)");
                 return 1;
@@ -350,6 +376,7 @@ namespace Hydrogen.Compiler.Cli {
             }
 
             NativeCompiler compiler = new NativeCompiler();
+            if (progress != null) { compiler.SetBuildProgress(progress); }
             int index = 0;
             while (index < paths.Length) {
                 string outputPath = PathUtils.Join(outputDirectory, outputs[index]);
@@ -367,6 +394,7 @@ namespace Hydrogen.Compiler.Cli {
                     else if (child.Type() == "exec" || child.Type() == "australis") { result = compiler.BuildProjectAustralis(paths[index], outputPath); }
                     else { result = compiler.BuildProject(paths[index], outputPath); }
                 }
+                if (progress != null) { progress.Stop(); }
                 if (!result.Success()) {
                     System.Console.Write(result.DiagnosticsText());
                     return 1;
@@ -375,7 +403,7 @@ namespace Hydrogen.Compiler.Cli {
                     System.Console.WriteLine("check ok: " + paths[index]);
                     if (emitIr) { System.Console.WriteLine(result.DiagnosticsText()); }
                 } else {
-                    System.Console.WriteLine("wrote " + outputPath);
+                    if (progress == null || !progress.ReportsResult()) { System.Console.WriteLine("wrote " + outputPath); }
                 }
                 index = index + 1;
             }
@@ -461,7 +489,7 @@ namespace Hydrogen.Compiler.Cli {
             System.Console.WriteLine("usage: hy check <file.hy> --emit-ir");
             System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");
             System.Console.WriteLine("usage: hy compile <file.hy> --target uefi-x64 -o <output>");
-            System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory>");
+            System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--hide-progress] [--hide-spinner] [--hide-log]");
             System.Console.WriteLine("usage: hy stage-compare <project.hyproj> --stage1 <path> --stage2 <path>");
         }
     }

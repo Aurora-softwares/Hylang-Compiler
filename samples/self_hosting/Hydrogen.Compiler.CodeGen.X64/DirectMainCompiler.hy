@@ -41,6 +41,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
     }
 
     public class DirectMainCompiler {
+        private Hydrogen.Compiler.Core.BuildProgress buildProgress;
+        private int emittedMethods;
+
+        public void SetBuildProgress(Hydrogen.Compiler.Core.BuildProgress value) {
+            buildProgress = value;
+        }
+
         private X64Assembler code;
         private string[] localNames;
         private int localCount;
@@ -235,6 +242,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                             failure = functions[i].Owner() + "." + functions[i].Declaration().Name() + ": " + failure;
                             return false;
                         }
+                        emittedMethods = emittedMethods + 1;
+                        if (buildProgress != null && emittedMethods % 10 == 0) {
+                            buildProgress.Pulse("Compiled " + emittedMethods + " methods");
+                        }
                         progress = true;
                     }
                     i = i + 1;
@@ -245,10 +256,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 PatchRelative(callPatchOffsets[i], functions[callPatchTargets[i]].Position());
                 i = i + 1;
             }
+            if (buildProgress != null) { buildProgress.Pulse("Compiled " + emittedMethods + " methods"); }
             return true;
         }
 
         private void Reset(IrModule input) {
+            emittedMethods = 0;
             module = input;
             IrUnit root = module.Root();
             code = new X64Assembler();
@@ -1028,6 +1041,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (intrinsic == "System.Console.WriteLine") { newline = 1; }
                 code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc6); code.Emit32(newline);
                 EmitRuntime("rt_print"); valueType = "void"; return true;
+            }
+            if (intrinsic == "System.Console.WriteBytes") {
+                return RuntimeCall(expression, "rt_console_bytes", "byte[]", "", "void");
+            }
+            if (intrinsic == "System.Console.IsTerminal") {
+                return RuntimeCall(expression, "rt_isatty", "", "", "bool");
             }
             if (intrinsic == "System.IO.File.Exists") { return RuntimeCall(expression, "rt_exists", "string", "", "bool"); }
             if (intrinsic == "System.IO.File.ReadAllText") { return RuntimeCall(expression, "rt_read_text", "string", "", "string"); }

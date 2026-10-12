@@ -38,6 +38,20 @@ namespace Hydrogen.Compiler.Syntax {
             return new SyntaxTree(source, tokens, diagnostics, "", root);
         }
 
+        public static SyntaxTree ParseFastWithProgress(SourceText source, Hydrogen.Compiler.Core.BuildProgress progress, string path) {
+            DiagnosticBag diagnostics = new DiagnosticBag();
+            Lexer lexer = new Lexer(source, diagnostics);
+            progress.Begin("Lexing " + path);
+            lexer.SetBuildProgress(progress);
+            SyntaxTokenList tokens = lexer.LexAll();
+            progress.Step("Lexed " + path);
+            progress.Begin("Parsing " + path);
+            AstParser ast = new AstParser(tokens, diagnostics);
+            ast.SetBuildProgress(progress);
+            CompilationUnitSyntax root = ast.ParseCompilationUnit();
+            return new SyntaxTree(source, tokens, diagnostics, "", root);
+        }
+
         public SourceText Source() {
             return source;
         }

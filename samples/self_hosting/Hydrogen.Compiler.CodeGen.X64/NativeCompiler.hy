@@ -25,6 +25,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
     }
 
     public class NativeCompiler {
+        private BuildProgress progress;
+
+        public void SetBuildProgress(BuildProgress value) {
+            progress = value;
+        }
+
         public NativeCompilerResult BuildProject(string projectPath, string outputPath) {
             return ProcessProject(projectPath, outputPath, false, false, false, false, false);
         }
@@ -56,12 +62,18 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (sources.Length == 0) {
                 return new NativeCompilerResult(false, "error: project has no sources\n");
             }
+            if (progress != null && !check) {
+                int steps = sources.Length * 3 + 4;
+                if (uefi || kernel || australis) { steps = sources.Length * 3 + 3; }
+                progress.Start(projectPath, steps);
+            }
 
             // Keep only syntax roots after each file has passed parsing. Token
             // lists and source buffers are not needed by executable lowering.
             CompilationUnitSyntax[] units = new CompilationUnitSyntax[sources.Length];
             int i = 0;
             while (i < sources.Length) {
+                if (progress != null && !check) { progress.Begin("Reading " + sources[i]); }
                 SourceText source = SourceText.FromFile(sources[i]);
                 DiagnosticBag subsetDiagnostics = new DiagnosticBag();
                 SelfHostSubsetValidator subset = new SelfHostSubsetValidator();
@@ -69,16 +81,23 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     return new NativeCompilerResult(false, sources[i] + ":\n" + subsetDiagnostics.ToText());
                 }
 
-                SyntaxTree tree = SyntaxTree.ParseFast(source);
+                SyntaxTree tree;
+                if (progress != null && !check) {
+                    tree = SyntaxTree.ParseFastWithProgress(source, progress, sources[i]);
+                } else {
+                    tree = SyntaxTree.ParseFast(source);
+                }
                 if (tree.Diagnostics().HasErrors()) {
                     return new NativeCompilerResult(false, sources[i] + ":\n" + tree.Diagnostics().ToText());
                 }
                 units[i] = tree.Root();
+                if (progress != null && !check) { progress.Step("Parsed " + sources[i]); }
                 i = i + 1;
             }
 
             DiagnosticBag diagnostics = new DiagnosticBag();
             Hydrogen.Compiler.Binding.Binder binder = new Hydrogen.Compiler.Binding.Binder();
+            if (progress != null && !check) { progress.Begin("Binding program"); }
             BoundProgram program = binder.BindUnits(units, diagnostics);
             // Bound executable IR owns its nodes; the AST closure can be released
             // before native code/data buffers are allocated.
@@ -86,6 +105,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (diagnostics.HasErrors()) {
                 return new NativeCompilerResult(false, projectPath + ":\n" + diagnostics.ToText());
             }
+            if (progress != null && !check) { progress.Step("Bound program"); }
 
             if (check) {
                 if (australis) {
@@ -149,19 +169,29 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
         private NativeCompilerResult EmitNativeImage(BoundProgram program, string inputPath, string outputPath) {
             DirectMainCompiler direct = new DirectMainCompiler();
+            if (progress != null) {
+                progress.Begin("Lowering program");
+                direct.SetBuildProgress(progress);
+            }
             IrLowering lowering = new IrLowering();
-            DirectImageResult result = direct.Compile(lowering.Lower(program));
+            IrModule lowered = lowering.Lower(program);
+            if (progress != null) { progress.Begin("Compiling native image"); }
+            DirectImageResult result = direct.Compile(lowered);
             if (!result.Success()) {
                 return new NativeCompilerResult(false, inputPath + ": error: native compilation failed: " + result.Message() + "\n");
             }
+            if (progress != null) { progress.Step("Generated native image"); }
 
             // Write only after the entire entrypoint has compiled successfully.
             // Unsupported code must never become a partial program or an IR-debug ELF.
+            if (progress != null) { progress.Begin("Writing " + outputPath); }
             System.IO.File.WriteAllBytes(outputPath, result.Image());
+            if (progress != null) { progress.Step("Wrote " + outputPath); }
             return new NativeCompilerResult(true, "");
         }
 
         private NativeCompilerResult EmitUefiImage(BoundProgram program, string inputPath, string outputPath) {
+            if (progress != null) { progress.Begin("Generating UEFI image"); }
             IrLowering lowering = new IrLowering();
             IrEntryPoint entryPoint = lowering.LowerEntryPoint(program);
             byte[] kernelCode = new byte[0];
@@ -176,6 +206,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             while (i < ops.Length) {
                 if (ops[i].Kind() == IrOp.KindExecuteKernel() && !rawKernelLoad) {
                     DirectMainCompiler direct = new DirectMainCompiler();
+                    if (progress != null) { direct.SetBuildProgress(progress); }
                     DirectImageResult compiled = direct.CompileFreestanding(lowering.Lower(program), "KernelMain", "Run");
                     if (!compiled.Success()) {
                         return new NativeCompilerResult(false, inputPath + ": error: freestanding kernel compilation failed: " + compiled.Message() + "\n");
@@ -190,25 +221,34 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (!result.Success()) {
                 return new NativeCompilerResult(false, inputPath + ": error: UEFI compilation failed: " + result.Message() + "\n");
             }
+            if (progress != null) { progress.Step("Generated UEFI image"); }
+            if (progress != null) { progress.Begin("Writing " + outputPath); }
             System.IO.File.WriteAllBytes(outputPath, result.Image());
+            if (progress != null) { progress.Step("Wrote " + outputPath); }
             return new NativeCompilerResult(true, "");
         }
 
 		private NativeCompilerResult EmitAustralisImage(BoundProgram program, string inputPath, string outputPath) {
+			if (progress != null) { progress.Begin("Generating Australis image"); }
 			AustralisExecImageBuilder builder = new AustralisExecImageBuilder();
 			byte[] executable = builder.Build(program);
 			if (executable == null) {
 				return new NativeCompilerResult( false, inputPath + ": unsupported Australis program\n");
 			}
+			if (progress != null) { progress.Step("Generated Australis image"); }
+			if (progress != null) { progress.Begin("Writing " + outputPath); }
 			System.IO.File.WriteAllBytes(outputPath, executable);
+			if (progress != null) { progress.Step("Wrote " + outputPath); }
 			return new NativeCompilerResult(true, "");
 		}
 
         // AUKR v1: 16-byte header followed by raw position-independent code.
         // The loader validates size and entry offset before ending boot services.
         private NativeCompilerResult EmitKernelImage(BoundProgram program, string inputPath, string outputPath) {
+            if (progress != null) { progress.Begin("Generating kernel image"); }
             IrLowering lowering = new IrLowering();
             DirectMainCompiler direct = new DirectMainCompiler();
+            if (progress != null) { direct.SetBuildProgress(progress); }
             DirectImageResult compiled = direct.CompileFreestanding(lowering.Lower(program), "KernelMain", "Run");
             if (!compiled.Success()) {
                 return new NativeCompilerResult(false, inputPath + ": error: kernel compilation failed: " + compiled.Message() + "\n");
@@ -230,7 +270,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             image[12] = (byte)16; // entry offset
             i = 0;
             while (i < code.Length) { image[16 + i] = code[i]; i = i + 1; }
+            if (progress != null) { progress.Step("Generated kernel image"); }
+            if (progress != null) { progress.Begin("Writing " + outputPath); }
             System.IO.File.WriteAllBytes(outputPath, image);
+            if (progress != null) { progress.Step("Wrote " + outputPath); }
             return new NativeCompilerResult(true, "");
         }
 

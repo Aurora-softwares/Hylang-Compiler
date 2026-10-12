@@ -431,6 +431,12 @@ namespace Hydrogen.Compiler.Binding {
                 int i = 0; while (i < n) { if (!Printable(Expression(e.Arguments()[i]))) { Error("console output requires a printable value"); } i = i + 1; }
                 e.SetResolvedOwner("System.Console"); return "void";
             }
+            if (qualified == "System.Console.WriteBytes") {
+                return Intrinsic(e, qualified, "byte[]", "", "void");
+            }
+            if (qualified == "System.Console.IsTerminal") {
+                return Intrinsic(e, qualified, "", "", "bool");
+            }
             if (qualified == "System.Console.ReadLine") { return Intrinsic(e, qualified, "", "", "string"); }
             if (qualified == "System.Australis.Terminal.Write" ||
                 qualified == "System.Australis.Terminal.WriteLine") {
@@ -486,8 +492,15 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.Australis.Files.ReadChecked") {
                 return Intrinsic(e, qualified, "int", "", "int");
             }
+            if (qualified == "System.Australis.Files.ResultByte") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Files.ResultU32") {
+                return Intrinsic(e, qualified, "int", "", "long");
+            }
             if (qualified == "System.Australis.Files.Status" ||
-                qualified == "System.Australis.Files.CloseChecked") {
+                qualified == "System.Australis.Files.CloseChecked" ||
+                qualified == "System.Australis.Files.ApiVersion") {
                 return Intrinsic(e, qualified, "", "", "int");
             }
             if (qualified == "System.Australis.Files.WriteResult") {

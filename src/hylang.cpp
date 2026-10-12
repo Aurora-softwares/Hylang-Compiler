@@ -25,6 +25,12 @@
 #include <variant>
 #include <vector>
 
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace hylang {
 namespace {
 
@@ -192,6 +198,10 @@ class Lexer {
 		Lexer(fs::path file, string source, DiagnosticBag& diagnostics)
 			: file_(std::move(file)), source_(std::move(source)), diagnostics_(diagnostics) {}
 
+		void set_progress(std::function<void(std::size_t, std::size_t)> callback) {
+			progress_ = std::move(callback);
+		}
+
 		vector<Token> lex() {
 			vector<Token> tokens;
 			while (true) {
@@ -314,6 +324,7 @@ class Lexer {
 				}
 			}
 
+			if (progress_) progress_(source_.size(), source_.size());
 			return tokens;
 		}
 
@@ -339,6 +350,7 @@ class Lexer {
 				return '\0';
 			}
 			const char ch = source_[index_++];
+			if (progress_ && index_ % 1024 == 0) progress_(index_, source_.size());
 			if (ch == '\n') {
 				++line_;
 				column_ = 1;
@@ -511,6 +523,7 @@ class Lexer {
 		fs::path file_;
 		string source_;
 		DiagnosticBag& diagnostics_;
+		std::function<void(std::size_t, std::size_t)> progress_;
 		std::size_t index_ = 0;
 		int line_ = 1;
 		int column_ = 1;
@@ -758,6 +771,10 @@ public:
     Parser(fs::path file, vector<Token> tokens, DiagnosticBag& diagnostics)
         : file_(std::move(file)), tokens_(std::move(tokens)), diagnostics_(diagnostics) {}
 
+    void set_progress(std::function<void(std::size_t, std::size_t)> callback) {
+        progress_ = std::move(callback);
+    }
+
     CompilationUnitSyntax parse() {
         CompilationUnitSyntax unit;
         unit.file = file_;
@@ -791,6 +808,7 @@ public:
             }
         }
 
+        if (progress_) progress_(tokens_.size(), tokens_.size());
         return unit;
     }
 
@@ -811,6 +829,7 @@ private:
     bool match(TokenKind kind) {
         if (check(kind)) {
             ++index_;
+            report_progress();
             return true;
         }
         return false;
@@ -819,8 +838,13 @@ private:
     const Token& advance() {
         if (!check(TokenKind::EndOfFile)) {
             ++index_;
+            report_progress();
         }
         return previous();
+    }
+
+    void report_progress() {
+        if (progress_ && index_ % 256 == 0) progress_(index_, tokens_.size());
     }
 
     const Token& previous() const {
@@ -1870,6 +1894,7 @@ private:
     fs::path file_;
     vector<Token> tokens_;
     DiagnosticBag& diagnostics_;
+    std::function<void(std::size_t, std::size_t)> progress_;
     std::size_t index_ = 0;
 };
 
@@ -2250,6 +2275,8 @@ struct SemanticModel {
     MethodSymbol* console_write_string = nullptr;
     MethodSymbol* console_write_int = nullptr;
     MethodSymbol* console_write_bool = nullptr;
+    MethodSymbol* console_write_bytes = nullptr;
+    MethodSymbol* console_is_terminal = nullptr;
     MethodSymbol* console_writeline_string = nullptr;
     MethodSymbol* console_writeline_int = nullptr;
     MethodSymbol* console_writeline_bool = nullptr;
@@ -3009,6 +3036,9 @@ private:
             create_builtin(model.console_class, "Write", &model.void_type, {{"value", &model.int_type}});
         model.console_write_bool =
             create_builtin(model.console_class, "Write", &model.void_type, {{"value", &model.bool_type}});
+        model.console_write_bytes = create_builtin(model.console_class, "WriteBytes", &model.void_type,
+                                                   {{"value", model.get_array_type(&model.byte_type)}});
+        model.console_is_terminal = create_builtin(model.console_class, "IsTerminal", &model.bool_type, {});
         model.console_writeline_string =
             create_builtin(model.console_class, "WriteLine", &model.void_type, {{"value", &model.string_type}});
         model.console_writeline_int =
@@ -6002,7 +6032,9 @@ private:
             std::cout << "null";
         }
         if (newline) {
-            std::cout << '\n';
+            std::cout << '\n' << std::flush;
+        } else {
+            std::cout << std::flush;
         }
     }
 
@@ -6244,6 +6276,26 @@ private:
                         const vector<Value>& arguments,
                         const vector<const TypeSymbol*>* argument_types = nullptr) {
         if (method.is_builtin) {
+            if (method.owner == program_.semantic_model.console_class && method.name == "IsTerminal") {
+#ifdef _WIN32
+                return Value{_isatty(_fileno(stdout)) != 0};
+#else
+                return Value{isatty(fileno(stdout)) != 0};
+#endif
+            }
+            if (method.owner == program_.semantic_model.console_class && method.name == "WriteBytes") {
+                if (arguments.size() != 1 || !std::holds_alternative<std::shared_ptr<RuntimeArray>>(arguments[0].data)) {
+                    throw std::runtime_error("System.Console.WriteBytes requires a byte array");
+                }
+                const auto& array = std::get<std::shared_ptr<RuntimeArray>>(arguments[0].data);
+                if (array != nullptr) {
+                    for (const auto& element : array->elements) {
+                        std::cout.put(static_cast<char>(std::get<int64_t>(element.data) & 0xFF));
+                    }
+                    std::cout.flush();
+                }
+                return Value{nullptr};
+            }
             if (method.owner == program_.semantic_model.console_class &&
                 (method.name == "Write" || method.name == "WriteLine")) {
                 const TypeSymbol* argument_type =
@@ -7224,6 +7276,7 @@ private:
         out << "#include <stdio.h>\n";
         out << "#include <stdlib.h>\n";
         out << "#include <string.h>\n\n";
+        out << "#ifdef _WIN32\n#include <io.h>\n#else\n#include <unistd.h>\n#endif\n\n";
 
         // --- Type ID constants ---
         out << "#define HY_TYPE_ID_STRING (-1)\n";
@@ -7754,6 +7807,19 @@ private:
         // --- Console helpers ---
         out << "static void hy_console_write_string(HyString* value) {\n";
         out << "    if (value != NULL && value->bytes != NULL) fwrite(value->bytes, 1, (size_t)value->length, stdout);\n";
+        out << "    fflush(stdout);\n";
+        out << "}\n";
+        out << "static void hy_console_write_bytes(HyArray* value) {\n";
+        out << "    if (value == NULL) return;\n";
+        out << "    for (int64_t i = 0; i < value->length; ++i) {\n";
+        out << "        unsigned char byte = (unsigned char)(((int64_t*)value->elements)[i] & 0xFF);\n";
+        out << "        fwrite(&byte, 1, 1, stdout);\n";
+        out << "    }\n";
+        out << "    fflush(stdout);\n";
+        out << "}\n";
+        out << "static bool hy_console_is_terminal(void) {\n";
+        out << "#ifdef _WIN32\n    return _isatty(_fileno(stdout)) != 0;\n";
+        out << "#else\n    return isatty(1) != 0;\n#endif\n";
         out << "}\n";
         out << "static void hy_console_write_int(int64_t value) {\n";
         out << "    printf(\"%lld\", (long long)value);\n";
@@ -7764,12 +7830,15 @@ private:
         out << "static void hy_console_writeline_string(HyString* value) {\n";
         out << "    if (value != NULL && value->bytes != NULL) fwrite(value->bytes, 1, (size_t)value->length, stdout);\n";
         out << "    putchar('\\n');\n";
+        out << "    fflush(stdout);\n";
         out << "}\n";
         out << "static void hy_console_writeline_int(int64_t value) {\n";
         out << "    printf(\"%lld\\n\", (long long)value);\n";
+        out << "    fflush(stdout);\n";
         out << "}\n";
         out << "static void hy_console_writeline_bool(bool value) {\n";
         out << "    printf(\"%s\\n\", value ? \"true\" : \"false\");\n";
+        out << "    fflush(stdout);\n";
         out << "}\n\n";
 
         // --- File helpers ---
@@ -8996,6 +9065,9 @@ private:
             case BoundExpressionKind::Call: {
                 const auto& call = static_cast<const BoundCallExpression&>(expression);
                 if (call.method->is_builtin && call.method->owner == program_.semantic_model.console_class) {
+                    if (call.method == program_.semantic_model.console_is_terminal) {
+                        return "hy_console_is_terminal()";
+                    }
                     if (!call.arguments.empty() &&
                         call.arguments[0]->type != nullptr &&
                         call.arguments[0]->type->kind == TypeKind::Enum &&
@@ -9007,6 +9079,8 @@ private:
                     string function_name = "hy_console_writeline_string";
                     if (call.method == program_.semantic_model.console_write_string) {
                         function_name = "hy_console_write_string";
+                    } else if (call.method == program_.semantic_model.console_write_bytes) {
+                        function_name = "hy_console_write_bytes";
                     } else if (call.method == program_.semantic_model.console_write_int) {
                         function_name = "hy_console_write_int";
                     } else if (call.method == program_.semantic_model.console_write_bool) {
@@ -9706,17 +9780,30 @@ void collect_workspace_projects(const fs::path& path,
     }
 }
 
-vector<CompilationUnitSyntax> parse_units(const vector<fs::path>& source_files, DiagnosticBag& diagnostics) {
+vector<CompilationUnitSyntax> parse_units(const vector<fs::path>& source_files, DiagnosticBag& diagnostics,
+                                          const std::function<void(const fs::path&)>& on_parsed = {},
+                                          const std::function<void(const fs::path&)>& on_parsing = {},
+                                          const std::function<void(std::size_t)>& on_action_progress = {}) {
     vector<CompilationUnitSyntax> units;
     for (const auto& source_file : source_files) {
+        if (on_parsing) on_parsing(source_file);
         string source_text;
         if (!read_text_file(source_file, source_text)) {
             diagnostics.add(source_file, 1, 1, "Could not read source file");
             continue;
         }
         Lexer lexer(source_file, source_text, diagnostics);
+        if (on_action_progress) lexer.set_progress([&](std::size_t done, std::size_t total) {
+            on_action_progress(total == 0 ? 50 : done * 50 / total);
+        });
         Parser parser(source_file, lexer.lex(), diagnostics);
+        if (on_action_progress) parser.set_progress([&](std::size_t done, std::size_t total) {
+            on_action_progress(total == 0 ? 99 : 50 + done * 49 / total);
+        });
         units.push_back(parser.parse());
+        if (on_parsed) {
+            on_parsed(source_file);
+        }
     }
     return units;
 }
@@ -10062,9 +10149,13 @@ vector<fs::path> collect_target_source_files(const fs::path& input_path, Diagnos
     return source_files;
 }
 
-std::unique_ptr<BoundProgram> load_program_from_target(const fs::path& input_path, DiagnosticBag& diagnostics) {
+std::unique_ptr<BoundProgram> load_program_from_target(const fs::path& input_path, DiagnosticBag& diagnostics,
+    const std::function<void(const fs::path&)>& on_parsed = {}, const std::function<void()>& on_bound = {},
+    const std::function<void()>& on_binding = {},
+    const std::function<void(const fs::path&)>& on_parsing = {},
+    const std::function<void(std::size_t)>& on_action_progress = {}) {
     vector<fs::path> source_files = collect_target_source_files(input_path, diagnostics);
-    auto units = parse_units(source_files, diagnostics);
+    auto units = parse_units(source_files, diagnostics, on_parsed, on_parsing, on_action_progress);
     if (diagnostics.has_errors()) {
         return nullptr;
     }
@@ -10075,8 +10166,12 @@ std::unique_ptr<BoundProgram> load_program_from_target(const fs::path& input_pat
         return nullptr;
     }
 
+    if (on_binding) on_binding();
     SemanticBuilder builder(std::move(units), diagnostics);
     auto program = builder.build();
+    if (on_bound && !diagnostics.has_errors()) {
+        on_bound();
+    }
     if (diagnostics.has_errors()) {
         return nullptr;
     }
@@ -11256,7 +11351,20 @@ BuildResult build_target(const BuildOptions& options) {
     }
 
     const vector<fs::path> source_files = collect_target_source_files(options.input_path, diagnostics);
-    const auto program = load_program_from_target(options.input_path, diagnostics);
+    const std::size_t total = source_files.size() + 3;
+    std::size_t completed = 0;
+    const auto status = [&](const string& message) {
+        if (options.progress) options.progress(completed, total, message);
+    };
+    const auto advance = [&](const string& message) {
+        if (options.progress) options.progress(++completed, total, message);
+    };
+    const auto program = load_program_from_target(options.input_path, diagnostics,
+        [&](const fs::path& path) { advance("Parsed " + path.string()); },
+        [&]() { advance("Bound program"); },
+        [&]() { status("Binding program"); },
+        [&](const fs::path& path) { status("Parsing " + path.string()); },
+        options.action_progress);
     if (!program) {
         return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
@@ -11292,10 +11400,12 @@ BuildResult build_target(const BuildOptions& options) {
         if (options.debug) {
             cached.source_map_path = build_dir / (manifest->name + ".hymap.json");
         }
+        if (options.progress) options.progress(total, total, "Cache hit: " + output_path.string());
         return cached;
     }
 
     if (target_type == "uefi-x64") {
+        status("Generating UEFI image");
         string message;
         string failure;
         if (!uefi_hello_message(*program, message, failure)) {
@@ -11306,7 +11416,9 @@ BuildResult build_target(const BuildOptions& options) {
             diagnostics.add(output_path, 1, 1, "Could not write UEFI image");
             return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
         }
+        advance("Generated UEFI image");
         write_text_file(cache_key_path, fingerprint + "\n");
+        advance("Wrote " + output_path.string());
         BuildResult built;
         built.success = true;
         built.output_path = output_path;
@@ -11320,12 +11432,14 @@ BuildResult build_target(const BuildOptions& options) {
     }
 
     CEmitter emitter(*program);
+    status("Generating C source");
     const string c_source = target_type == "lib" ? emitter.emit_library() : emitter.emit_executable();
     const fs::path generated_c = build_dir / (manifest->name + ".generated.c");
     if (!write_text_file(generated_c, c_source)) {
         diagnostics.add(generated_c, 1, 1, "Could not write generated C file");
         return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
+    advance("Generated C: " + generated_c.string());
 
     fs::path source_map_path;
     if (options.debug) {
@@ -11337,6 +11451,7 @@ BuildResult build_target(const BuildOptions& options) {
     }
 
     int result = 0;
+    status("Compiling native output");
     if (target_type == "exe") {
         string command;
         if (toolchain->uses_msvc) {
@@ -11372,6 +11487,7 @@ BuildResult build_target(const BuildOptions& options) {
         diagnostics.add(generated_c, 1, 1, "Host toolchain failed while compiling generated C");
         return BuildResult{false, std::move(diagnostics.items), {}, source_map_path, false};
     }
+    advance("Compiled " + output_path.string());
 
     write_text_file(cache_key_path, fingerprint + "\n");
 

@@ -2,6 +2,7 @@ namespace Hydrogen.Compiler.IR {
     public class IrFunction {
         private IrMethod declaration;
         public void SetDeclaration(IrMethod value) { declaration = value; }
+        public IrMethod Declaration() { return declaration; }
         private IrStatement body;
         public void SetBody(IrStatement value) {
             if (declaration != null) { declaration.SetBody(value); } else { body = value; }
@@ -48,4 +49,3 @@ namespace Hydrogen.Compiler.IR {
         }
     }
 }
-

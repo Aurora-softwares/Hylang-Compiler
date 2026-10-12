@@ -1,6 +1,10 @@
+<div align="center">
+
+<img src="assets/hydrogen.icon.svg" width="30%" />
+
 # Hydrogen (Hylang)
 
-<img src="assets/hydrogen.icon.svg" style="display: block;margin-left: auto; margin-right: auto; width: 30%;" />
+</div>
 
 Hydrogen is a C#-inspired language with classes, methods, managed strings and arrays, and explicit low-level facilities. Source files use `.hy`; project manifests use `.hyproj`.
 
@@ -14,6 +18,12 @@ The Hydrogen-written compiler produces standalone Linux x86-64 executables, cons
 | `hyc build` | Compatibility build command | Host C backend, executables or static libraries |
 
 See the [language and tool reference](https://aurora-softwares.github.io/Hylang-Docs/) and [native compiler guide](samples/self_hosting/README.md) for the supported features of each route.
+
+## Build output
+
+`hy build`, `hyc build`, and the self-hosted `hy build` update one terminal line per action. The braille spinner and 60-character bar show overall build progress, with a separate percentage for the active action. The line becomes its `100%` result when that action completes. Overall progress counts completed milestones, while lexing and parsing use source and token positions for their action percentages. Stages without measurable internal work stay at 0% until completion. The SDK spinner animates while a terminal build is busy. Redirected output uses plain text without terminal escape codes.
+
+Use `--hide-progress`, `--hide-spinner`, or `--hide-log` to remove individual parts. For example, `hy build MyApp/MyApp.hyproj --hide-progress` keeps the spinner and messages. Using all three flags leaves the normal output path or `wrote` result, plus any errors.
 
 ## Package a self-hosted release
 

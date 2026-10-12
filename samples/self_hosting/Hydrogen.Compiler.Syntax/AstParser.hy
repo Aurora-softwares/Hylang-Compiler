@@ -2,6 +2,12 @@ using Hydrogen.Compiler.Diagnostics;
 
 namespace Hydrogen.Compiler.Syntax {
     public class AstParser {
+        private Hydrogen.Compiler.Core.BuildProgress buildProgress;
+
+        public void SetBuildProgress(Hydrogen.Compiler.Core.BuildProgress value) {
+            buildProgress = value;
+        }
+
         private SyntaxTokenList tokens;
         private DiagnosticBag diagnostics;
         private int index;
@@ -856,6 +862,9 @@ namespace Hydrogen.Compiler.Syntax {
             SyntaxToken token = Current();
             if (!Check(SyntaxKind.EndOfFileToken)) {
                 index = index + 1;
+                if (buildProgress != null && index % 300 == 0) {
+                    buildProgress.Update(index, tokens.Count(), "Parsed " + index + " tokens");
+                }
             }
             return token;
         }

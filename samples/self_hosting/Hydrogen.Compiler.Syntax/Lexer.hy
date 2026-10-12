@@ -3,6 +3,13 @@ using Hydrogen.Compiler.Text;
 
 namespace Hydrogen.Compiler.Syntax {
     public class Lexer {
+        private Hydrogen.Compiler.Core.BuildProgress buildProgress;
+        private int reportedTokens;
+
+        public void SetBuildProgress(Hydrogen.Compiler.Core.BuildProgress value) {
+            buildProgress = value;
+        }
+
         private SourceText source;
         private DiagnosticBag diagnostics;
         private int index;
@@ -19,9 +26,14 @@ namespace Hydrogen.Compiler.Syntax {
 
         public SyntaxTokenList LexAll() {
             SyntaxTokenList tokens = new SyntaxTokenList();
+            reportedTokens = 0;
             while (true) {
                 SyntaxToken token = NextToken();
                 tokens.Add(token);
+                reportedTokens = reportedTokens + 1;
+                if (buildProgress != null && reportedTokens % 300 == 0) {
+                    buildProgress.Update(index, source.Length(), "Lexed " + reportedTokens + " tokens");
+                }
                 if (token.Kind() == SyntaxKind.EndOfFileToken) {
                     return tokens;
                 }

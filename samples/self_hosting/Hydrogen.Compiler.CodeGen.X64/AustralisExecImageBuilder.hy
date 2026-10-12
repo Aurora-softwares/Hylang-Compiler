@@ -36,6 +36,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private int[] breakPatches; private int breakCount;
         private int[] continuePatches; private int continueCount;
         private int loopDepth; private string valueType; private ElfImageBuilder ascii;
+        private string entryArgumentName;
 
         private static long DataBase() { return 5242880; }
 
@@ -43,6 +44,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (program == null || program.Module() == null) { return null; }
             IrFunction main = FindMain(program.Module());
             if (main == null || main.Body() == null) { return null; }
+            entryArgumentName = "args";
+            if (main.Declaration() != null && main.Declaration().Parameters().Length == 1) {
+                entryArgumentName = main.Declaration().Parameters()[0].Name();
+            }
             code = new AustralisBytecodeBuilder(); data = new byte[65536]; dataLength = 0;
             scratchCapacity = 0; scratchPatches = new int[0]; scratchPatchCount = 0;
             localNames = new string[0]; localTypes = new string[0]; localCount = 0;
@@ -193,7 +198,34 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     if (expression.LiteralText() == "true") { EmitPush(1); } else { EmitPush(0); }
                     valueType = "bool"; return code.IsValid();
                 }
+                if (expression.LiteralKind() == "string") {
+                    if (expression.LiteralText().Length > 255) { return false; }
+                    int offset = AddAscii(expression.LiteralText(), false);
+                    if (offset < 0 || dataLength >= data.Length) { return false; }
+                    data[dataLength] = (byte)0; dataLength = dataLength + 1;
+                    EmitPush((int)(DataBase() + offset));
+                    valueType = "string"; return code.IsValid();
+                }
                 return false;
+            }
+            if (kind == IrExpression.KindMemberAccess()) {
+                IrExpression receiver = expression.Receiver();
+                if (expression.MemberName() != "Length" || receiver == null) { return false; }
+                if (receiver.Kind() == IrExpression.KindName() &&
+                    receiver.Name() == entryArgumentName) {
+                    code.Byte(45); valueType = "int"; return code.IsValid();
+                }
+                if (!CompileExpression(receiver) || valueType != "string") { return false; }
+                code.Byte(49); valueType = "int"; return code.IsValid();
+            }
+            if (kind == IrExpression.KindIndex()) {
+                IrExpression receiver2 = expression.Receiver();
+                if (receiver2 == null || receiver2.Kind() != IrExpression.KindName() ||
+                    receiver2.Name() != entryArgumentName ||
+                    !CompileExpression(expression.Index()) || !Numeric(valueType)) {
+                    return false;
+                }
+                code.Byte(46); valueType = "string"; return code.IsValid();
             }
             if (kind == IrExpression.KindName()) {
                 int slot = FindLocal(expression.Name());
@@ -252,6 +284,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             bool equality = op == IrOperator.EqualsEqualsToken() || op == IrOperator.BangEqualsToken();
             if (equality) {
                 if (!Compatible(leftType, rightType)) { return false; }
+                if (leftType == "string" && rightType == "string") {
+                    code.Byte(47);
+                    if (op == IrOperator.BangEqualsToken()) { code.Byte(27); }
+                    valueType = "bool"; return code.IsValid();
+                }
                 if (op == IrOperator.EqualsEqualsToken()) { code.Byte(21); } else { code.Byte(22); }
                 valueType = "bool"; return code.IsValid();
             }
@@ -284,6 +321,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     valueType = "void"; return true;
                 }
                 if (!CompileExpression(args[0])) { return false; }
+                if (valueType == "string") {
+                    code.Byte(48); if (newline) { code.Byte(1); }
+                    else { code.Byte(0); }
+                    valueType = "void"; return code.IsValid();
+                }
                 int format = 0; if (newline) { format = 1; }
                 if (valueType == "bool") { format = format + 2; }
                 else if (!Numeric(valueType)) { return false; }
@@ -337,7 +379,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 name == "System.Australis.Files.StatModified" ||
                 name == "System.Australis.Files.StatTimeFlags" ||
                 name == "System.Australis.Files.StatAttributes") {
-                if (!StringArgument(args, 0, 1)) { return false; }
+                if (args.Length != 1) { return false; }
                 int selector = 0;
                 if (name == "System.Australis.Files.StatSize") { selector = 1; }
                 else if (name == "System.Australis.Files.StatId") { selector = 2; }
@@ -345,23 +387,38 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 else if (name == "System.Australis.Files.StatModified") { selector = 4; }
                 else if (name == "System.Australis.Files.StatTimeFlags") { selector = 5; }
                 else if (name == "System.Australis.Files.StatAttributes") { selector = 6; }
-                code.Byte(33); code.Byte(selector);
-                if (!EmitPath(args[0].LiteralText())) { return false; }
+                if (StringArgument(args, 0, 1)) {
+                    code.Byte(33); code.Byte(selector);
+                    if (!EmitPath(args[0].LiteralText())) { return false; }
+                } else {
+                    if (!CompileExpression(args[0]) || valueType != "string") { return false; }
+                    code.Byte(51); code.Byte(selector);
+                }
                 valueType = "long";
                 if (selector == 0 || selector == 5) { valueType = "int"; }
                 return code.IsValid();
             }
             if (name == "System.Australis.Files.DirectoryCount") {
-                if (!StringArgument(args, 0, 1)) { return false; }
-                code.Byte(34);
-                if (!EmitPath(args[0].LiteralText())) { return false; }
+                if (args.Length != 1) { return false; }
+                if (StringArgument(args, 0, 1)) {
+                    code.Byte(34);
+                    if (!EmitPath(args[0].LiteralText())) { return false; }
+                } else {
+                    if (!CompileExpression(args[0]) || valueType != "string") { return false; }
+                    code.Byte(52);
+                }
                 valueType = "int"; return code.IsValid();
             }
             if (name == "System.Australis.Files.DirectoryName") {
-                if (!StringArgument(args, 0, 2) || !CompileExpression(args[1]) ||
-                    !Numeric(valueType)) { return false; }
-                code.Byte(35);
-                if (!EmitPath(args[0].LiteralText())) { return false; }
+                if (args.Length != 2) { return false; }
+                bool literalDirectory = StringArgument(args, 0, 2);
+                if (!literalDirectory &&
+                    (!CompileExpression(args[0]) || valueType != "string")) { return false; }
+                if (!CompileExpression(args[1]) || !Numeric(valueType)) { return false; }
+                if (literalDirectory) {
+                    code.Byte(35);
+                    if (!EmitPath(args[0].LiteralText())) { return false; }
+                } else { code.Byte(55); }
                 EmitScratchAddress();
                 if (scratchCapacity < 64) { scratchCapacity = 64; }
                 valueType = "int"; return code.IsValid();
@@ -377,11 +434,16 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             if (name == "System.Australis.Files.OpenRead" ||
                 name == "System.Australis.Files.OpenWrite") {
-                if (!StringArgument(args, 0, 1)) { return false; }
-                code.Byte(37);
-                if (name == "System.Australis.Files.OpenWrite") { code.Byte(1); }
-                else { code.Byte(0); }
-                if (!EmitPath(args[0].LiteralText())) { return false; }
+                if (args.Length != 1) { return false; }
+                int openMode = 0;
+                if (name == "System.Australis.Files.OpenWrite") { openMode = 1; }
+                if (StringArgument(args, 0, 1)) {
+                    code.Byte(37); code.Byte(openMode);
+                    if (!EmitPath(args[0].LiteralText())) { return false; }
+                } else {
+                    if (!CompileExpression(args[0]) || valueType != "string") { return false; }
+                    code.Byte(50); code.Byte(openMode);
+                }
                 valueType = "int"; return code.IsValid();
             }
             if (name == "System.Australis.Files.Replace" ||
@@ -433,6 +495,20 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.Byte(44); EmitScratchAddress(); code.U32(checkedCapacity);
                 if (checkedCapacity > scratchCapacity) { scratchCapacity = checkedCapacity; }
                 valueType = "int"; return code.IsValid();
+            }
+            if (name == "System.Australis.Files.ResultByte" ||
+                name == "System.Australis.Files.ResultU32") {
+                if (args.Length != 1 || !CompileExpression(args[0]) ||
+                    !Numeric(valueType)) { return false; }
+                code.Byte(53);
+                if (name == "System.Australis.Files.ResultByte") {
+                    code.Byte(1); valueType = "int";
+                } else { code.Byte(4); valueType = "long"; }
+                return code.IsValid();
+            }
+            if (name == "System.Australis.Files.ApiVersion") {
+                if (args.Length != 0) { return false; }
+                code.Byte(54); valueType = "int"; return code.IsValid();
             }
             if (name == "System.Australis.Files.WriteResult") {
                 if (args.Length != 0) { return false; }
@@ -516,7 +592,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             while (i >= 0) { if (localNames[i] == name) { return i; } i = i - 1; }
             return -1;
         }
-        private bool Scalar(string type) { return type == "bool" || Numeric(type); }
+        private bool Scalar(string type) { return type == "bool" || type == "string" || Numeric(type); }
         private bool Numeric(string type) {
             return type == "byte" || type == "sbyte" || type == "short" || type == "ushort" ||
                 type == "int" || type == "uint" || type == "long" || type == "ulong" ||

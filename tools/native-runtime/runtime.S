@@ -587,6 +587,43 @@ rt_print:
  pop rbx
  xor eax,eax
  ret
+rt_console_bytes:
+ test rdi,rdi
+ jz rt_null_error
+ push rbx
+ push r12
+ sub rsp,8
+ mov rbx,rdi
+ xor r12d,r12d
+.next_byte:
+ cmp r12,[rbx]
+ jae .bytes_done
+ mov rax,[rbx+r12*8+8]
+ mov [rsp],al
+ mov edi,1
+ mov rsi,rsp
+ mov edx,1
+ call rt_write_all
+ inc r12
+ jmp .next_byte
+.bytes_done:
+ add rsp,8
+ pop r12
+ pop rbx
+ xor eax,eax
+ ret
+rt_isatty:
+ sub rsp,16
+ mov eax,16
+ mov edi,1
+ mov esi,0x5413
+ mov rdx,rsp
+ syscall
+ add rsp,16
+ test rax,rax
+ sete al
+ movzx eax,al
+ ret
 rt_write_all:
  test rdx,rdx
  jz .written
