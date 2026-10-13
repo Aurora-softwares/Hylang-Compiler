@@ -515,6 +515,7 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.Uefi.StartImage") { return Intrinsic(e, qualified, "string", "", "void"); }
             if (qualified == "System.Kernel.Boot.Load") { return Intrinsic(e, qualified, "string", "", "void"); }
             if (qualified == "System.Kernel.Cpu.EnableInterrupts") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Cpu.DisableInterrupts") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.Uefi.ClearScreen") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.Uefi.Await") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.Uefi.ExitBootServices") { return Intrinsic(e, qualified, "", "", "void"); }
@@ -560,6 +561,13 @@ namespace Hydrogen.Compiler.Binding {
                 return Intrinsic(e, qualified, "", "", "void");
             }
             if (qualified == "System.Kernel.Cpu.Timestamp") { return Intrinsic(e, qualified, "", "", "long"); }
+            if (qualified == "System.Kernel.Cpu.ReadStackPointer" ||
+                qualified == "System.Kernel.Cpu.ReadBasePointer" ||
+                qualified == "System.Kernel.Cpu.ReadFlags" ||
+                qualified == "System.Kernel.Cpu.ReadCr3" ||
+                qualified == "System.Kernel.Cpu.ReadInstructionPointer") {
+                return Intrinsic(e, qualified, "", "", "long");
+            }
             if (qualified == "System.Kernel.Cpu.InvalidatePage") { return Intrinsic(e, qualified, "long", "", "void"); }
             if (qualified == "System.IO.File.Exists") { return Intrinsic(e, qualified, "string", "", "bool"); }
             if (qualified == "System.IO.File.ReadAllText") { return Intrinsic(e, qualified, "string", "", "string"); }

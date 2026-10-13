@@ -960,12 +960,33 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 valueType = "void"; return true;
             }
             if (intrinsic == "System.Kernel.Cpu.Pause" || intrinsic == "System.Kernel.Cpu.Halt" ||
-                intrinsic == "System.Kernel.Cpu.EnableInterrupts") {
+                intrinsic == "System.Kernel.Cpu.EnableInterrupts" ||
+                intrinsic == "System.Kernel.Cpu.DisableInterrupts") {
                 if (!freestanding || arguments.Length != 0) { failure = "invalid freestanding CPU operation"; return false; }
                 if (intrinsic == "System.Kernel.Cpu.Pause") { code.EmitByte(0xf3); code.EmitByte(0x90); }
                 else if (intrinsic == "System.Kernel.Cpu.Halt") { code.EmitByte(0xf4); }
-                else { code.EmitByte(0xfb); }
+                else if (intrinsic == "System.Kernel.Cpu.EnableInterrupts") { code.EmitByte(0xfb); }
+                else { code.EmitByte(0xfa); }
                 valueType = "void"; return true;
+            }
+            if (intrinsic == "System.Kernel.Cpu.ReadStackPointer" ||
+                intrinsic == "System.Kernel.Cpu.ReadBasePointer" ||
+                intrinsic == "System.Kernel.Cpu.ReadFlags" ||
+                intrinsic == "System.Kernel.Cpu.ReadCr3" ||
+                intrinsic == "System.Kernel.Cpu.ReadInstructionPointer") {
+                if (!freestanding || arguments.Length != 0) { failure = "invalid freestanding register read"; return false; }
+                if (intrinsic == "System.Kernel.Cpu.ReadStackPointer") {
+                    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xe0); // mov rax, rsp
+                } else if (intrinsic == "System.Kernel.Cpu.ReadBasePointer") {
+                    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xe8); // mov rax, rbp
+                } else if (intrinsic == "System.Kernel.Cpu.ReadFlags") {
+                    code.EmitByte(0x9c); code.EmitByte(0x58); // pushfq; pop rax
+                } else if (intrinsic == "System.Kernel.Cpu.ReadCr3") {
+                    code.EmitByte(0x0f); code.EmitByte(0x20); code.EmitByte(0xd8); // mov rax, cr3
+                } else {
+                    code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x05); code.Emit32(0); // lea rax, [rip]
+                }
+                valueType = "long"; return true;
             }
             if (intrinsic == "System.Kernel.Cpu.InvalidatePage") {
                 if (!freestanding || arguments.Length != 1 || !CompileExpression(arguments[0]) ||
