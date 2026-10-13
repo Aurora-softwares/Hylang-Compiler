@@ -458,6 +458,9 @@ namespace Hydrogen.Compiler.Binding {
                 qualified == "System.Australis.Process.Yield") {
                 return Intrinsic(e, qualified, "", "", "void");
             }
+            if (qualified == "System.Australis.Process.Run") {
+                return Intrinsic(e, qualified, "string", "", "int");
+            }
             if (qualified == "System.Australis.SystemInfo.Query") {
                 return Intrinsic(e, qualified, "int", "", "int");
             }

@@ -467,6 +467,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (capacity > scratchCapacity) { scratchCapacity = capacity; }
                 valueType = "void"; return code.IsValid();
             }
+            if (name == "System.Australis.Process.Run") {
+                if (args.Length != 1 || !CompileExpression(args[0]) ||
+                    valueType != "string") { return false; }
+                code.Byte(68); valueType = "int"; return code.IsValid();
+            }
             if (name == "System.Australis.Terminal.WriteResult") {
                 if (args.Length != 0) { return false; }
                 code.Byte(4); EmitScratchAddress(); valueType = "void"; return code.IsValid();
