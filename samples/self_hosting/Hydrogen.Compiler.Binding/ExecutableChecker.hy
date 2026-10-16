@@ -413,6 +413,20 @@ namespace Hydrogen.Compiler.Binding {
             int i = 0; while (i < e.Arguments().Length) { string type = Expression(e.Arguments()[i]); string required = first; if (i == 1) { required = second; } if (i < expected) { Require(type, required, "argument type mismatch calling '" + name + "'"); } i = i + 1; }
             e.SetResolvedOwner(module.NamespaceOf(name)); return result;
         }
+        private string Intrinsic3(IrExpression e, string name, string first,
+            string second, string third, string result) {
+            if (e.Arguments().Length != 3) { Error("wrong argument count calling '" + name + "'"); }
+            int i = 0;
+            while (i < e.Arguments().Length) {
+                string type = Expression(e.Arguments()[i]);
+                string required = first;
+                if (i == 1) { required = second; }
+                if (i == 2) { required = third; }
+                if (i < 3) { Require(type, required, "argument type mismatch calling '" + name + "'"); }
+                i = i + 1;
+            }
+            e.SetResolvedOwner(module.NamespaceOf(name)); return result;
+        }
         private string Call(IrExpression e) {
             string qualified = Qualified(e.Target());
             if (qualified == "System.Kernel.Managed.Release") {
@@ -438,6 +452,15 @@ namespace Hydrogen.Compiler.Binding {
                 return Intrinsic(e, qualified, "", "", "bool");
             }
             if (qualified == "System.Console.ReadLine") { return Intrinsic(e, qualified, "", "", "string"); }
+            if (qualified == "System.Australis.Terminal.EndOfInput") {
+                return Intrinsic(e, qualified, "", "", "bool");
+            }
+            if (qualified == "System.Australis.Terminal.ReadKey") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Terminal.MoveCursor") {
+                return Intrinsic(e, qualified, "int", "int", "void");
+            }
             if (qualified == "System.Australis.Terminal.Write" ||
                 qualified == "System.Australis.Terminal.WriteLine") {
                 return Intrinsic(e, qualified, "string", "", "void");
@@ -446,6 +469,9 @@ namespace Hydrogen.Compiler.Binding {
                 return Intrinsic(e, qualified, "int", "", "void");
             }
             if (qualified == "System.Australis.Terminal.WriteResult") {
+                return Intrinsic(e, qualified, "", "", "void");
+            }
+            if (qualified == "System.Australis.Terminal.Clear") {
                 return Intrinsic(e, qualified, "", "", "void");
             }
             if (qualified == "System.Australis.Files.Open") {
@@ -459,7 +485,61 @@ namespace Hydrogen.Compiler.Binding {
                 return Intrinsic(e, qualified, "", "", "void");
             }
             if (qualified == "System.Australis.Process.Run") {
+                if (e.Arguments().Length == 3) {
+                    return Intrinsic3(e, qualified, "string", "byte[]", "byte[]", "int");
+                }
+                if (e.Arguments().Length == 2) {
+                    return Intrinsic(e, qualified, "string", "byte[]", "int");
+                }
                 return Intrinsic(e, qualified, "string", "", "int");
+            }
+            if (qualified == "System.Australis.Process.Spawn") {
+                return Intrinsic(e, qualified, "string", "", "int");
+            }
+            if (qualified == "System.Australis.Process.Wait") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Process.Ready") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Process.WaitReady") {
+                return Intrinsic(e, qualified, "int", "int", "int");
+            }
+            if (qualified == "System.Australis.Process.Terminate") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Process.Sleep") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Channel.Open" ||
+                qualified == "System.Australis.Channel.Wait") {
+                return Intrinsic(e, qualified, "int", "int", "int");
+            }
+            if (qualified == "System.Australis.Channel.Accept" ||
+                qualified == "System.Australis.Channel.Peer" ||
+                qualified == "System.Australis.Channel.Close") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Channel.Send") {
+                return Intrinsic3(e, qualified, "int", "int", "byte[]", "int");
+            }
+            if (qualified == "System.Australis.Channel.Receive") {
+                return Intrinsic(e, qualified, "int", "byte[]", "int");
+            }
+            if (qualified == "System.Australis.Process.EnvironmentCount") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Process.EnvironmentEntry") {
+                return Intrinsic(e, qualified, "int", "", "string");
+            }
+            if (qualified == "System.Australis.Process.WorkingDirectory") {
+                return Intrinsic(e, qualified, "", "", "string");
+            }
+            if (qualified == "System.Australis.Text.ByteAt") {
+                return Intrinsic(e, qualified, "string", "int", "int");
+            }
+            if (qualified == "System.Australis.Text.FromBytes") {
+                return Intrinsic(e, qualified, "byte[]", "int", "string");
             }
             if (qualified == "System.Australis.SystemInfo.Query") {
                 return Intrinsic(e, qualified, "int", "", "int");
@@ -483,6 +563,23 @@ namespace Hydrogen.Compiler.Binding {
             }
             if (qualified == "System.Australis.Files.DirectoryName") {
                 return Intrinsic(e, qualified, "string", "int", "int");
+            }
+            if (qualified == "System.Australis.Files.DirectoryNameInto") {
+                return Intrinsic3(e, qualified, "string", "int", "byte[]", "int");
+            }
+            if (qualified == "System.Australis.Files.OpenReadHandle" ||
+                qualified == "System.Australis.Files.OpenWriteHandle") {
+                return Intrinsic(e, qualified, "string", "", "int");
+            }
+            if (qualified == "System.Australis.Files.ReadHandle" ||
+                qualified == "System.Australis.Files.WriteHandle") {
+                return Intrinsic3(e, qualified, "int", "byte[]", "int", "int");
+            }
+            if (qualified == "System.Australis.Files.CloseHandle") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Files.TruncateHandle") {
+                return Intrinsic(e, qualified, "int", "int", "int");
             }
             if (qualified == "System.Australis.Files.Create" ||
                 qualified == "System.Australis.Files.Rename") {
@@ -572,6 +669,9 @@ namespace Hydrogen.Compiler.Binding {
                 return Intrinsic(e, qualified, "", "", "long");
             }
             if (qualified == "System.Kernel.Cpu.InvalidatePage") { return Intrinsic(e, qualified, "long", "", "void"); }
+            if (qualified == "System.Kernel.Cpu.CallKernel") {
+                return Intrinsic(e, qualified, "long", "long", "long");
+            }
             if (qualified == "System.IO.File.Exists") { return Intrinsic(e, qualified, "string", "", "bool"); }
             if (qualified == "System.IO.File.ReadAllText") { return Intrinsic(e, qualified, "string", "", "string"); }
             if (qualified == "System.IO.File.ReadAllBytes") { return Intrinsic(e, qualified, "string", "", "byte[]"); }

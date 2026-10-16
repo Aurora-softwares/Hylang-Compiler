@@ -12,7 +12,7 @@ The Hydrogen-written compiler produces standalone Linux x86-64 executables, cons
 
 | Tool | Use it for | Output or execution |
 | --- | --- | --- |
-| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI boot/kernel images, and project scaffolding | Linux x64 ELF or constrained `uefi-x64` PE32+ output; no external compiler or linker |
+| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI boot/kernel images, and project scaffolding | Linux x64 ELF, constrained `uefi-x64` PE32+, raw `AUKR` kernel, or checked AUEX `.exec`; no external compiler or linker for these outputs |
 | `hy` (C++ SDK) | Build/run/test/check/fmt/new/package/LSP workflows; UEFI console proof | Interpreter, host C backend, or constrained `uefi-x64` PE32+ output |
 | `hyrun` | Direct interpreted execution | Shares the SDK semantic pipeline |
 | `hyc build` | Compatibility build command | Host C backend, executables or static libraries |
@@ -290,8 +290,9 @@ and `ReadAllText(path)`, `System.IO.File.WriteAllText(path, text)`, and
 AUEX text values are currently limited to 255 bytes. `Main` may return a
 computed integer exit code. Australis-specific file, metadata, directory,
 yield, and checked-memory intrinsics remain available for lower-level work.
-Application method calls, general arrays, and process creation are later AUEX
-features.
+The current development AUEX backend also supports application method calls,
+bounded strings and byte arrays, and concurrent child processes. These calls
+remain software-checked inside the kernel interpreter.
 
 An OS project lists component `.hyproj` files in `project_references` and has
 no sources of its own. Each component sets an `output` path relative to the
@@ -305,20 +306,24 @@ type = "os"
 project_references = ["Boot/Boot.hyproj", "Kernel/Kernel.hyproj"]
 
 # In Boot/Boot.hyproj: type = "efi", output = "EFI/BOOT/BOOTX64.EFI"
-# In Kernel/Kernel.hyproj: type = "kernel", output = "EFI/OS/KERNEL.EFI"
+# In Kernel/Kernel.hyproj: type = "kernel", output = "EFI/OS/KERNEL.BIN"
 ```
 
 ```bash
 ./build/self_hosting/hydrogen-stage1 build OS/OS.hyproj -o build/efi
 ```
 
-The output directory contains separate EFI applications ready for image
-packaging. You can also build an `efi`, `kernel`, or `exec` project directly
+The output directory contains a PE32+ EFI bootloader and a separate raw `AUKR`
+kernel image ready for packaging. You can also build an `efi`, `kernel`, or `exec` project directly
 with `-o` pointing to its output file. Scaffold them with
 `hydrogen-stage1 new efi <name>`, `hydrogen-stage1 new kernel <name>`,
 `hydrogen-stage1 new exec <name>`, or `hydrogen-stage1 new os <name>`.
 These project types are currently available in
 `hydrogen-stage1`.
+
+Australis OS additionally loads bounded AUN1 machine-code children in hardware
+ring 3. Hydrogen's `exec` backend emits AUEX, not AUN1; compiling Hylang source
+to AUN1 and supporting its full native syscall ABI are future compiler work.
 
 SDK projects additionally support workspaces, test projects, local package dependencies, caching, and static-library artifacts. Useful SDK commands:
 

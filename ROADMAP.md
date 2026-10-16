@@ -26,7 +26,12 @@ Expand compiler/runtime builtins into reusable Hydrogen-written libraries: colle
 
 Direct Linux x64 code generation is implemented. Additional work includes object files, linker/external ABI integration, debug information, cross-compilation, and additional platform runtime/startup implementations. Keep the C backend useful as a portability route while parity develops.
 
-UEFI, freestanding execution, Australis userland, and kernel-adjacent use require explicit target contracts, memory ownership, layout/ABI support, and suitable runtime profiles. See [OS_ROADMAP.md](OS_ROADMAP.md); Linux executables do not establish support for those targets.
+The development compiler already emits the Australis bootloader, raw kernel,
+and checked AUEX programs. The OS can load small AUN1 ring-3 machine-code
+programs, but Hydrogen does not yet emit AUN1. General native Australis source
+compilation requires explicit target contracts, memory ownership, layout/ABI
+support, and a suitable runtime profile. See [OS_ROADMAP.md](OS_ROADMAP.md);
+Linux executables do not establish support for these targets.
 
 ## Tooling and packages
 

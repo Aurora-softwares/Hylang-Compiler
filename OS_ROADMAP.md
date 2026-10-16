@@ -1,46 +1,25 @@
-# Hydrogen OS and firmware design plan
+# Hydrogen OS and firmware roadmap
 
-This is a plan for future targets, not a guide to executable features. The self-hosted compiler now has a deliberately constrained `uefi-x64` proof target: it emits a PE32+ x86_64 EFI application that writes ASCII `System.Console.WriteLine` literals as UTF-16 through the firmware text-output protocol. The complete native runtime remains a Linux x86-64 ELF with Linux syscalls; it cannot become a general UEFI application, an Australis executable, or a freestanding kernel merely by changing its extension.
+This separates the published `alpha-0.0.2` compiler profile from the newer development checkout used by Australis OS. For exact commands and source-language support, see the [compiler README](README.md), [native compiler guide](samples/self_hosting/README.md), and [Australis OS plan](https://github.com/Aurora-Softwares/Australis-OS/blob/main/PLAN.md).
 
-For present language/runtime support, see the [native compiler guide](samples/self_hosting/README.md). SDK unsafe syntax does not establish native firmware or arbitrary-address interoperability.
+## Working target paths
 
-## Current target boundary
+| Path | Current capability | Boundary |
+| --- | --- | --- |
+| Linux x86-64 | Direct ELF output with the managed Linux runtime | Linux syscalls and runtime do not apply to UEFI or Australis |
+| Published `uefi-x64` profile | Constrained PE32+ firmware/early-kernel sequence | Not a general UEFI library or arbitrary firmware ABI |
+| Development `efi` + `kernel` + `os` projects | PE32+ bootloader plus separate raw `AUKR` freestanding kernel | Requires the development compiler checkout for current Australis OS |
+| Development `exec` projects | Checked AUEX v1 `.exec` applications | Interpreter-based isolation, not hardware ring 3 |
+| Australis AUN1 loader | Small machine-code children execute in hardware ring 3 | OS feature; Hydrogen does not yet emit AUN1 from source |
 
-The native backend emits executable method bodies and a bundled managed runtime. Hydrogen-to-Hydrogen calls use an internal stack convention with `rax` returns, not the System V C ABI. Linux console/file operations and heap memory use raw syscalls. Managed allocations use anonymous mappings with a conservative collector; this runtime does not allocate through `malloc`/`free`.
+The current Australis image boots under QEMU/OVMF on AHCI and NVMe, mounts a read-only HyFS 2 system root, starts PID 1 and its text shell, and runs AUEX applications with bounded process, terminal, file, and channel APIs. The OS's AUN1 child path has private user mappings, a guarded stack, PID/exit syscalls, and contained page/general-protection faults. These checks do not establish physical-machine support or a complete native application runtime.
 
-The SDK's C-backed runtime is separate and does use host runtime allocation. Neither existing route provides a firmware target, external function-pointer ABI, explicit native object layout, or a no-runtime kernel profile.
+## Compiler and ABI work
 
-## Firmware target
+1. Define a versioned native Australis target that emits AUN1 (or its successor) from Hydrogen source, including entry, startup record, code/data layout, relocation policy, and checked image validation.
+2. Port terminal, file, process, and channel APIs from the AUEX contract to native syscalls. Specify pointer validation, copying, fault behavior, handles, and ownership at the kernel boundary.
+3. Provide a freestanding native runtime profile with explicit allocation and lifetime rules. Linux's managed collector and syscalls cannot be reused unchanged in ring 3.
+4. Add native preemption/context switching, resource accounting, and tests for concurrent children and cleanup.
+5. Expand UEFI bindings through explicit layouts, function pointers, strings, and calling-convention adapters rather than treating internal Hydrogen calls as firmware ABI calls.
 
-A firmware backend would need:
-
-1. A target descriptor covering image format, entry point, relocation, addressing, and external calling conventions.
-2. Appropriate firmware image emission rather than the existing Linux ELF wrapper.
-3. Native pointer/function-pointer calls, explicit layout, and ABI adapters at firmware service boundaries.
-4. A reduced-runtime profile that avoids managed allocation and Linux syscalls during startup.
-5. Bindings for console, memory, image loading, and boot-service operations.
-6. Emulator-based regression tests and a minimal image that prints a message and returns before adding a kernel handoff.
-
-Internal Hydrogen calls can retain their own convention only if target service calls have explicit adapters. Firmware protocol layouts and call rules must be implemented against the chosen target specification; current Hydrogen object layout is not a substitute.
-
-## Allocation and runtime profiles
-
-Separate managed application allocation from early-boot and kernel ownership. A future profile needs clearly defined allocation/free services, failure behavior, and lifetime rules. Firmware services cannot be assumed available after a kernel handoff. Managed collection should be introduced only after roots, stack scanning, allocator services, and runtime initialization are defined for that target.
-
-Possible profiles include a freestanding core, explicit/manual allocation, and an optional managed runtime. These are design choices, not current compiler flags. Native `unsafe`, `stackalloc`, fixed layout, interrupts, and raw device access still require implementation before systems examples can execute.
-
-## Kernel handoff
-
-After a minimal firmware application works, define an explicit boot-information contract and kernel entry ABI. The handoff should supply the memory information and platform data needed by the kernel, with deliberate ownership of retained allocations and service lifetimes.
-
-Test image loading, entry arguments, stack setup, memory ownership, error reporting, and the transition to kernel-owned allocation independently. Do not assume the existing Linux entry stub or collector is suitable.
-
-## Australis userland
-
-An Australis target needs its own startup, syscall/runtime bindings, process exit, console/filesystem services, process/environment APIs, and executable-loader contract. Port userland tools first once those boundaries are available; device/driver and kernel-adjacent libraries can follow explicit low-level support.
-
-## Validation
-
-Keep Linux native self-compilation as a regression baseline. Add target-specific image validation and emulator smoke tests, then application/runtime tests appropriate to each new profile. A bootable message alone proves image startup, not native language or managed runtime parity.
-
-See the [compiler roadmap](ROADMAP.md) and [standard-library design plan](https://github.com/Aurora-Softwares/Hylang-Stdlib) for the related library and backend work.
+Keep the Linux self-compilation comparison as a compiler regression baseline. Use target-specific image validation, QEMU boot tests, AUEX behavior tests, native fault-containment tests, and eventually supported physical machines for OS validation. A bootable image alone proves startup, not general language or runtime parity.

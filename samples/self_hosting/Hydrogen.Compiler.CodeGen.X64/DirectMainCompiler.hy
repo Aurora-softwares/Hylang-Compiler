@@ -996,6 +996,20 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.EmitByte(0x0f); code.EmitByte(0x01); code.EmitByte(0x38);
                 valueType = "void"; return true;
             }
+            if (intrinsic == "System.Kernel.Cpu.CallKernel") {
+                if (!freestanding || arguments.Length != 2 ||
+                    !CompileExpression(arguments[0]) || !Assignable(valueType, "long")) {
+                    failure = "invalid freestanding kernel function address"; return false;
+                }
+                code.EmitByte(0x50); // preserve function address
+                if (!CompileExpression(arguments[1]) || !Assignable(valueType, "long")) {
+                    failure = "invalid freestanding kernel function argument"; return false;
+                }
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc7); // rdi = argument
+                code.EmitByte(0x41); code.EmitByte(0x5b); // pop r11 = function address
+                code.EmitByte(0x41); code.EmitByte(0xff); code.EmitByte(0xd3); // call r11
+                valueType = "long"; return true;
+            }
             if (intrinsic == "System.Kernel.Cpu.Timestamp") {
                 if (!freestanding || arguments.Length != 0) { failure = "invalid freestanding timestamp"; return false; }
                 code.EmitByte(0x0f); code.EmitByte(0x31); // rdtsc -> edx:eax
