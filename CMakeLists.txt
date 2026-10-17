@@ -1384,6 +1384,35 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
     )
     set_tests_properties(hy_stage1_compile_uefi_hello PROPERTIES
         FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
+
+    # Windows x86-64 cross-compilation (experimental).
+    find_program(HYDROGEN_WINE_BINARY NAMES wine wine64)
+
+    if(HYDROGEN_WINE_BINARY)
+        add_test(
+            NAME hy_stage1_compile_windows_exit
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/windows_exit_42.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/windows_exit_42.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake
+        )
+
+        set_tests_properties(
+            hy_stage1_compile_windows_exit
+            PROPERTIES
+                FIXTURES_REQUIRED hydrogen_stage1
+                TIMEOUT 120
+                RUN_SERIAL TRUE
+                LABELS "windows;experimental;crosscompile"
+        )
+    else()
+        message(STATUS
+            "Wine not found: Windows x64 execution test disabled"
+        )
+    endif()
     add_test(NAME hy_stage1_build_os_project
         COMMAND ${CMAKE_COMMAND}
             -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1

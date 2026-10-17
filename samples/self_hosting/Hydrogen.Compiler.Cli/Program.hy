@@ -238,11 +238,15 @@ namespace Hydrogen.Compiler.Cli {
 
         private static int Compile(string[] args) {
             bool uefi = false;
+            bool windows = false;
             string output = "";
             if (args.Length == 4 && args[2] == "-o") {
                 output = args[3];
             } else if (args.Length == 6 && args[2] == "--target" && args[3] == "uefi-x64" && args[4] == "-o") {
                 uefi = true;
+                output = args[5];
+            } else if (args.Length == 6 && args[2] == "--target" && args[3] == "windows-x64" && args[4] == "-o") {
+                windows = true;
                 output = args[5];
             } else {
                 System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");
@@ -252,8 +256,13 @@ namespace Hydrogen.Compiler.Cli {
 
             NativeCompiler compiler = new NativeCompiler();
             NativeCompilerResult result;
-            if (uefi) { result = compiler.CompileFileUefi(args[1], output); }
-            else { result = compiler.CompileFile(args[1], output); }
+            if (uefi) {
+                result = compiler.CompileFileUefi(args[1], output);
+            } else if(windows) {
+                result = compiler.CompileFileWindows(args[1], output);
+            } else {
+                result = compiler.CompileFile(args[1], output);
+            }
             if (!result.Success()) {
                 System.Console.Write(result.DiagnosticsText());
                 return 1;

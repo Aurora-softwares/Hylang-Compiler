@@ -32,34 +32,38 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         public NativeCompilerResult BuildProject(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, false);
         }
 
         public NativeCompilerResult BuildProjectUefi(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, true, false, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, true, false, false, false, false);
         }
 
         public NativeCompilerResult BuildProjectKernel(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, true, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, false, true, false, false, false);
         }
 
         public NativeCompilerResult BuildProjectAustralis(string projectPath, string outputPath) {
-			return ProcessProject(projectPath, outputPath, false, false, false, false, true, false);
+			return ProcessProject(projectPath, outputPath, false, false, false, false, true, false, false);
 		}
 
         public NativeCompilerResult BuildProjectNativeUser(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, false, false, true);
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false, true, false);
+        }
+        
+        public NativeCompilerResult BuildProjectWindows(string projectPath, string outputPath) {
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, true);
         }
 
         public NativeCompilerResult CheckProjectAustralis(string projectPath, bool emitIr) {
-            return ProcessProject(projectPath, "", true, emitIr, false, false, true, false);
+            return ProcessProject(projectPath, "", true, emitIr, false, false, true, false, false);
         }
 
         public NativeCompilerResult CheckProjectNativeUser(string projectPath, bool emitIr) {
-            return ProcessProject(projectPath, "", true, emitIr, false, false, false, true);
+            return ProcessProject(projectPath, "", true, emitIr, false, false, false, true, false);
         }
 
-        private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel, bool australis, bool nativeUser) {
+        private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel, bool australis, bool nativeUser, bool windows) {
             ProjectClosure closure = ProjectClosure.Collect(projectPath);
             string[] projects = closure.Projects();
             if (projects.Length == 1 && StartsWith(projects[0], "<cycle:")) {
@@ -138,6 +142,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (uefi) { return EmitUefiImage(program, projectPath, outputPath); }
 			if (australis) { return EmitAustralisImage(program, projectPath, outputPath); }
             if (nativeUser) { return EmitNativeUserImage(program, projectPath, outputPath); }
+            if (windows) { return EmitWindowsImage(program, projectPath, outputPath); }
             return EmitNativeImage(program, projectPath, outputPath);
         }
 
@@ -183,6 +188,52 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
 
             return EmitUefiImage(program, inputPath, outputPath);
+        }
+
+        public NativeCompilerResult CompileFileWindows(string inputPath, string outputPath) {
+            SourceText source = SourceText.FromFile(inputPath);
+
+            DiagnosticBag subsetDiagnostics = new DiagnosticBag();
+            SelfHostSubsetValidator subset = new SelfHostSubsetValidator();
+
+            if (!subset.Validate(source, subsetDiagnostics)) {
+                return new NativeCompilerResult(
+                    false,
+                    inputPath + ":\n" + subsetDiagnostics.ToText()
+                );
+            }
+
+            SyntaxTree tree = SyntaxTree.ParseFast(source);
+
+            if (tree.Diagnostics().HasErrors()) {
+                return new NativeCompilerResult(
+                    false,
+                    inputPath + ":\n" + tree.Diagnostics().ToText()
+                );
+            }
+
+            DiagnosticBag diagnostics = new DiagnosticBag();
+
+            Hydrogen.Compiler.Binding.Binder binder =
+                new Hydrogen.Compiler.Binding.Binder();
+
+            BoundProgram program = binder.Bind(
+                tree.Root(),
+                diagnostics
+            );
+
+            if (diagnostics.HasErrors()) {
+                return new NativeCompilerResult(
+                    false,
+                    inputPath + ":\n" + diagnostics.ToText()
+                );
+            }
+
+            return EmitWindowsImage(
+                program,
+                inputPath,
+                outputPath
+            );
         }
 
         private NativeCompilerResult EmitNativeImage(BoundProgram program, string inputPath, string outputPath) {
@@ -308,6 +359,25 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return new NativeCompilerResult(true, "");
         }
 
+        private NativeCompilerResult EmitWindowsImage(BoundProgram program, string inputPath, string outputPath) {
+            IrLowering lowering = new IrLowering();
+            IrModule module = lowering.Lower(program);
+
+            WindowsImageBuilder builder = new WindowsImageBuilder();
+            byte[] executable = builder.Build(module);
+
+            if (executable == null) {
+                return new NativeCompilerResult(
+                    false,
+                    inputPath +
+                    ": error: Windows x64 backend does not yet support this program\n"
+                );
+            }
+
+            System.IO.File.WriteAllBytes(outputPath, executable);
+            return new NativeCompilerResult(true, "");
+        }
+
         public NativeCompilerResult CheckFile(string inputPath) {
             return CheckFileInternal(inputPath, false);
         }
@@ -317,7 +387,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private NativeCompilerResult CheckFileInternal(string inputPath, bool emitIr) {
-            if (IsProject(inputPath)) { return ProcessProject(inputPath, "", true, emitIr, false, false, false, false); }
+            if (IsProject(inputPath)) { return ProcessProject(inputPath, "", true, emitIr, false, false, false, false, false); }
             SourceText source = SourceText.FromFile(inputPath);
             DiagnosticBag subsetDiagnostics = new DiagnosticBag();
             SelfHostSubsetValidator subset = new SelfHostSubsetValidator();
