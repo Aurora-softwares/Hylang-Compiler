@@ -18,9 +18,11 @@ This is a Hydrogen internal convention, not System V or C interoperability. The 
 
 ## Runtime
 
-The runtime uses raw Linux syscalls and anonymous mappings, with conservative non-moving mark/sweep collection. It preserves interior roots, deep object graphs, and cycles. A temporary page index finds allocation headers during tracing; an intrusive worklist visits marked payloads. Generated frames zero slots and clear locals on normal scope exit to limit stale roots.
+The runtime uses raw Linux syscalls and anonymous mappings, with conservative non-moving mark/sweep collection. Objects whose payload and header fit within 512 bytes use 64, 128, 256, or 512-byte slots in shared 4 KiB spans; larger objects use separate mappings. It preserves interior roots, deep object graphs, and cycles. A temporary page index resolves roots to individual objects, including slots inside spans; an intrusive worklist visits marked payloads. Collection reclaims dead slots and returns wholly dead spans. Generated frames zero slots and clear locals on normal scope exit to limit stale roots.
 
 A bounded 16 MiB recycled-page pool reduces syscall churn and is released by explicit collection. String indexing uses immutable one-byte runtime strings. This runtime is separate from the SDK's C-generated collector and environment stress controls.
+
+Linux native `byte[]` stores one byte per element and `int[]` stores a signed four-byte element; reference arrays and other primitive arrays retain eight-byte slots. Native byte-file operations read and write packed array storage directly. The backend checks null and both index bounds before inline byte/int element access. One-byte string literal comparisons and numeric literal arithmetic/comparisons also use direct machine instructions. Freestanding array layout remains eight-byte slots.
 
 `tools/native-runtime/runtime.S` is the runtime assembly authoring source. `python3 tools/native-runtime/generate.py` regenerates the checked-in Hydrogen byte emitter. GNU binutils are needed for that development step, not for normal native compiler/application builds.
 
@@ -39,7 +41,7 @@ The initial target uses the C++ SDK's C backend to create `hydrogen-bootstrap`. 
 
 All three native compilers run token/parser goldens and the same function/recursion, runtime/GC/files, project-semantic/IR, and compilation-failure suites. Stage 2/3 compiler executables and representative application outputs must have identical hashes. Stage 1 equality is reported as well; an older seed may differ after a backend change but must still pass behavioral checks.
 
-Native proof builds/tests run with an empty `PATH` and a 1 GiB address-space limit. CMake and `prlimit` are test drivers. Artifacts and the success report are published after checks pass.
+Native proof builds/tests run with an empty `PATH` and a 3 GiB address-space limit. CMake and `prlimit` are test drivers. Artifacts and the success report are published after checks pass.
 
 ## Rebuild without stage 0
 

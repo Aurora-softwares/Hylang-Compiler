@@ -33,6 +33,11 @@ set(reasons
 )
 
 foreach(mode compile build)
+    set(diagnostic_flags)
+    if(mode STREQUAL "build")
+        # Build reports progress by default; keep negative-test output diagnostic-only.
+        set(diagnostic_flags --hide-progress --hide-spinner --hide-log)
+    endif()
     foreach(case IN LISTS cases)
         list(FIND cases "${case}" case_index)
         list(GET reasons ${case_index} reason)
@@ -58,6 +63,7 @@ foreach(mode compile build)
             endif()
             execute_process(
                 COMMAND ${compiler_command} "${mode}" "${input}" -o "${output}"
+                    ${diagnostic_flags}
                 RESULT_VARIABLE result
                 OUTPUT_VARIABLE stdout
                 ERROR_VARIABLE stderr

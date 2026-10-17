@@ -202,6 +202,17 @@ namespace Hydrogen.Compiler.Cli {
                     if (emitIr) { System.Console.WriteLine(execResult.DiagnosticsText()); }
                     return 0;
                 }
+                if (manifest.Type() == "native") {
+                    NativeCompiler nativeCompiler = new NativeCompiler();
+                    NativeCompilerResult nativeResult = nativeCompiler.CheckProjectNativeUser(path, emitIr);
+                    if (!nativeResult.Success()) {
+                        System.Console.Write(nativeResult.DiagnosticsText());
+                        return 1;
+                    }
+                    System.Console.WriteLine("check ok");
+                    if (emitIr) { System.Console.WriteLine(nativeResult.DiagnosticsText()); }
+                    return 0;
+                }
             }
             NativeCompiler compiler = new NativeCompiler();
             if (emitIr) {
@@ -303,8 +314,8 @@ namespace Hydrogen.Compiler.Cli {
 				manifest.Type() != "efi" &&
 				manifest.Type() != "kernel" &&
 				manifest.Type() != "australis" &&
-				manifest.Type() != "exec") {
-                System.Console.WriteLine("error: hy build supports exe, efi, kernel, exec, australis, and os projects");
+				manifest.Type() != "exec" && manifest.Type() != "native") {
+                System.Console.WriteLine("error: hy build supports exe, efi, kernel, exec, australis, native, and os projects");
                 return 1;
             }
 
@@ -315,6 +326,8 @@ namespace Hydrogen.Compiler.Cli {
 				result = compiler.BuildProject(projectPath, output);
 			} else if (manifest.Type() == "kernel") {
 				result = compiler.BuildProjectKernel(projectPath, output);
+			} else if (manifest.Type() == "native") {
+                result = compiler.BuildProjectNativeUser(projectPath, output);
 			} else if (manifest.Type() == "australis" || manifest.Type() == "exec") {
 				result = compiler.BuildProjectAustralis(projectPath, output);
 			} else {
@@ -352,8 +365,8 @@ namespace Hydrogen.Compiler.Cli {
                 HyprojManifest child = HyprojManifest.Load(path);
                 if (child.Format() != 2 || (child.Type() != "exe" && child.Type() != "efi" &&
                     child.Type() != "kernel" && child.Type() != "exec" &&
-                    child.Type() != "australis")) {
-                    System.Console.WriteLine("error: OS reference must be a format 2 exe, efi, kernel, or exec project: " + path);
+                    child.Type() != "australis" && child.Type() != "native")) {
+                    System.Console.WriteLine("error: OS reference must be a format 2 exe, efi, kernel, exec, or native project: " + path);
                     return 1;
                 }
                 string output = child.Output();
@@ -385,12 +398,15 @@ namespace Hydrogen.Compiler.Cli {
                     HyprojManifest checkedChild = HyprojManifest.Load(paths[index]);
                     if (checkedChild.Type() == "exec" || checkedChild.Type() == "australis") {
                         result = compiler.CheckProjectAustralis(paths[index], emitIr);
+                    } else if (checkedChild.Type() == "native") {
+                        result = compiler.CheckProjectNativeUser(paths[index], emitIr);
                     } else if (emitIr) { result = compiler.CheckFileEmitIr(paths[index]); }
                     else { result = compiler.CheckFile(paths[index]); }
                 } else {
                     HyprojManifest child = HyprojManifest.Load(paths[index]);
                     if (child.Type() == "kernel") { result = compiler.BuildProjectKernel(paths[index], outputPath); }
                     else if (child.Type() == "efi") { result = compiler.BuildProjectUefi(paths[index], outputPath); }
+                    else if (child.Type() == "native") { result = compiler.BuildProjectNativeUser(paths[index], outputPath); }
                     else if (child.Type() == "exec" || child.Type() == "australis") { result = compiler.BuildProjectAustralis(paths[index], outputPath); }
                     else { result = compiler.BuildProject(paths[index], outputPath); }
                 }

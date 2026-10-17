@@ -1,6 +1,8 @@
 #include "hylang/hylang.hpp"
 
 #include <algorithm>
+#include <bit>
+#include <cerrno>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
@@ -27,8 +29,13 @@
 
 #ifdef _WIN32
 #include <io.h>
+#include <process.h>
+#include <windows.h>
 #else
+#include <spawn.h>
+#include <sys/wait.h>
 #include <unistd.h>
+extern char** environ;
 #endif
 
 namespace hylang {
@@ -2270,6 +2277,7 @@ struct SemanticModel {
     ClassSymbol* file_class = nullptr;
     ClassSymbol* convert_class = nullptr;
     ClassSymbol* memory_class = nullptr;
+    ClassSymbol* gc_class = nullptr;
     ClassSymbol* assert_class = nullptr;
     ClassSymbol* intrinsics_class = nullptr;
     MethodSymbol* console_write_string = nullptr;
@@ -2291,6 +2299,7 @@ struct SemanticModel {
     MethodSymbol* memory_copy = nullptr;
     MethodSymbol* memory_set = nullptr;
     MethodSymbol* memory_compare = nullptr;
+    MethodSymbol* gc_collect = nullptr;
     MethodSymbol* assert_true = nullptr;
     MethodSymbol* assert_false = nullptr;
     MethodSymbol* assert_equal = nullptr;
@@ -3094,6 +3103,9 @@ private:
                                               {{"left", byte_pointer_type},
                                                {"right", byte_pointer_type},
                                                {"bytes", &model.nuint_type}});
+
+        model.gc_class = create_builtin_class("System.Runtime", "GC");
+        model.gc_collect = create_builtin(model.gc_class, "Collect", &model.void_type, {});
 
         model.assert_class = create_builtin_class("System.Testing", "Assert");
         model.assert_true = create_builtin(model.assert_class,
@@ -5992,9 +6004,39 @@ private:
         Continue,
     };
 
+    template <typename Symbol>
+    struct FrameSlots {
+        // Most interpreted methods use only a few parameters and locals. Keep
+        // those values together instead of hashing and allocating a node for
+        // every variable access; promote larger frames to the old map path.
+        vector<std::pair<const Symbol*, Value>> small;
+        std::unordered_map<const Symbol*, Value> large;
+
+        Value& operator[](const Symbol* symbol) {
+            for (auto& slot : small) {
+                if (slot.first == symbol) {
+                    return slot.second;
+                }
+            }
+            if (!large.empty()) {
+                return large[symbol];
+            }
+            if (small.size() < 8) {
+                small.emplace_back(symbol, Value{});
+                return small.back().second;
+            }
+            large.reserve(16);
+            for (auto& slot : small) {
+                large.emplace(slot.first, std::move(slot.second));
+            }
+            small.clear();
+            return large[symbol];
+        }
+    };
+
     struct Frame {
-        std::unordered_map<const ParameterSymbol*, Value> parameters;
-        std::unordered_map<const VariableSymbol*, Value> locals;
+        FrameSlots<ParameterSymbol> parameters;
+        FrameSlots<VariableSymbol> locals;
         std::shared_ptr<RuntimeObject> self;
     };
 
@@ -6276,6 +6318,11 @@ private:
                         const vector<Value>& arguments,
                         const vector<const TypeSymbol*>* argument_types = nullptr) {
         if (method.is_builtin) {
+            if (&method == program_.semantic_model.gc_collect) {
+                // The SDK interpreter uses C++ object lifetimes, not the
+                // generated native runtime's tracing collector.
+                return Value{nullptr};
+            }
             if (method.owner == program_.semantic_model.console_class && method.name == "IsTerminal") {
 #ifdef _WIN32
                 return Value{_isatty(_fileno(stdout)) != 0};
@@ -6910,6 +6957,12 @@ private:
             case BoundExpressionKind::Binary: {
                 const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
                 Value left = evaluate_expression(*binary.left, frame);
+                if (binary.op == TokenKind::AmpAmp && !std::get<bool>(left.data)) {
+                    return Value{false};
+                }
+                if (binary.op == TokenKind::PipePipe && std::get<bool>(left.data)) {
+                    return Value{true};
+                }
                 Value right = evaluate_expression(*binary.right, frame);
                 switch (binary.op) {
                     case TokenKind::Plus:
@@ -6953,8 +7006,30 @@ private:
                     case TokenKind::Star:
                         return Value{std::get<int64_t>(left.data) * std::get<int64_t>(right.data)};
                     case TokenKind::Slash:
+                        if (is_integral_type(binary.left->type) && !is_signed_integral_type(binary.left->type)) {
+                            uint64_t numerator = static_cast<uint64_t>(std::get<int64_t>(left.data));
+                            uint64_t denominator = static_cast<uint64_t>(std::get<int64_t>(right.data));
+                            const int width = integral_type_size_bytes(binary.left->type) * 8;
+                            if (width < 64) {
+                                const uint64_t mask = (uint64_t{1} << width) - 1;
+                                numerator &= mask;
+                                denominator &= mask;
+                            }
+                            return Value{std::bit_cast<int64_t>(numerator / denominator)};
+                        }
                         return Value{std::get<int64_t>(left.data) / std::get<int64_t>(right.data)};
                     case TokenKind::Percent:
+                        if (is_integral_type(binary.left->type) && !is_signed_integral_type(binary.left->type)) {
+                            uint64_t numerator = static_cast<uint64_t>(std::get<int64_t>(left.data));
+                            uint64_t denominator = static_cast<uint64_t>(std::get<int64_t>(right.data));
+                            const int width = integral_type_size_bytes(binary.left->type) * 8;
+                            if (width < 64) {
+                                const uint64_t mask = (uint64_t{1} << width) - 1;
+                                numerator &= mask;
+                                denominator &= mask;
+                            }
+                            return Value{std::bit_cast<int64_t>(numerator % denominator)};
+                        }
                         return Value{std::get<int64_t>(left.data) % std::get<int64_t>(right.data)};
                     case TokenKind::AmpAmp:
                         return Value{std::get<bool>(left.data) && std::get<bool>(right.data)};
@@ -7277,6 +7352,8 @@ private:
         out << "#include <stdlib.h>\n";
         out << "#include <string.h>\n\n";
         out << "#ifdef _WIN32\n#include <io.h>\n#else\n#include <unistd.h>\n#endif\n\n";
+        out << "static int32_t hy_wrap_i32(uint32_t bits) { int32_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n";
+        out << "static int64_t hy_wrap_i64(uint64_t bits) { int64_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n\n";
 
         // --- Type ID constants ---
         out << "#define HY_TYPE_ID_STRING (-1)\n";
@@ -7856,11 +7933,12 @@ private:
         out << "    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return NULL; }\n";
         out << "    long size = ftell(file);\n";
         out << "    if (size < 0) { fclose(file); return NULL; }\n";
-        out << "    rewind(file);\n";
+        out << "    if (fseek(file, 0, SEEK_SET) != 0) { fclose(file); return NULL; }\n";
         out << "    char* buf = (char*)malloc((size_t)size + 1);\n";
         out << "    if (!buf) { fclose(file); hy_runtime_fail(\"File read allocation failed\"); }\n";
         out << "    size_t read_count = fread(buf, 1, (size_t)size, file);\n";
-        out << "    fclose(file);\n";
+        out << "    if (read_count != (size_t)size) { free(buf); fclose(file); hy_runtime_fail(\"File read failed\"); }\n";
+        out << "    if (fclose(file) != 0) { free(buf); hy_runtime_fail(\"File close failed\"); }\n";
         out << "    buf[read_count] = '\\0';\n";
         out << "    HyString* result = (HyString*)hy_gc_alloc(sizeof(HyString));\n";
         out << "    result->__header.type_id = HY_TYPE_ID_STRING;\n";
@@ -7889,14 +7967,23 @@ private:
         out << "    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return NULL; }\n";
         out << "    long size = ftell(file);\n";
         out << "    if (size < 0) { fclose(file); return NULL; }\n";
-        out << "    rewind(file);\n";
+        out << "    if (fseek(file, 0, SEEK_SET) != 0) { fclose(file); return NULL; }\n";
         out << "    HyArray* result = hy_array_new((int64_t)size, 0);\n";
-        out << "    for (long i = 0; i < size; ++i) {\n";
-        out << "        int ch = fgetc(file);\n";
-        out << "        if (ch == EOF) break;\n";
-        out << "        ((int64_t*)result->elements)[i] = (int64_t)(unsigned char)ch;\n";
+        out << "    unsigned char buffer[4096];\n";
+        out << "    for (long offset = 0; offset < size;) {\n";
+        out << "        size_t chunk = (size_t)(size - offset);\n";
+        out << "        if (chunk > sizeof(buffer)) chunk = sizeof(buffer);\n";
+        out << "        size_t count = fread(buffer, 1, chunk, file);\n";
+        out << "        if (count != chunk) {\n";
+        out << "            int ended = feof(file);\n";
+        out << "            fclose(file);\n";
+        out << "            hy_runtime_fail(ended ? \"File truncated during read\" : \"File read failed\");\n";
+        out << "        }\n";
+        out << "        for (size_t i = 0; i < count; ++i)\n";
+        out << "            ((int64_t*)result->elements)[offset + (long)i] = (int64_t)buffer[i];\n";
+        out << "        offset += (long)count;\n";
         out << "    }\n";
-        out << "    fclose(file);\n";
+        out << "    if (fclose(file) != 0) hy_runtime_fail(\"File close failed\");\n";
         out << "    return result;\n";
         out << "}\n";
         out << "static void hy_file_write_all_bytes(HyString* path, HyArray* content) {\n";
@@ -7904,9 +7991,17 @@ private:
         out << "    FILE* file = fopen(path->bytes, \"wb\");\n";
         out << "    if (file == NULL) hy_runtime_fail(\"File write failed\");\n";
         out << "    if (content != NULL) {\n";
-        out << "        for (int64_t i = 0; i < content->length; ++i) {\n";
-        out << "            unsigned char byte = (unsigned char)(((int64_t*)content->elements)[i] & 0xFF);\n";
-        out << "            fwrite(&byte, 1, 1, file);\n";
+        out << "        unsigned char buffer[4096];\n";
+        out << "        for (int64_t offset = 0; offset < content->length;) {\n";
+        out << "            size_t chunk = (size_t)(content->length - offset);\n";
+        out << "            if (chunk > sizeof(buffer)) chunk = sizeof(buffer);\n";
+        out << "            for (size_t i = 0; i < chunk; ++i)\n";
+        out << "                buffer[i] = (unsigned char)(((int64_t*)content->elements)[offset + (int64_t)i] & 0xFF);\n";
+        out << "            if (fwrite(buffer, 1, chunk, file) != chunk) {\n";
+        out << "                fclose(file);\n";
+        out << "                hy_runtime_fail(\"File write failed\");\n";
+        out << "            }\n";
+        out << "            offset += (int64_t)chunk;\n";
         out << "        }\n";
         out << "    }\n";
         out << "    if (fclose(file) != 0) hy_runtime_fail(\"File close failed\");\n";
@@ -9060,6 +9155,17 @@ private:
                     }
                     return binary.op == TokenKind::EqualsEquals ? comparison : "(!" + comparison + ")";
                 }
+                if (binary.op == TokenKind::Plus || binary.op == TokenKind::Minus ||
+                    binary.op == TokenKind::Star) {
+                    const string result_type = c_type_name(binary.type);
+                    if (result_type == "int32_t" || result_type == "int64_t") {
+                        const string unsigned_type = result_type == "int32_t" ? "uint32_t" : "uint64_t";
+                        const string helper = result_type == "int32_t" ? "hy_wrap_i32" : "hy_wrap_i64";
+                        return helper + "((" + unsigned_type + ")(" + emit_expression(*binary.left) + ") " +
+                               token_text(binary.op) + " (" + unsigned_type + ")(" +
+                               emit_expression(*binary.right) + "))";
+                    }
+                }
                 return "(" + emit_expression(*binary.left) + " " + token_text(binary.op) + " " + emit_expression(*binary.right) + ")";
             }
             case BoundExpressionKind::Call: {
@@ -9138,6 +9244,9 @@ private:
                                emit_expression(*call.arguments[1]) + ", (int64_t)(" + emit_expression(*call.arguments[2]) +
                                "))";
                     }
+                }
+                if (call.method == program_.semantic_model.gc_collect) {
+                    return "hy_gc_collect()";
                 }
                 if ((call.method->is_builtin && call.method->owner == program_.semantic_model.assert_class) ||
                     (call.method->is_builtin && call.method->owner == program_.semantic_model.intrinsics_class)) {
@@ -10190,21 +10299,98 @@ std::optional<ProjectManifest> manifest_for_target(const fs::path& input_path, D
     return manifest;
 }
 
-string quote(const fs::path& value) {
-    return "\"" + value.string() + "\"";
+// Tool commands are argument vectors throughout the SDK. In particular,
+// project and output paths must never pass through a command shell.
+int run_process(const vector<string>& command) {
+    if (command.empty() || command[0].empty()) return -1;
+    vector<const char*> args;
+    args.reserve(command.size() + 1);
+    for (const string& part : command) args.push_back(part.c_str());
+    args.push_back(nullptr);
+#ifdef _WIN32
+    return static_cast<int>(_spawnvp(_P_WAIT, args[0], args.data()));
+#else
+    vector<char*> mutable_args;
+    mutable_args.reserve(args.size());
+    for (const char* part : args) mutable_args.push_back(const_cast<char*>(part));
+    pid_t child = -1;
+    if (posix_spawnp(&child, args[0], nullptr, nullptr, mutable_args.data(), environ) != 0) return -1;
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno != EINTR) return -1;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return -1;
+#endif
 }
 
 bool command_exists(const string& command) {
 #ifdef _WIN32
-    const string check = "where " + command + " >nul 2>nul";
+    char found[MAX_PATH];
+    return SearchPathA(nullptr, command.c_str(), ".exe", MAX_PATH, found, nullptr) != 0;
 #else
-    const string check = "command -v " + command + " >/dev/null 2>&1";
+    if (command.find('/') != string::npos) {
+        std::error_code error;
+        return fs::is_regular_file(command, error) && access(command.c_str(), X_OK) == 0;
+    }
+    const char* path_value = std::getenv("PATH");
+    if (path_value == nullptr) return false;
+    string path(path_value);
+    std::size_t start = 0;
+    while (start <= path.size()) {
+        const std::size_t end = path.find(':', start);
+        const string directory = path.substr(start, end == string::npos ? string::npos : end - start);
+        const fs::path candidate = fs::path(directory.empty() ? "." : directory) / command;
+        std::error_code error;
+        if (fs::is_regular_file(candidate, error) && access(candidate.c_str(), X_OK) == 0) return true;
+        if (end == string::npos) break;
+        start = end + 1;
+    }
+    return false;
 #endif
-    return std::system(check.c_str()) == 0;
+}
+
+// Accept a quoted executable path and optional flags in CC without allowing
+// shell expansion. A malformed quote makes the requested toolchain unavailable.
+vector<string> parse_tool_command(const string& text) {
+    if (command_exists(text)) return {text};
+    vector<string> parts;
+    string part;
+    char quote_char = 0;
+    bool started = false;
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        const char ch = text[index];
+        if (quote_char != 0) {
+            if (ch == quote_char) { quote_char = 0; continue; }
+            if (ch == '\\' && quote_char == '"' && index + 1 < text.size() &&
+                (text[index + 1] == '"' || text[index + 1] == '\\')) {
+                part += text[++index];
+                continue;
+            }
+            part += ch;
+        } else if (ch == '\'' || ch == '"') {
+            quote_char = ch;
+            started = true;
+        } else if (std::isspace(static_cast<unsigned char>(ch))) {
+            if (started) { parts.push_back(part); part.clear(); started = false; }
+        } else if (ch == '\\' && index + 1 < text.size() &&
+                   (std::isspace(static_cast<unsigned char>(text[index + 1])) ||
+                    text[index + 1] == '\'' || text[index + 1] == '"')) {
+            part += text[++index];
+            started = true;
+        } else {
+            part += ch;
+            started = true;
+        }
+    }
+    if (quote_char != 0) return {};
+    if (started) parts.push_back(part);
+    return parts;
 }
 
 struct HostToolchain {
-    string c_compiler;
+    vector<string> c_compiler;
     string archiver;
     bool uses_msvc = false;
 };
@@ -10213,7 +10399,8 @@ std::optional<HostToolchain> detect_host_toolchain() {
     const char* env_cc = std::getenv("CC");
     if (env_cc != nullptr && *env_cc != '\0') {
         HostToolchain toolchain;
-        toolchain.c_compiler = env_cc;
+        toolchain.c_compiler = parse_tool_command(env_cc);
+        if (toolchain.c_compiler.empty() || !command_exists(toolchain.c_compiler[0])) return std::nullopt;
         toolchain.archiver = command_exists("ar") ? "ar" : "";
         return toolchain;
     }
@@ -10221,7 +10408,7 @@ std::optional<HostToolchain> detect_host_toolchain() {
 #ifdef _WIN32
     if (command_exists("cl")) {
         HostToolchain toolchain;
-        toolchain.c_compiler = "cl";
+        toolchain.c_compiler = {"cl"};
         toolchain.archiver = command_exists("lib") ? "lib" : "";
         toolchain.uses_msvc = true;
         return toolchain;
@@ -10231,7 +10418,7 @@ std::optional<HostToolchain> detect_host_toolchain() {
     for (const string candidate : {"cc", "clang", "gcc"}) {
         if (command_exists(candidate)) {
             HostToolchain toolchain;
-            toolchain.c_compiler = candidate;
+            toolchain.c_compiler = {candidate};
             toolchain.archiver = command_exists("ar") ? "ar" : "";
             return toolchain;
         }
@@ -10440,6 +10627,7 @@ string compute_target_fingerprint(const fs::path& input_path,
     hash = hash_bytes(hash, manifest.version);
     hash = hash_bytes(hash, target_type);
     hash = hash_bytes(hash, debug ? "debug" : "nodebug");
+    hash = hash_bytes(hash, "c-backend-wrap-arithmetic-v3");
     for (const auto& source_file : source_files) {
         string text;
         if (read_text_file(source_file, text)) {
@@ -11453,33 +11641,39 @@ BuildResult build_target(const BuildOptions& options) {
     int result = 0;
     status("Compiling native output");
     if (target_type == "exe") {
-        string command;
+        vector<string> command = toolchain->c_compiler;
         if (toolchain->uses_msvc) {
-            command = toolchain->c_compiler + " /nologo /std:c11 " + quote(generated_c) + " /Fe:" + quote(output_path);
+            command.insert(command.end(), {"/nologo", "/std:c11", options.debug ? "/Od" : "/O2",
+                                           generated_c.string(), "/Fe:" + output_path.string()});
         } else {
-            command = toolchain->c_compiler + " -std=c11 " + quote(generated_c) + " -o " + quote(output_path);
+            command.insert(command.end(), {"-std=c11", options.debug ? "-O0" : "-O2",
+                                           generated_c.string(), "-o", output_path.string()});
         }
-        result = std::system(command.c_str());
+        result = run_process(command);
     } else {
         const fs::path object_path = build_dir / (manifest->name + ".generated.o");
-        string compile_command;
+        vector<string> compile_command = toolchain->c_compiler;
         if (toolchain->uses_msvc) {
-            compile_command = toolchain->c_compiler + " /nologo /std:c11 /c " + quote(generated_c) + " /Fo:" + quote(object_path);
+            compile_command.insert(compile_command.end(), {"/nologo", "/std:c11", "/c",
+                                                           options.debug ? "/Od" : "/O2",
+                                                           generated_c.string(), "/Fo:" + object_path.string()});
         } else {
-            compile_command = toolchain->c_compiler + " -std=c11 -c " + quote(generated_c) + " -o " + quote(object_path);
+            compile_command.insert(compile_command.end(), {"-std=c11", "-c",
+                                                           options.debug ? "-O0" : "-O2",
+                                                           generated_c.string(), "-o", object_path.string()});
         }
-        result = std::system(compile_command.c_str());
+        result = run_process(compile_command);
         if (result == 0) {
-            string archive_command;
+            vector<string> archive_command;
             if (toolchain->uses_msvc) {
-                archive_command = "lib /nologo /OUT:" + quote(output_path) + " " + quote(object_path);
+                archive_command = {"lib", "/nologo", "/OUT:" + output_path.string(), object_path.string()};
             } else if (!toolchain->archiver.empty()) {
-                archive_command = toolchain->archiver + " rcs " + quote(output_path) + " " + quote(object_path);
+                archive_command = {toolchain->archiver, "rcs", output_path.string(), object_path.string()};
             } else {
                 diagnostics.add(options.input_path, 1, 1, "Could not find a host archiver for static library output");
                 return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
             }
-            result = std::system(archive_command.c_str());
+            result = run_process(archive_command);
         }
     }
 
@@ -11536,8 +11730,7 @@ TestResult test_target(const TestOptions& options) {
             continue;
         }
 
-        string command = quote(build.output_path);
-        const int exit_code = std::system(command.c_str());
+        const int exit_code = run_process({build.output_path.string()});
         runs.push_back(TestRun{project_path, exit_code});
         if (exit_code != 0) {
             diagnostics.add(project_path, 1, 1, "Test project exited with code " + std::to_string(exit_code));

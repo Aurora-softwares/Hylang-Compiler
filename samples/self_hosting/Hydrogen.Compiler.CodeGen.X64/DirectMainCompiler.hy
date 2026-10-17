@@ -243,6 +243,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                             return false;
                         }
                         emittedMethods = emittedMethods + 1;
+                        // A method's temporary lowering/codegen objects are
+                        // no longer needed once its machine code is emitted.
+                        // Bound retained memory during large self-builds.
+                        if (emittedMethods % 16 == 0) { System.Runtime.GC.Collect(); }
                         if (buildProgress != null && emittedMethods % 10 == 0) {
                             buildProgress.Pulse("Compiled " + emittedMethods + " methods");
                         }
@@ -729,8 +733,16 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.EmitByte(0x5f);
                 if (receiverType == "string") { EmitRuntime("rt_char"); valueType = "string"; return true; }
                 if (!IsArray(receiverType)) { failure = "native indexing requires array or string"; return false; }
-                EmitRuntime("rt_index");
-                code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x00);
+                if (!freestanding && receiverType == "byte[]") {
+                    EmitCheckedPackedIndex(1);
+                    code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0x00); // movzx eax, byte [rax]
+                } else if (!freestanding && receiverType == "int[]") {
+                    EmitCheckedPackedIndex(4);
+                    code.EmitByte(0x48); code.EmitByte(0x63); code.EmitByte(0x00); // movsxd rax, dword [rax]
+                } else {
+                    EmitRuntime("rt_index");
+                    code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x00);
+                }
                 valueType = ElementType(receiverType);
                 return true;
             }
@@ -739,7 +751,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (!SupportedType(type, false)) { failure = "unsupported native array element type"; return false; }
                 if (!CompileExpression(expression.Size())) { return false; }
                 if (!Numeric(valueType)) { failure = "native array size must be integral"; return false; }
-                MoveRdiRax(); EmitRuntime("rt_array"); valueType = type + "[]"; return true;
+                MoveRdiRax();
+                if (!freestanding && type == "byte") { EmitRuntime("rt_byte_array"); }
+                else if (!freestanding && type == "int") { EmitRuntime("rt_int_array"); }
+                else { EmitRuntime("rt_array"); }
+                valueType = type + "[]"; return true;
             }
             if (kind == IrExpression.KindObjectCreation()) { return CompileObject(expression); }
             if (kind == IrExpression.KindCast()) {
@@ -794,6 +810,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             if (!CompileExpression(expression.Left())) { return false; }
             string leftType = valueType;
+            if (TryCompileImmediateBinary(expression, leftType)) { return true; }
             code.EmitByte(0x50); // push rax
             if (!CompileExpression(expression.Right())) { return false; }
             string rightType = valueType;
@@ -815,6 +832,29 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if ((op == IrOperator.EqualsEqualsToken() || op == IrOperator.BangEqualsToken()) &&
                 (leftType == "string" || valueType == "string")) {
                 if (!Assignable(leftType, "string") || !Assignable(valueType, "string")) { failure = "native string comparison type mismatch"; return false; }
+                // Comparing with a one-byte literal is common in text scans.
+                // Keep the null and length checks, but avoid a runtime call
+                // and a general byte sequence comparison for this case.
+                bool leftByteLiteral = expression.Left().Kind() == IrExpression.KindLiteral() &&
+                    expression.Left().LiteralKind() == "string" && expression.Left().LiteralText().Length == 1;
+                bool rightByteLiteral = expression.Right().Kind() == IrExpression.KindLiteral() &&
+                    expression.Right().LiteralKind() == "string" && expression.Right().LiteralText().Length == 1;
+                if (!freestanding && (leftByteLiteral || rightByteLiteral)) {
+                    if (leftByteLiteral) { code.EmitByte(0x48); code.EmitByte(0x91); } // dynamic string in rcx
+                    code.EmitByte(0x31); code.EmitByte(0xd2); // xor edx, edx
+                    code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc9); // test rcx, rcx
+                    code.EmitByte(0x0f); code.EmitByte(0x84); int nullPatch = code.Position(); code.Emit32(0);
+                    code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0x39); code.EmitByte(1); // cmp qword [rcx], 1
+                    code.EmitByte(0x0f); code.EmitByte(0x85); int lengthPatch = code.Position(); code.Emit32(0);
+                    code.EmitByte(0x8a); code.EmitByte(0x50); code.EmitByte(8); // mov dl, [rax+8]
+                    code.EmitByte(0x38); code.EmitByte(0x51); code.EmitByte(8); // cmp [rcx+8], dl
+                    code.EmitByte(0x0f); code.EmitByte(0x94); code.EmitByte(0xc2); // sete dl
+                    PatchRelative(nullPatch, code.Position());
+                    PatchRelative(lengthPatch, code.Position());
+                    code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0xc2); // movzx eax, dl
+                    if (op == IrOperator.BangEqualsToken()) { code.EmitByte(0x83); code.EmitByte(0xf0); code.EmitByte(1); }
+                    valueType = "bool"; return true;
+                }
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xcf);
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc6);
                 EmitRuntime("rt_equal");
@@ -879,6 +919,79 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             failure = "unsupported binary operator";
             return false;
+        }
+
+        // Keep the left operand in rax when the right operand is a numeric
+        // literal. x64 encodes a signed 32-bit immediate directly, removing
+        // the push/pop and literal load from common loop arithmetic.
+        private bool TryCompileImmediateBinary(IrExpression expression, string leftType) {
+            IrExpression right = expression.Right();
+            if (right.Kind() != IrExpression.KindLiteral() || right.LiteralKind() != "number" ||
+                !Numeric(leftType) || (!Assignable(leftType, "int") && !Assignable("int", leftType))) {
+                return false;
+            }
+            int immediate = ParseInt(right.LiteralText());
+            int op = expression.OperatorKind();
+            string resultType = expression.ResultType();
+            if (resultType == "") { resultType = leftType; }
+            if ((op == IrOperator.SlashToken() || op == IrOperator.PercentToken()) &&
+                leftType == "int" && resultType == "int" && immediate >= 3) {
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // mov rcx, rax
+                EmitIntConstantDivision(immediate, op == IrOperator.PercentToken());
+                valueType = "int"; return true;
+            }
+            if (op == IrOperator.PlusToken()) {
+                code.EmitByte(0x48); code.EmitByte(0x05); code.Emit32(immediate); // add rax, imm32
+                NormalizeRax(resultType); valueType = resultType; return true;
+            }
+            if (op == IrOperator.MinusToken()) {
+                code.EmitByte(0x48); code.EmitByte(0x2d); code.Emit32(immediate); // sub rax, imm32
+                NormalizeRax(resultType); valueType = resultType; return true;
+            }
+            if (op == IrOperator.StarToken()) {
+                code.EmitByte(0x48); code.EmitByte(0x69); code.EmitByte(0xc0); code.Emit32(immediate); // imul rax, rax, imm32
+                NormalizeRax(resultType); valueType = resultType; return true;
+            }
+            if (op == IrOperator.EqualsEqualsToken() || op == IrOperator.BangEqualsToken() ||
+                op == IrOperator.LessToken() || op == IrOperator.LessEqualsToken() ||
+                op == IrOperator.GreaterToken() || op == IrOperator.GreaterEqualsToken()) {
+                code.EmitByte(0x48); code.EmitByte(0x3d); code.Emit32(immediate); // cmp rax, imm32
+                code.EmitByte(0x0f);
+                if (op == IrOperator.EqualsEqualsToken()) { code.EmitByte(0x94); }
+                if (op == IrOperator.BangEqualsToken()) { code.EmitByte(0x95); }
+                if (op == IrOperator.LessToken()) { if (UnsignedOperation(leftType, "int")) { code.EmitByte(0x92); } else { code.EmitByte(0x9c); } }
+                if (op == IrOperator.LessEqualsToken()) { if (UnsignedOperation(leftType, "int")) { code.EmitByte(0x96); } else { code.EmitByte(0x9e); } }
+                if (op == IrOperator.GreaterToken()) { if (UnsignedOperation(leftType, "int")) { code.EmitByte(0x97); } else { code.EmitByte(0x9f); } }
+                if (op == IrOperator.GreaterEqualsToken()) { if (UnsignedOperation(leftType, "int")) { code.EmitByte(0x93); } else { code.EmitByte(0x9d); } }
+                code.EmitByte(0xc0); // setcc al
+                code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0xc0);
+                valueType = "bool"; return true;
+            }
+            return false;
+        }
+
+        // For |x| <= 2^31 and 3 <= divisor <= 2^31-1, the high half of
+        // |x| * ceil(2^64/divisor) is exactly floor(|x|/divisor). The
+        // reciprocal's rounding error is smaller than the minimum nonzero
+        // fractional step (1/divisor). Restore truncation-toward-zero sign.
+        private void EmitIntConstantDivision(int divisor, bool remainder) {
+            ulong magic = ((ulong)(-1) / (ulong)divisor) + (ulong)1;
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc8); // mov r8, rcx (dividend sign)
+            code.EmitByte(0x49); code.EmitByte(0xc1); code.EmitByte(0xf8); code.EmitByte(63); // sar r8, 63
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
+            code.EmitByte(0x4c); code.EmitByte(0x31); code.EmitByte(0xc0); // xor rax, r8
+            code.EmitByte(0x4c); code.EmitByte(0x29); code.EmitByte(0xc0); // sub rax, r8
+            code.EmitByte(0x49); code.EmitByte(0xb9); code.Emit64((long)magic); // mov r9, reciprocal
+            code.EmitByte(0x49); code.EmitByte(0xf7); code.EmitByte(0xe1); // mul r9; quotient in rdx
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd0); // mov rax, rdx
+            code.EmitByte(0x4c); code.EmitByte(0x31); code.EmitByte(0xc0); // xor rax, r8
+            code.EmitByte(0x4c); code.EmitByte(0x29); code.EmitByte(0xc0); // sub rax, r8
+            if (remainder) {
+                code.EmitByte(0x48); code.EmitByte(0x69); code.EmitByte(0xc0); code.Emit32(divisor); // quotient * divisor
+                code.EmitByte(0x48); code.EmitByte(0x29); code.EmitByte(0xc1); // sub rcx, rax
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
+            }
+            NormalizeRax("int");
         }
 
         private bool CompileLogical(IrExpression expression) {
@@ -1286,6 +1399,27 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.Emit32(0);
         }
 
+        // rdi is the array and rsi is the signed index. Keep the same checks
+        // as rt_index while avoiding a helper call for each primitive element.
+        private void EmitCheckedPackedIndex(int elementBytes) {
+            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xff); // test rdi, rdi
+            code.EmitByte(0x0f); code.EmitByte(0x85); int nonNull = code.Position(); code.Emit32(0);
+            EmitRuntime("rt_null_error");
+            PatchRelative(nonNull, code.Position());
+            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xf6); // test rsi, rsi
+            code.EmitByte(0x0f); code.EmitByte(0x89); int nonNegative = code.Position(); code.Emit32(0);
+            EmitRuntime("rt_index_error");
+            PatchRelative(nonNegative, code.Position());
+            code.EmitByte(0x48); code.EmitByte(0x3b); code.EmitByte(0x37); // cmp rsi, [rdi]
+            code.EmitByte(0x0f); code.EmitByte(0x82); int inRange = code.Position(); code.Emit32(0);
+            EmitRuntime("rt_index_error");
+            PatchRelative(inRange, code.Position());
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x44);
+            if (elementBytes == 1) { code.EmitByte(0x37); }
+            else { code.EmitByte(0xb7); }
+            code.EmitByte(8); // lea rax, [rdi + rsi * elementBytes + 8]
+        }
+
         private void MoveRdiRax() { code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc7); }
         private void DropSlots(int slots) {
             if (slots != 0) { code.EmitByte(0x48); code.EmitByte(0x81); code.EmitByte(0xc4); code.Emit32(slots * 8); }
@@ -1293,10 +1427,18 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
         private void EmitLiteral(string text) {
             int index = AddPayload(text);
-            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x3d); // lea rdi, [rip+literal]
-            AddPayloadPatch(code.Position(), index); code.Emit32(0);
-            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc6); code.Emit32(text.Length);
-            EmitRuntime("rt_string");
+            if (freestanding) {
+                // The kernel's explicit ownership rules require a fresh
+                // managed string; rt_string copies raw image bytes into it.
+                code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x3d); // lea rdi, [rip+literal]
+                AddPayloadPatch(code.Position(), index); code.Emit32(0);
+                code.EmitByte(0xbe); code.Emit32(text.Length); // mov esi, byte length
+                EmitRuntime("rt_string");
+            } else {
+                // Linux literals include a length header in the ELF image.
+                code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x05); // lea rax, [rip+literal]
+                AddPayloadPatch(code.Position(), index); code.Emit32(0);
+            }
         }
 
         private bool ConvertString(string type) {
@@ -1548,6 +1690,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             IrExpression target = expression.Target();
             int slot = -1;
             string expected = "";
+            bool packedByteTarget = false;
+            bool packedIntTarget = false;
             if (target.Kind() == IrExpression.KindName()) { slot = FindLocal(target.Name()); }
             if (slot >= 0) { expected = localTypes[slot]; }
             else {
@@ -1559,12 +1703,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 } else if (target.Kind() == IrExpression.KindIndex()) {
                     if (!CompileExpression(target.Receiver())) { return false; }
                     if (!IsArray(valueType)) { failure = "native indexed assignment requires array"; return false; }
+                    packedByteTarget = !freestanding && valueType == "byte[]";
+                    packedIntTarget = !freestanding && valueType == "int[]";
                     expected = ElementType(valueType);
                     code.EmitByte(0x50);
                     if (!CompileExpression(target.Index())) { return false; }
                     if (!Numeric(valueType)) { failure = "native index must be integral"; return false; }
                     code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc6); code.EmitByte(0x5f);
-                    EmitRuntime("rt_index"); valueType = expected;
+                    if (packedByteTarget) { EmitCheckedPackedIndex(1); }
+                    else if (packedIntTarget) { EmitCheckedPackedIndex(4); }
+                    else { EmitRuntime("rt_index"); }
+                    valueType = expected;
                 } else { failure = "unsupported native assignment target"; return false; }
                 expected = valueType;
                 code.EmitByte(0x50); // retain interior lvalue pointer as a GC root during RHS evaluation
@@ -1573,7 +1722,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (!Assignable(valueType, expected)) { failure = "native assignment type mismatch"; return false; }
             PrepareValue(expected);
             if (slot >= 0) { EmitStoreLocal(slot); }
-            else { code.EmitByte(0x59); code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0x01); }
+            else {
+                code.EmitByte(0x59);
+                if (packedByteTarget) { code.EmitByte(0x88); code.EmitByte(0x01); }
+                else if (packedIntTarget) { code.EmitByte(0x89); code.EmitByte(0x01); }
+                else { code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0x01); }
+            }
             valueType = expected; return true;
         }
         private bool CompileObject(IrExpression expression) {

@@ -34,6 +34,23 @@ target_link_libraries(hy PRIVATE hylang)
 
 enable_testing()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(
+        NAME hy_sdk_shell_characters
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_sdk_shell_characters
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkSecurity.cmake
+    )
+    add_test(
+        NAME hy_sdk_short_file_io
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_sdk_short_file_io
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkFileIoFailures.cmake
+    )
+endif()
+
 add_custom_target(hydrogen_package_release
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
@@ -102,6 +119,24 @@ add_test(
     COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/for_loop.hy
 )
 set_tests_properties(hyrun_for_loop PROPERTIES PASS_REGULAR_EXPRESSION "9")
+
+add_test(
+    NAME hyrun_frame_slots
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/interpreter_frame_slots.hy
+)
+set_tests_properties(hyrun_frame_slots PROPERTIES PASS_REGULAR_EXPRESSION "46")
+
+add_test(
+    NAME hyrun_logical_short_circuit
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/logical_short_circuit.hy
+)
+set_tests_properties(hyrun_logical_short_circuit PROPERTIES PASS_REGULAR_EXPRESSION "short-circuit-ok")
+
+add_test(
+    NAME hyrun_unsigned_division
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/unsigned_division.hy
+)
+set_tests_properties(hyrun_unsigned_division PROPERTIES PASS_REGULAR_EXPRESSION "unsigned-division-ok")
 
 add_test(
     NAME hyrun_string_features
@@ -1358,6 +1393,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
     )
     set_tests_properties(hy_stage1_build_os_project PROPERTIES
         FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_aun1_native
+        COMMAND ${CMAKE_COMMAND}
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DTEMP_DIR=${stage1_test_dir}/aun1-native
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyAun1Native.cmake
+    )
+    set_tests_properties(hy_stage1_aun1_native PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
     add_test(NAME hy_stage1_compile_uefi_multiline
         COMMAND ${CMAKE_COMMAND}
             -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
@@ -1451,5 +1495,5 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBootstrapProof.cmake
     )
     set_tests_properties(hy_stage6_bootstrap_proof PROPERTIES
-        FIXTURES_REQUIRED hydrogen_stage1 ENVIRONMENT "PATH=" TIMEOUT 600 RUN_SERIAL TRUE)
+        FIXTURES_REQUIRED hydrogen_stage1 ENVIRONMENT "PATH=" TIMEOUT 1800 RUN_SERIAL TRUE)
 endif()

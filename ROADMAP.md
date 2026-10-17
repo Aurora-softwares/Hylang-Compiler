@@ -15,6 +15,7 @@ The Hydrogen-written compiler emits Linux x86-64 ELF directly, binds executable 
 - Retain clean failure for unsupported programs and add cross-backend semantic regressions.
 - Preserve node spans through AST/binding/IR for precise diagnostics.
 - Improve collector allocation density, compiler memory use, and generated-code performance.
+  The measured self-hosted native runtime priorities are in [optimisations.md](optimisations.md).
 - Port or replace SDK scaffolding, run/test/fmt/check tooling, workspace/package resolution, and LSP services.
 - Migrate build/tests to retained verified native seeds before deciding whether to retire C++ bootstrap sources.
 

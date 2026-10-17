@@ -18,6 +18,9 @@ The Hydrogen-written compiler produces standalone Linux x86-64 executables, cons
 | `hyc build` | Compatibility build command | Host C backend, executables or static libraries |
 
 See the [language and tool reference](https://aurora-softwares.github.io/Hylang-Docs/) and [native compiler guide](samples/self_hosting/README.md) for the supported features of each route.
+For runtime performance measurements and planned work, see the [optimisation checklist](optimisations.md).
+The [runtime comparison harness](benchmarks/runtime/README.md) times equivalent Hydrogen, C, C++, and Rust programs.
+The [security review checklist](security.md) records confirmed issues and hardening work.
 
 ## Build output
 

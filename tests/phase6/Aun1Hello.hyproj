@@ -1,0 +1,5 @@
+format = 2
+name = "Aun1Hello"
+type = "native"
+output = "native-hydrogen.exec"
+sources = ["aun1_hello.hy"]

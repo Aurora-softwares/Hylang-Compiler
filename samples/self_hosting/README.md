@@ -158,11 +158,13 @@ It prints `Answer: 42`. Arrays are mutable, zero/default-initialized, and bounds
 | `System.Console` | `Write(value)`, `WriteLine(value)`, native-only empty `WriteLine()` |
 | `System.IO.File` | `Exists(path)`, `ReadAllText(path)`, `ReadAllBytes(path)`, `WriteAllText(path, text)`, `WriteAllBytes(path, bytes)` |
 | `System.Convert` | `ToInt32(text)` returning Hydrogen's `int` |
-| `System.Runtime.GC` | `Collect()`, `GetAllocatedBytes()` (native source APIs) |
+| `System.Runtime.GC` | `Collect()` in native code and SDK C output (`hy run` treats it as a no-op); `GetAllocatedBytes()` in native code only |
 
 File reads require seekable files. Null access, invalid indices/sizes, malformed integers, I/O errors, and allocation failures report an error on stderr and exit `1`. `Console.ReadLine` is recognized by the checker but rejected by native generation.
 
-The runtime uses Linux anonymous mappings and conservative non-moving mark/sweep collection. Stack/register and interior roots preserve reachable graphs and cycles. Collection runs under allocation pressure; conservative roots can retain some unreachable objects. A cleared-page reuse pool is bounded at 16 MiB and released by explicit collection. `GetAllocatedBytes` excludes cached free pages. SDK `HYLANG_GC_STRESS`/`HYLANG_GC_THRESHOLD` environment controls do not apply to this runtime.
+The runtime uses Linux anonymous mappings and conservative non-moving mark/sweep collection. Small objects occupy 64, 128, 256, or 512-byte slots in shared 4 KiB spans; larger objects have separate mappings. Stack/register and interior roots preserve reachable graphs and cycles, including pointers into individual span slots. Collection runs under allocation pressure, reclaims dead slots, and returns wholly dead spans; conservative roots can retain some unreachable objects. A cleared-page reuse pool is bounded at 16 MiB and released by explicit collection. `GetAllocatedBytes` excludes cached free pages. SDK `HYLANG_GC_STRESS`/`HYLANG_GC_THRESHOLD` environment controls do not apply to this runtime.
+
+Linux native `byte[]` and `int[]` use one-byte and four-byte elements; other arrays use eight-byte slots. Byte-file reads and writes operate directly on packed array storage. The backend emits inline checked indexing for packed arrays, direct comparisons with one-byte string literals, and immediate x64 instructions for numeric literal operations. Freestanding arrays keep their existing eight-byte layout.
 
 ## Projects and IR
 

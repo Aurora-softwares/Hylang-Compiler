@@ -120,8 +120,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return image;
         }
 
-        // Generic program image builder used by the growing direct backend.  Patch
-        // offsets point at the disp32 of RIP-relative payload references in code.
+        // Direct native string literals live in read-only image data with the
+        // same length/data/NUL layout as heap strings. Patch offsets point at
+        // the disp32 of RIP-relative references to their string headers.
         public byte[] BuildCodeAndData(byte[] codeBytes, string[] payloads, int[] patchOffsets, int[] payloadIndexes) {
             int headerSize = 64 + 56;
             int codeOffset = headerSize;
@@ -131,7 +132,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             int i = 0;
             while (i < payloads.Length) {
                 payloadOffsets[i] = cursor;
-                cursor = cursor + payloads[i].Length;
+                cursor = cursor + 8 + payloads[i].Length + 1;
                 i = i + 1;
             }
 
@@ -156,11 +157,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             int pi = 0;
             while (pi < payloads.Length) {
                 string payload = payloads[pi];
+                Write64(image, payloadOffsets[pi], payload.Length);
                 int k = 0;
                 while (k < payload.Length) {
-                    image[payloadOffsets[pi] + k] = (byte)AsciiCode(payload[k]);
+                    image[payloadOffsets[pi] + 8 + k] = (byte)AsciiCode(payload[k]);
                     k = k + 1;
                 }
+                image[payloadOffsets[pi] + 8 + payload.Length] = 0;
                 pi = pi + 1;
             }
             return image;
