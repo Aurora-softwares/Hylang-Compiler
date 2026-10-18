@@ -4,11 +4,11 @@
 
 ## Phase 1: Kernel reliability
 
-- 🔴 Define and document kernel invariants and ownership rules
-- 🔴 Audit physical memory allocation, alignment and bounds checks
-- 🔴 Implement reliable exception handling and fault classification
-- 🔴 Strengthen interrupt handling, timers and locking
-- 🔴 Add serial crash diagnostics and reproducible panic reports
+- 🟢 Define and document kernel invariants and ownership rules
+- 🟢 Audit physical memory allocation, alignment and bounds checks
+- 🟢 Implement reliable exception handling and fault classification
+- 🟢 Strengthen interrupt handling, timers and locking
+- 🟢 Add serial crash diagnostics and reproducible panic reports
 
 ### Completion: Kernel survives controlled faults and reports actionable diagnostics.
 
