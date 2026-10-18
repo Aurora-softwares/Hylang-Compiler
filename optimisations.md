@@ -37,12 +37,12 @@ cases; they are not an overall language speed rating.
 
 ## Completed native runtime work
 
-- [x] **Store string literals in executable data.** The native compiler used
+- 🟢 **Store string literals in executable data.** The native compiler used
   to allocate a string each time a literal expression ran. On the same hashed
   1 MB log input, scanning fell from 8.07 s to 25.9 ms, about 312× faster.
   The [pre-change samples](benchmarks/runtime/results-2026-10-17-before-literals.json)
   and a native allocation regression preserve that result.
-- [x] **Lower signed `int` division by positive constant divisors with a
+- 🟢 **Lower signed `int` division by positive constant divisors with a
   reciprocal multiply.** The direct x64 compiler now computes quotient and
   remainder without a hardware `idiv` for constants from 3 through
   2,147,483,647. The variable-divisor path is unchanged. A regression compares
@@ -50,7 +50,7 @@ cases; they are not an overall language speed rating.
   arithmetic case fell from 418.6 to 136.1 ms; the array case from 348.2 to
   194.8 ms. This closes the constant-divisor part of code generation, while
   general code generation remains below.
-- [x] **Pack small objects into shared 4 KiB pages.** The native runtime now
+- 🟢 **Pack small objects into shared 4 KiB pages.** The native runtime now
   uses 64, 128, 256, and 512-byte slots, tracks spans with free slots, and
   returns wholly dead spans after collection. The conservative page index
   resolves interior pointers to individual objects within a span. A new
@@ -60,21 +60,21 @@ cases; they are not an overall language speed rating.
   that repeated scan. For the 20,000-node executable, a local `/usr/bin/time`
   check saw peak RSS fall from 80,012 to 2,560 KB; `strace -c` counted 20,013
   versus 650 `mmap` calls. These diagnostic counts include process startup.
-- [x] **Batch native `Console.WriteBytes`.** The first pass packed up to 4 KiB
+- 🟢 **Batch native `Console.WriteBytes`.** The first pass packed up to 4 KiB
   per `write` call, taking its 1 MiB diagnostic from 427 to 2.36 ms. The
   packed `byte[]` layout now lets the runtime write directly from array
   storage. The chunk-boundary regression still covers output correctness.
-- [x] **Use x64 immediates and inline checked packed-array addresses.**
+- 🟢 **Use x64 immediates and inline checked packed-array addresses.**
   Numeric literal arithmetic and comparisons now avoid a stack spill and a
   literal load. Native `byte[]` and `int[]` indexing checks null, negative,
   and upper bounds inline before loading or storing. The integer loop fell
   from 136.1 to 94.7 ms and the array pass from 194.8 to 157.1 ms. The
   broader code-generation item remains open for other redundant operations.
-- [x] **Compare one-byte string literals directly.** Native equality and
+- 🟢 **Compare one-byte string literals directly.** Native equality and
   inequality keep null and length checks, then compare one byte without a
   general string helper call. The 1 MB log scan fell from 25.5 to 6.54 ms;
   a regression covers empty, null, longer, and both operand orders.
-- [x] **Pack `byte[]`/`int[]` and read/write byte files directly.** Linux
+- 🟢 **Pack `byte[]`/`int[]` and read/write byte files directly.** Linux
   native byte arrays use one-byte slots and integer arrays four-byte slots;
   reference arrays and freestanding arrays retain eight-byte slots. Native
   `ReadAllBytes` reads into the packed array and `WriteAllBytes` and
@@ -84,38 +84,38 @@ cases; they are not an overall language speed rating.
 
 ## Next runtime work, ranked by measured impact
 
-1. [ ] **Improve general direct x64 code generation.** The integer loop is
+1. 🔴 **Improve general direct x64 code generation.** The integer loop is
    still 2.03× C and the array pass 2.46×. Profile emitted instructions and
    reduce remaining stack spills, redundant loads, and per-element bounds
    checks where loop proofs permit hoisting. Preserve signed-width, overflow,
    and negative-index behaviour. Keep stage 2 and 3 compiler outputs identical.
-2. [ ] **Specialise hot string indexing.** One-byte literal equality is done,
+2. 🔴 **Specialise hot string indexing.** One-byte literal equality is done,
    but the log scan is still 3.67× C and indexing still calls a runtime
    helper. A direct inline checked load was slower in a paired 30-run check
    (7.96 versus 6.89 ms) and was reverted. Profile surrounding spills and
    branches before trying another path; retain empty, multi-byte, null, and
    out-of-range tests.
-3. [ ] **Remove repeated string copying.** Add a builder or buffer-backed
+3. 🔴 **Remove repeated string copying.** Add a builder or buffer-backed
    append path for concatenation in text-heavy programs and compiler
    diagnostics. Measure copied bytes and live heap size before changing the
    representation.
-4. [ ] **Reduce full-GC work and pauses when traces justify it.** Profile
+4. 🔴 **Reduce full-GC work and pauses when traces justify it.** Profile
    root scans, the page index, span sweeping, and recycled-page budget on
    allocation-heavy applications. Preserve conservative interior roots and
    cycles; add incremental or generational collection only with evidence.
-5. [ ] **Buffer repeated small console writes and trim startup.** Measure a
+5. 🔴 **Buffer repeated small console writes and trim startup.** Measure a
    logging workload and a tiny command independently. Preserve terminal and
    flush behaviour.
-6. [ ] **Vectorise proven bulk operations.** Test SIMD or library-backed
+6. 🔴 **Vectorise proven bulk operations.** Test SIMD or library-backed
    copy/search/compare with scalar fallbacks. Pack other primitive array types
    when a representative workload shows enough benefit.
 
 ## Build-time work, separate from runtime ranking
 
-- [ ] Profile the complete self-build (token and AST allocation, symbol
+- 🔴 Profile the complete self-build (token and AST allocation, symbol
   lookup, method lowering, image assembly) and cache unchanged parses and
   dependencies by content hash. Retain a clean bootstrap proof mode.
-- [ ] Parse independent files or compile independent methods concurrently
+- 🔴 Parse independent files or compile independent methods concurrently
   only when shared state and deterministic output are safe. Measure elapsed
   time and peak RSS together.
 
