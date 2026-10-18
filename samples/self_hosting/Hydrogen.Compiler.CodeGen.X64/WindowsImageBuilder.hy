@@ -1,277 +1,179 @@
-using Hydrogen.Compiler.IR;
-
 namespace Hydrogen.Compiler.CodeGen.X64 {
     public class WindowsImageBuilder {
-        // Minimal Windows x86-64 PE32+ console executable.
-        //
-        // One .text section and one .idata section.
-        // Imports ExitProcess from KERNEL32.dll.
-        //
-        // No external assembler, linker or Windows SDK required.
-        //
-        // First milestone only: this does not yet compile an
-        // arbitrary Hydrogen program.
-
-
-        public byte[] Build(IrModule module) {
-            if (module == null || module.Root() == null) {
-                return null;
-            }
-
-            IrClass[] classes = module.Root().Classes();
-            IrMethod mainMethod = null;
-
-            // Find the program entry point.
-            int c = 0;
-            while (c < classes.Length) {
-                IrMethod[] methods = classes[c].Methods();
-
-                int m = 0;
-                while (m < methods.Length) {
-                    IrMethod method = methods[m];
-
-                    if (method.IsStatic() && method.Name() == "Main") {
-                        if (mainMethod != null) {
-                            return null;
-                        }
-
-                        mainMethod = method;
-                    }
-
-                    m = m + 1;
-                }
-
-                c = c + 1;
-            }
-
-            if (mainMethod == null) {
-                return null;
-            }
-
-            // Initial experimental subset:
-            // static int Main()
-            // static int Main(string[] args)
-            if (mainMethod.ReturnType() == null ||
-                mainMethod.ReturnType().DisplayName() != "int") {
-                return null;
-            }
-
-            IrParameter[] parameters = mainMethod.Parameters();
-
-            if (parameters.Length > 1) {
-                return null;
-            }
-
-            if (parameters.Length == 1) {
-                if (parameters[0].Type().DisplayName() != "string[]") {
-                    return null;
-                }
-            }
-
-            IrStatement body = mainMethod.Body();
-
-            if (body == null || body.Kind() != IrStatement.KindBlock()) {
-                return null;
-            }
-
-            IrStatement[] statements = body.Statements();
-
-            // Only a single integer-literal return is supported
-            // in the initial Windows target.
-            if (statements.Length != 1) {
-                return null;
-            }
-
-            IrStatement statement = statements[0];
-
-            if (statement == null ||
-                statement.Kind() != IrStatement.KindReturnStatement()) {
-                return null;
-            }
-
-            IrExpression expression = statement.Expression();
-
-            if (expression == null ||
-                expression.Kind() != IrExpression.KindLiteral() ||
-                expression.LiteralKind() != "number") {
-                return null;
-            }
-
-            // Parse a non-negative decimal int literal.
-            string digits = expression.LiteralText();
-            if (digits.Length == 0) {
-                return null;
-            }
-
-            ElfImageBuilder ascii = new ElfImageBuilder();
-            int exitCode = 0;
+        // Package the shared direct compiler's code and managed string literals
+        // as a PE32+ console process. All references are RIP relative, including
+        // the runtime's Win32 import thunks; no native linker is required.
+        public byte[] BuildCodeAndData(byte[] code, string[] payloads,
+                                       int[] patchOffsets, int[] payloadIndexes,
+                                       int runtimeStart, WindowsRuntimeEmitter runtime) {
+            if (code == null || code.Length < 1 || code.Length > 0x10000000) { return null; }
+            int textRva = 0x1000;
+            int textRaw = 0x200;
+            int textSize = Align(code.Length, 0x200);
+            int dataRva = Align(textRva + code.Length, 0x1000);
+            int dataRaw = textRaw + textSize;
+            int[] payloadOffsets = new int[payloads.Length];
+            int dataLength = 0;
             int i = 0;
-
-            while (i < digits.Length) {
-                int character = ascii.AsciiCode(digits[i]);
-
-                if (character < 48 || character > 57) {
-                    return null;
-                }
-
-                int digit = character - 48;
-
-                // Prevent signed 32-bit overflow.
-                if (exitCode > 214748364) {
-                    return null;
-                }
-
-                if (exitCode == 214748364 && digit > 7) {
-                    return null;
-                }
-
-                exitCode = exitCode * 10 + digit;
+            while (i < payloads.Length) {
+                payloadOffsets[i] = dataLength;
+                dataLength = dataLength + 8 + payloads[i].Length + 1;
                 i = i + 1;
             }
+            if (dataLength == 0) { dataLength = 1; }
+            int dataSize = Align(dataLength, 0x200);
+            int importRva = Align(dataRva + dataLength, 0x1000);
+            int importRaw = dataRaw + dataSize;
 
-            // Emit the Windows PE32+ executable.
-            return BuildExit(exitCode);
-        }
-
-
-        public byte[] BuildExit(int exitCode) {
-            int imageLength = 0x600;
+            string[] names = new string[17];
+            names[0] = "VirtualAlloc"; names[1] = "VirtualFree";
+            names[2] = "GetStdHandle"; names[3] = "WriteFile";
+            names[4] = "ReadFile"; names[5] = "CreateFileW";
+            names[6] = "CloseHandle"; names[7] = "SetFilePointerEx";
+            names[8] = "GetConsoleMode"; names[9] = "CreateDirectoryW";
+            names[10] = "GetLastError"; names[11] = "ExitProcess";
+            names[12] = "GetCommandLineW"; names[13] = "CommandLineToArgvW";
+            names[14] = "WideCharToMultiByte"; names[15] = "LocalFree";
+            names[16] = "MultiByteToWideChar";
+            int kernelLookup = 64;
+            int shellLookup = kernelLookup + 17 * 8;
+            int kernelIat = shellLookup + 2 * 8;
+            int shellIat = kernelIat + 17 * 8;
+            int cursor = shellIat + 2 * 8;
+            int[] nameOffsets = new int[names.Length];
+            i = 0;
+            while (i < names.Length) {
+                nameOffsets[i] = cursor;
+                cursor = Align(cursor + 2 + names[i].Length + 1, 2);
+                i = i + 1;
+            }
+            int kernelDll = cursor;
+            cursor = cursor + 13; // KERNEL32.dll and NUL
+            int shellDll = cursor;
+            cursor = cursor + 12; // SHELL32.dll and NUL
+            // A legal no-op base relocation block lets the loader choose an
+            // image base; generated references themselves are all RIP relative.
+            int relocOffset = Align(cursor, 4);
+            cursor = relocOffset + 12;
+            int importSize = Align(cursor, 0x200);
+            int imageLength = importRaw + importSize;
             byte[] image = new byte[imageLength];
 
+            // DOS, COFF, PE32+, and three section headers fit in 512 bytes.
             int pe = 0x80;
             int optional = pe + 24;
             int sections = optional + 0xf0;
-
-            int textRva = 0x1000;
-            int textRaw = 0x200;
-            int importRva = 0x2000;
-            int importRaw = 0x400;
-
-            // DOS header and PE header pointer.
-            Write16(image, 0x00, 0x5a4d);
-            Write32(image, 0x3c, pe);
-
-            // PE signature: "PE\0\0"
-            Write32(image, pe, 0x00004550);
-
-            // COFF file header.
-            Write16(image, pe + 4, 0x8664); // AMD64
-            Write16(image, pe + 6, 2);      // 2 sections
-            Write32(image, pe + 8, 0);
-            Write32(image, pe + 12, 0);
-            Write32(image, pe + 16, 0);
-            Write16(image, pe + 20, 0xf0);
-            Write16(image, pe + 22, 0x0022);
-
-            // PE32+ optional header.
-            Write16(image, optional + 0, 0x20b);
-            Write32(image, optional + 4, 0x200);
-            Write32(image, optional + 8, 0x200);
-
+            Write16(image, 0, 0x5a4d); Write32(image, 0x3c, pe);
+            Write32(image, pe, 0x4550);
+            Write16(image, pe + 4, 0x8664); Write16(image, pe + 6, 3);
+            Write16(image, pe + 20, 0xf0); Write16(image, pe + 22, 0x22);
+            Write16(image, optional, 0x20b);
+            Write32(image, optional + 4, textSize);
+            Write32(image, optional + 8, dataSize + importSize);
             Write32(image, optional + 16, textRva);
             Write32(image, optional + 20, textRva);
-
-            // Preferred base: 0x0000000000400000.
             Write64(image, optional + 24, 0x400000);
-
             Write32(image, optional + 32, 0x1000);
             Write32(image, optional + 36, 0x200);
-
             Write16(image, optional + 40, 6);
-            Write16(image, optional + 42, 0);
-
             Write16(image, optional + 48, 6);
-            Write16(image, optional + 50, 0);
-
-            Write32(image, optional + 56, 0x3000);
+            Write32(image, optional + 56, Align(importRva + cursor, 0x1000));
             Write32(image, optional + 60, 0x200);
-
-            Write16(image, optional + 68, 3); // Console
-            Write16(image, optional + 70, 0);
-
+            Write16(image, optional + 68, 3); // console subsystem
+            Write16(image, optional + 70, 0x160); // high-entropy ASLR, dynamic base, NX
             Write64(image, optional + 72, 0x100000);
             Write64(image, optional + 80, 0x1000);
             Write64(image, optional + 88, 0x100000);
             Write64(image, optional + 96, 0x1000);
-
             Write32(image, optional + 108, 16);
-
-            // Import data directory.
             Write32(image, optional + 120, importRva);
-            Write32(image, optional + 124, 40);
+            Write32(image, optional + 124, 60);
+            Write32(image, optional + 152, importRva + relocOffset);
+            Write32(image, optional + 156, 12);
+            Write32(image, optional + 208, importRva + kernelIat);
+            Write32(image, optional + 212, shellIat + 16 - kernelIat);
 
-            // .text section.
             WriteAscii(image, sections, ".text");
-            Write32(image, sections + 8, 14);
+            Write32(image, sections + 8, code.Length);
             Write32(image, sections + 12, textRva);
-            Write32(image, sections + 16, 0x200);
+            Write32(image, sections + 16, textSize);
             Write32(image, sections + 20, textRaw);
             Write32(image, sections + 36, 0x60000020);
+            int dataSection = sections + 40;
+            WriteAscii(image, dataSection, ".data");
+            Write32(image, dataSection + 8, dataLength);
+            Write32(image, dataSection + 12, dataRva);
+            Write32(image, dataSection + 16, dataSize);
+            Write32(image, dataSection + 20, dataRaw);
+            Write32(image, dataSection + 36, -1073741760);
+            int importSection = dataSection + 40;
+            WriteAscii(image, importSection, ".idata");
+            Write32(image, importSection + 8, cursor);
+            Write32(image, importSection + 12, importRva);
+            Write32(image, importSection + 16, importSize);
+            Write32(image, importSection + 20, importRaw);
+            Write32(image, importSection + 36, -1073741760);
 
-            // .idata section.
-            int idataSection = sections + 40;
-            WriteAscii(image, idataSection, ".idata");
-            Write32(image, idataSection + 8, 0x100);
-            Write32(image, idataSection + 12, importRva);
-            Write32(image, idataSection + 16, 0x200);
-            Write32(image, idataSection + 20, importRaw);
-            Write32(image, idataSection + 36, -1073741760);
+            // Import descriptors: KERNEL32, SHELL32, terminating zero entry.
+            Write32(image, importRaw, importRva + kernelLookup);
+            Write32(image, importRaw + 12, importRva + kernelDll);
+            Write32(image, importRaw + 16, importRva + kernelIat);
+            Write32(image, importRaw + 20, importRva + shellLookup);
+            Write32(image, importRaw + 32, importRva + shellDll);
+            Write32(image, importRaw + 36, importRva + shellIat);
+            WriteAscii(image, importRaw + kernelDll, "KERNEL32.dll");
+            WriteAscii(image, importRaw + shellDll, "SHELL32.dll");
+            Write32(image, importRaw + relocOffset, textRva);
+            Write32(image, importRaw + relocOffset + 4, 12);
 
-            // Windows x64 entry point:
-            //
-            // sub rsp, 40          ; 32-byte shadow space
-            // mov ecx, exitCode   ; first Windows argument
-            // call [rip + disp32] ; imported ExitProcess
-            // ud2                  ; unreachable
-            //
-            X64Assembler code = new X64Assembler();
-
-            code.EmitByte(0x48);
-            code.EmitByte(0x83);
-            code.EmitByte(0xec);
-            code.EmitByte(0x28);
-
-            code.EmitByte(0xb9);
-            code.Emit32(exitCode);
-
-            code.EmitByte(0xff);
-            code.EmitByte(0x15);
-
-            // RIP at the end of call = 0x100F.
-            // IAT RVA = 0x2038.
-            code.Emit32(0x2038 - 0x100f);
-
-            code.EmitByte(0x0f);
-            code.EmitByte(0x0b);
-
-            byte[] machineCode = code.ToArray();
-            int i = 0;
-            while (i < machineCode.Length) {
-                image[textRaw + i] = machineCode[i];
+            int kernelIndex = 0;
+            i = 0;
+            while (i < names.Length) {
+                int slot = shellIat;
+                if (i != 13) {
+                    slot = kernelIat + kernelIndex * 8;
+                    Write64(image, importRaw + kernelLookup + kernelIndex * 8,
+                            importRva + nameOffsets[i]);
+                    kernelIndex = kernelIndex + 1;
+                } else {
+                    Write64(image, importRaw + shellLookup, importRva + nameOffsets[i]);
+                }
+                Write64(image, importRaw + slot, importRva + nameOffsets[i]);
+                WriteAscii(image, importRaw + nameOffsets[i] + 2, names[i]);
+                int thunk = runtime.Offset("win_" + names[i]);
+                if (thunk < 0 || runtimeStart + thunk + 6 > code.Length) { return null; }
+                Write32(code, runtimeStart + thunk + 2,
+                        importRva + slot - (textRva + runtimeStart + thunk + 6));
                 i = i + 1;
             }
 
-            // Import descriptor at RVA 0x2000.
-            // Import lookup table at RVA 0x2028.
-            // Import address table at RVA 0x2038.
-            // Hint/name at RVA 0x2048.
-            // DLL name at RVA 0x2058.
-            //
-            // The second descriptor and the second
-            // entry of each thunk array remain zero.
-
-            Write32(image, importRaw + 0x00, 0x2028);
-            Write32(image, importRaw + 0x0c, 0x2058);
-            Write32(image, importRaw + 0x10, 0x2038);
-
-            Write64(image, importRaw + 0x28, 0x2048);
-            Write64(image, importRaw + 0x38, 0x2048);
-
-            Write16(image, importRaw + 0x48, 0);
-            WriteAscii(image, importRaw + 0x4a, "ExitProcess");
-            WriteAscii(image, importRaw + 0x58, "KERNEL32.dll");
-
+            i = 0;
+            while (i < patchOffsets.Length) {
+                if (payloadIndexes[i] < 0 || payloadIndexes[i] >= payloadOffsets.Length) { return null; }
+                int patch = patchOffsets[i];
+                Write32(code, patch, dataRva + payloadOffsets[payloadIndexes[i]] -
+                        (textRva + patch + 4));
+                i = i + 1;
+            }
+            i = 0;
+            while (i < code.Length) { image[textRaw + i] = code[i]; i = i + 1; }
+            ElfImageBuilder ascii = new ElfImageBuilder();
+            i = 0;
+            while (i < payloads.Length) {
+                int at = dataRaw + payloadOffsets[i];
+                Write64(image, at, payloads[i].Length);
+                int ch = 0;
+                while (ch < payloads[i].Length) {
+                    image[at + 8 + ch] = (byte)ascii.AsciiCode(payloads[i][ch]);
+                    ch = ch + 1;
+                }
+                i = i + 1;
+            }
             return image;
+        }
+
+        private int Align(int value, int unit) {
+            return (value + unit - 1) / unit * unit;
         }
 
         private void WriteAscii(byte[] image,

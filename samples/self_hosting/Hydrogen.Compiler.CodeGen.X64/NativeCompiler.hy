@@ -63,6 +63,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return ProcessProject(projectPath, "", true, emitIr, false, false, false, true, false);
         }
 
+        public NativeCompilerResult CheckProjectWindows(string projectPath, bool emitIr) {
+            return ProcessProject(projectPath, "", true, emitIr, false, false, false, false, true);
+        }
+
         private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel, bool australis, bool nativeUser, bool windows) {
             ProjectClosure closure = ProjectClosure.Collect(projectPath);
             string[] projects = closure.Projects();
@@ -76,7 +80,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             if (progress != null && !check) {
                 int steps = sources.Length * 3 + 4;
-                if (uefi || kernel || australis || nativeUser) { steps = sources.Length * 3 + 3; }
+                if (uefi || kernel || australis || nativeUser || windows) { steps = sources.Length * 3 + 3; }
                 progress.Start(projectPath, steps);
             }
 
@@ -134,6 +138,14 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     if (validated == null) {
                         return new NativeCompilerResult(false,
                             projectPath + ": unsupported Australis program for this target\n");
+                    }
+                }
+                if (windows) {
+                    IrModule lowered = new IrLowering().Lower(program);
+                    DirectImageResult validatedWindows = new DirectMainCompiler().CompileWindows(lowered);
+                    if (!validatedWindows.Success()) {
+                        return new NativeCompilerResult(false,
+                            projectPath + ": error: Windows x64 compilation failed: " + validatedWindows.Message() + "\n");
                     }
                 }
                 return new NativeCompilerResult(true, DebugProgram(program, emitIr));
@@ -362,19 +374,15 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private NativeCompilerResult EmitWindowsImage(BoundProgram program, string inputPath, string outputPath) {
             IrLowering lowering = new IrLowering();
             IrModule module = lowering.Lower(program);
-
-            WindowsImageBuilder builder = new WindowsImageBuilder();
-            byte[] executable = builder.Build(module);
-
-            if (executable == null) {
-                return new NativeCompilerResult(
-                    false,
-                    inputPath +
-                    ": error: Windows x64 backend does not yet support this program\n"
-                );
+            DirectMainCompiler direct = new DirectMainCompiler();
+            if (progress != null) { direct.SetBuildProgress(progress); progress.Begin("Compiling Windows image"); }
+            DirectImageResult result = direct.CompileWindows(module);
+            if (!result.Success()) {
+                return new NativeCompilerResult(false, inputPath + ": error: Windows x64 compilation failed: " + result.Message() + "\n");
             }
-
-            System.IO.File.WriteAllBytes(outputPath, executable);
+            if (progress != null) { progress.Step("Generated Windows image"); progress.Begin("Writing " + outputPath); }
+            System.IO.File.WriteAllBytes(outputPath, result.Image());
+            if (progress != null) { progress.Step("Wrote " + outputPath); }
             return new NativeCompilerResult(true, "");
         }
 

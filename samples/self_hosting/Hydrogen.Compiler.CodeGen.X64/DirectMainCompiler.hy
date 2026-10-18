@@ -91,10 +91,20 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private int staticCount;
         private string currentStaticOwner;
         private bool freestanding;
+        private bool windows;
 
         public DirectImageResult Compile(IrModule input) {
+            return CompilePlatform(input, false);
+        }
+
+        public DirectImageResult CompileWindows(IrModule input) {
+            return CompilePlatform(input, true);
+        }
+
+        private DirectImageResult CompilePlatform(IrModule input, bool forWindows) {
             Reset(input);
             freestanding = false;
+            windows = forWindows;
             mainFunction = -1;
             int i = 0;
             while (i < functionCount) {
@@ -114,8 +124,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     return Failed("Main must have no parameters or one string[] parameter");
                 }
             }
-            // Linux entry stub: call Main, then turn its result into the process exit status.
-            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xe6); // mov r14, rsp: Linux initial stack
+            // The original stack is the upper bound for conservative GC roots.
+            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xe6); // mov r14, rsp
+            if (windows) {
+                code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xe4); code.EmitByte(0xf0); // align rsp for internal calls
+            }
             EmitRuntime("rt_init"); // r15 owns heap state for the lifetime of the process
             if (staticCount > 0) {
                 code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc7); code.Emit32(staticCount * 8);
@@ -149,12 +162,21 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
             // Compile the reachable call graph, including forward and mutually recursive edges.
             if (!CompileNeededFunctions()) { return Failed(failure); }
-            NativeRuntimeEmitter runtime = new NativeRuntimeEmitter();
             int runtimeStart = code.Position();
-            runtime.Emit(code);
+            NativeRuntimeEmitter linuxRuntime = null;
+            WindowsRuntimeEmitter windowsRuntime = null;
+            if (windows) {
+                windowsRuntime = new WindowsRuntimeEmitter();
+                windowsRuntime.Emit(code);
+            } else {
+                linuxRuntime = new NativeRuntimeEmitter();
+                linuxRuntime.Emit(code);
+            }
             i = 0;
             while (i < runtimePatchCount) {
-                int offset = runtime.Offset(runtimeTargets[i]);
+                int offset = -1;
+                if (windows) { offset = windowsRuntime.Offset(runtimeTargets[i]); }
+                else { offset = linuxRuntime.Offset(runtimeTargets[i]); }
                 if (offset < 0) { return Failed("unknown native runtime helper: " + runtimeTargets[i]); }
                 PatchRelative(runtimePatches[i], runtimeStart + offset);
                 i = i + 1;
@@ -165,6 +187,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (!imageBuilder.SupportsPayload(payloads[pi])) { return Failed("non-ASCII string literals are not supported by the native backend"); }
                 pi = pi + 1;
             }
+            if (windows) {
+                WindowsImageBuilder windowsImage = new WindowsImageBuilder();
+                byte[] executable = windowsImage.BuildCodeAndData(code.ToArray(), payloads,
+                    payloadPatchOffsets, payloadPatchIndexes, runtimeStart, windowsRuntime);
+                if (executable == null) { return Failed("Windows PE image exceeds format limits"); }
+                return new DirectImageResult(true, executable, "");
+            }
             return new DirectImageResult(true, imageBuilder.BuildCodeAndData(code.ToArray(), payloads, payloadPatchOffsets, payloadPatchIndexes), "");
         }
 
@@ -174,6 +203,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         public DirectImageResult CompileFreestanding(IrModule input, string owner, string methodName) {
             Reset(input);
             freestanding = true;
+            windows = false;
             mainFunction = -1;
             if (staticCount != 0) { return Failed("freestanding entry does not yet support static fields"); }
             int entry = -1;
@@ -1831,7 +1861,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private void EmitExitFromRax() {
             code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc7); // mov rdi, rax
             code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc0); code.Emit32(60); // mov rax, 60
-            code.EmitByte(0x0f); code.EmitByte(0x05); // syscall
+            if (windows) { EmitRuntime("win_syscall"); }
+            else { code.EmitByte(0x0f); code.EmitByte(0x05); } // Linux syscall
         }
 
         private int AddLocal(string name, string type) {

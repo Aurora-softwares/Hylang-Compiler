@@ -77,12 +77,12 @@ namespace Hydrogen.Compiler.Cli {
 
         private static int New(string[] args) {
             if (args.Length != 3) {
-                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|os|efi|kernel|exec <name>");
+                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|os|efi|kernel|exec|windows <name>");
                 return 1;
             }
             string kind = args[1];
             string destination = PathUtils.Normalize(args[2]);
-            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace" && kind != "os" && kind != "efi" && kind != "kernel" && kind != "exec") {
+            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace" && kind != "os" && kind != "efi" && kind != "kernel" && kind != "exec" && kind != "windows") {
                 System.Console.WriteLine("error: unknown project kind '" + kind + "'");
                 return 1;
             }
@@ -111,7 +111,7 @@ namespace Hydrogen.Compiler.Cli {
                 sourceFile = "Library.hy";
             } else if (kind == "test") {
                 projectType = "test";
-            } else if (kind == "efi" || kind == "kernel" || kind == "exec") {
+            } else if (kind == "efi" || kind == "kernel" || kind == "exec" || kind == "windows") {
                 projectType = kind;
                 if (kind == "kernel") { sourceFile = "KernelMain.hy"; }
             }
@@ -140,6 +140,8 @@ namespace Hydrogen.Compiler.Cli {
                     text = text + "output = \"EFI/KERNEL.BIN\"\n";
                 } else if (type == "exec") {
                     text = text + "output = \"" + name + ".exec\"\n";
+                } else if (type == "windows") {
+                    text = text + "output = \"" + name + ".exe\"\n";
                 }
                 text = text + "sources = [\"" + source + "\"]\n";
                 text = text + "project_references = []\n";
@@ -213,6 +215,17 @@ namespace Hydrogen.Compiler.Cli {
                     if (emitIr) { System.Console.WriteLine(nativeResult.DiagnosticsText()); }
                     return 0;
                 }
+                if (manifest.Type() == "windows") {
+                    NativeCompiler windowsCompiler = new NativeCompiler();
+                    NativeCompilerResult windowsResult = windowsCompiler.CheckProjectWindows(path, emitIr);
+                    if (!windowsResult.Success()) {
+                        System.Console.Write(windowsResult.DiagnosticsText());
+                        return 1;
+                    }
+                    System.Console.WriteLine("check ok");
+                    if (emitIr) { System.Console.WriteLine(windowsResult.DiagnosticsText()); }
+                    return 0;
+                }
             }
             NativeCompiler compiler = new NativeCompiler();
             if (emitIr) {
@@ -251,6 +264,7 @@ namespace Hydrogen.Compiler.Cli {
             } else {
                 System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");
                 System.Console.WriteLine("   or: hy compile <file.hy> --target uefi-x64 -o <output>");
+                System.Console.WriteLine("   or: hy compile <file.hy> --target windows-x64 -o <output.exe>");
                 return 1;
             }
 
@@ -323,8 +337,8 @@ namespace Hydrogen.Compiler.Cli {
 				manifest.Type() != "efi" &&
 				manifest.Type() != "kernel" &&
 				manifest.Type() != "australis" &&
-				manifest.Type() != "exec" && manifest.Type() != "native") {
-                System.Console.WriteLine("error: hy build supports exe, efi, kernel, exec, australis, native, and os projects");
+				manifest.Type() != "exec" && manifest.Type() != "native" && manifest.Type() != "windows") {
+                System.Console.WriteLine("error: hy build supports exe, windows, efi, kernel, exec, australis, native, and os projects");
                 return 1;
             }
 
@@ -337,6 +351,8 @@ namespace Hydrogen.Compiler.Cli {
 				result = compiler.BuildProjectKernel(projectPath, output);
 			} else if (manifest.Type() == "native") {
                 result = compiler.BuildProjectNativeUser(projectPath, output);
+			} else if (manifest.Type() == "windows") {
+                result = compiler.BuildProjectWindows(projectPath, output);
 			} else if (manifest.Type() == "australis" || manifest.Type() == "exec") {
 				result = compiler.BuildProjectAustralis(projectPath, output);
 			} else {
@@ -509,11 +525,12 @@ namespace Hydrogen.Compiler.Cli {
         }
 
         private static void PrintUsage() {
-            System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|os|efi|kernel|exec <name>");
+            System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|os|efi|kernel|exec|windows <name>");
             System.Console.WriteLine("usage: hy <tokens|parse|check|build> <file.hy|project.hyproj>");
             System.Console.WriteLine("usage: hy check <file.hy> --emit-ir");
             System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");
             System.Console.WriteLine("usage: hy compile <file.hy> --target uefi-x64 -o <output>");
+            System.Console.WriteLine("usage: hy compile <file.hy> --target windows-x64 -o <output.exe>");
             System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--hide-progress] [--hide-spinner] [--hide-log]");
             System.Console.WriteLine("usage: hy stage-compare <project.hyproj> --stage1 <path> --stage2 <path>");
         }

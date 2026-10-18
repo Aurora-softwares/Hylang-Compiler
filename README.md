@@ -8,11 +8,11 @@
 
 Hydrogen is a C#-inspired language with classes, methods, managed strings and arrays, and explicit low-level facilities. Source files use `.hy`; project manifests use `.hyproj`.
 
-The Hydrogen-written compiler produces standalone Linux x86-64 executables, constrained x86-64 UEFI images, and can compile itself. The C++ SDK provides additional language features, an interpreter, packaging, formatting, and editor integration. Choose the tool according to the features your program needs.
+The Hydrogen-written compiler produces Linux x86-64 ELF and Windows x64 PE32+ executables from the same direct language backend, constrained x86-64 UEFI images, and can compile itself. The C++ SDK provides additional language features, an interpreter, packaging, formatting, and editor integration. Choose the tool according to the features your program needs.
 
 | Tool | Use it for | Output or execution |
 | --- | --- | --- |
-| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI boot/kernel images, and project scaffolding | Linux x64 ELF, constrained `uefi-x64` PE32+, raw `AUKR` kernel, or checked AUEX `.exec`; no external compiler or linker for these outputs |
+| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI boot/kernel images, and project scaffolding | Linux x64 ELF, Windows x64 PE32+ console executable, constrained `uefi-x64` PE32+, raw `AUKR` kernel, checked AUEX `.exec`, or narrow AUN1; no external compiler or linker for these outputs |
 | `hy` (C++ SDK) | Build/run/test/check/fmt/new/package/LSP workflows; UEFI console proof | Interpreter, host C backend, or constrained `uefi-x64` PE32+ output |
 | `hyrun` | Direct interpreted execution | Shares the SDK semantic pipeline |
 | `hyc build` | Compatibility build command | Host C backend, executables or static libraries |
@@ -52,7 +52,7 @@ cmake --build build --target hydrogen_package_release
 
 ## Build the tools
 
-Run these commands from this repository's root. The SDK requires CMake 3.20 or newer and a C++20 compiler. Its executable builds also require a host C compiler; static-library builds require an archiver. The direct native compiler targets Linux x86-64.
+Run these commands from this repository's root. The SDK requires CMake 3.20 or newer and a C++20 compiler. Its executable builds also require a host C compiler; static-library builds require an archiver. The direct native compiler targets Linux x86-64 and Windows x64.
 
 ```bash
 cd /path/to/Hylang-Compiler
@@ -324,9 +324,24 @@ with `-o` pointing to its output file. Scaffold them with
 These project types are currently available in
 `hydrogen-stage1`.
 
+For Windows x64, use `--target windows-x64` on a source file or a format-2
+`type = "windows"` project. Both routes produce PE32+ console programs with
+the same direct language subset and managed runtime APIs as Linux:
+
+```bash
+./build/self_hosting/hydrogen-stage1 compile tests/phase6/native_hello.hy --target windows-x64 -o build/hello.exe
+./build/self_hosting/hydrogen-stage1 build tests/phase6/WindowsFullRuntime.hyproj -o build/WindowsFullRuntime.exe
+```
+
+The [native compiler guide](samples/self_hosting/README.md#windows-x64-target)
+has the Windows runtime and verification details.
+
 Australis OS additionally loads bounded AUN1 machine-code children in hardware
-ring 3. Hydrogen's `exec` backend emits AUEX, not AUN1; compiling Hylang source
-to AUN1 and supporting its full native syscall ABI are future compiler work.
+ring 3. Hydrogen's `exec` backend emits AUEX; a separate `native` project emits
+AUN1 version 2 for a single static `Main(string[] args)` with ASCII literal
+`System.Australis.Terminal.Write` calls and a literal integer return status.
+The native target has no general-purpose runtime yet. See the
+[AUN1 v2 contract](https://github.com/Aurora-Softwares/Australis-OS/blob/main/docs/aun1-v2.md).
 
 SDK projects additionally support workspaces, test projects, local package dependencies, caching, and static-library artifacts. Useful SDK commands:
 
@@ -342,7 +357,7 @@ SDK projects additionally support workspaces, test projects, local package depen
 
 The direct native route supports classes, inheritance, interfaces, virtual dispatch, structs, overloads, static and instance fields/methods, constructors, recursion, enums, signed and unsigned integer widths, `bool`, strings, arrays, `var`, `if`/`else`, `while`, `for`, `break`, `continue`, and returns. `int` is signed 32-bit. Strings have byte-based length/indexing; indexing returns a one-byte string. Native literals accept ASCII and common escaped control characters; file contents and arguments preserve raw bytes.
 
-Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings. File reads require seekable files.
+Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings or Windows `VirtualAlloc`/`VirtualFree`. Windows file paths are converted from Hydrogen UTF-8 strings to Win32 UTF-16. File reads require seekable files.
 
 The SDK additionally supports generics, string exceptions, `List<T>`, checked unsafe/manual-memory operations, `Buffer`, and `BinaryPrimitives`. These additional facilities are not implemented by the native compiler. The SDK interpreter evaluates both sides of `&&` and `||`; generated native and C-backed programs short-circuit. Write explicit conditional guards when sharing code with the interpreter.
 

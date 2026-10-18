@@ -1,0 +1,5 @@
+format = 2
+name = "WindowsFullRuntime"
+type = "windows"
+output = "WindowsFullRuntime.exe"
+sources = ["windows_full_runtime.hy"]

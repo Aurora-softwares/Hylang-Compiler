@@ -1385,10 +1385,31 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
     set_tests_properties(hy_stage1_compile_uefi_hello PROPERTIES
         FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
 
-    # Windows x86-64 cross-compilation (experimental).
+    # Windows x86-64 cross-compilation, runtime parity, and bootstrap.
     find_program(HYDROGEN_WINE_BINARY NAMES wine wine64)
 
+    add_test(NAME hy_stage1_windows_parity
+        COMMAND ${CMAKE_COMMAND}
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DTEMP_DIR=${stage1_test_dir}/windows-parity
+            -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyWindowsParity.cmake)
+    set_tests_properties(hy_stage1_windows_parity PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 240 RUN_SERIAL TRUE
+        LABELS "windows;crosscompile")
+
     if(HYDROGEN_WINE_BINARY)
+        add_test(NAME hy_stage1_windows_bootstrap
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -DTEMP_DIR=${stage1_test_dir}/windows-bootstrap
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyWindowsBootstrap.cmake)
+        set_tests_properties(hy_stage1_windows_bootstrap PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 600 RUN_SERIAL TRUE
+            LABELS "windows;bootstrap")
         add_test(
             NAME hy_stage1_compile_windows_exit
             COMMAND ${CMAKE_COMMAND}
@@ -1406,11 +1427,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
                 FIXTURES_REQUIRED hydrogen_stage1
                 TIMEOUT 120
                 RUN_SERIAL TRUE
-                LABELS "windows;experimental;crosscompile"
+                LABELS "windows;crosscompile"
         )
     else()
         message(STATUS
-            "Wine not found: Windows x64 execution test disabled"
+            "Wine not found: Windows execution/bootstrap tests disabled; PE validation remains enabled"
         )
     endif()
     add_test(NAME hy_stage1_build_os_project
