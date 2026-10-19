@@ -427,6 +427,18 @@ namespace Hydrogen.Compiler.Binding {
             }
             e.SetResolvedOwner(module.NamespaceOf(name)); return result;
         }
+        private string Intrinsic5Int(IrExpression e, string name) {
+            if (e.Arguments().Length != 5) {
+                Error("wrong argument count calling '" + name + "'");
+            }
+            int i = 0;
+            while (i < e.Arguments().Length) {
+                Require(Expression(e.Arguments()[i]), "int",
+                    "argument type mismatch calling '" + name + "'");
+                i = i + 1;
+            }
+            e.SetResolvedOwner(module.NamespaceOf(name)); return "int";
+        }
         private string Call(IrExpression e) {
             string qualified = Qualified(e.Target());
             if (qualified == "System.Kernel.Managed.Release") {
@@ -543,6 +555,25 @@ namespace Hydrogen.Compiler.Binding {
             }
             if (qualified == "System.Australis.SystemInfo.Query") {
                 return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Display.Acquire" ||
+                qualified == "System.Australis.Display.Release") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Display.SetMode") {
+                return Intrinsic(e, qualified, "int", "int", "int");
+            }
+            if (qualified == "System.Australis.Display.FillRect") {
+                return Intrinsic5Int(e, qualified);
+            }
+            if (qualified == "System.Australis.Display.PollMouse") {
+                return Intrinsic(e, qualified, "byte[]", "", "int");
+            }
+            if (qualified == "System.Australis.Display.CaptureKeyboard") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Display.PollKey") {
+                return Intrinsic(e, qualified, "", "", "int");
             }
             if (qualified == "System.Australis.Files.StatKind" ||
                 qualified == "System.Australis.Files.StatTimeFlags" ||

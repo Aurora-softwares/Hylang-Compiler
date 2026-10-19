@@ -561,6 +561,44 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     valueType != "byte[]") { return false; }
                 code.Byte(100); valueType = "int"; return code.IsValid();
             }
+            if (name == "System.Australis.Display.Acquire" ||
+                name == "System.Australis.Display.Release") {
+                if (args.Length != 0) { return false; }
+                if (name == "System.Australis.Display.Acquire") { code.Byte(104); }
+                else { code.Byte(105); }
+                valueType = "int"; return code.IsValid();
+            }
+            if (name == "System.Australis.Display.FillRect") {
+                if (args.Length != 5) { return false; }
+                int i = 0;
+                while (i < 5) {
+                    if (!CompileExpression(args[i]) || !Numeric(valueType)) {
+                        return false;
+                    }
+                    i = i + 1;
+                }
+                code.Byte(106); valueType = "int"; return code.IsValid();
+            }
+            if (name == "System.Australis.Display.SetMode") {
+                if (args.Length != 2 || !CompileExpression(args[0]) ||
+                    !Numeric(valueType) || !CompileExpression(args[1]) ||
+                    !Numeric(valueType)) { return false; }
+                code.Byte(107); valueType = "int"; return code.IsValid();
+            }
+            if (name == "System.Australis.Display.PollMouse") {
+                if (args.Length != 1 || !CompileExpression(args[0]) ||
+                    valueType != "byte[]") { return false; }
+                code.Byte(108); valueType = "int"; return code.IsValid();
+            }
+            if (name == "System.Australis.Display.CaptureKeyboard") {
+                if (args.Length != 1 || !CompileExpression(args[0]) ||
+                    !Numeric(valueType)) { return false; }
+                code.Byte(109); valueType = "int"; return code.IsValid();
+            }
+            if (name == "System.Australis.Display.PollKey") {
+                if (args.Length != 0) { return false; }
+                code.Byte(110); valueType = "int"; return code.IsValid();
+            }
             if (name == "System.Australis.Process.EnvironmentCount") {
                 if (args.Length != 0) { return false; }
                 code.Byte(84); valueType = "int"; return code.IsValid();
