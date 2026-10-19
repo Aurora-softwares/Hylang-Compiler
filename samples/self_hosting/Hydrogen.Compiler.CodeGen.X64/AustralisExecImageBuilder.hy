@@ -562,11 +562,20 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.Byte(100); valueType = "int"; return code.IsValid();
             }
             if (name == "System.Australis.Display.Acquire" ||
-                name == "System.Australis.Display.Release") {
+                name == "System.Australis.Display.Release" ||
+                name == "System.Australis.Display.BeginFrame" ||
+                name == "System.Australis.Display.PresentFrame") {
                 if (args.Length != 0) { return false; }
                 if (name == "System.Australis.Display.Acquire") { code.Byte(104); }
-                else { code.Byte(105); }
+                else if (name == "System.Australis.Display.Release") { code.Byte(105); }
+                else if (name == "System.Australis.Display.BeginFrame") { code.Byte(111); }
+                else { code.Byte(112); }
                 valueType = "int"; return code.IsValid();
+            }
+            if (name == "System.Australis.Display.Stats") {
+                if (args.Length != 1 || !CompileExpression(args[0]) ||
+                    valueType != "byte[]") { return false; }
+                code.Byte(113); valueType = "int"; return code.IsValid();
             }
             if (name == "System.Australis.Display.FillRect") {
                 if (args.Length != 5) { return false; }
@@ -598,6 +607,37 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (name == "System.Australis.Display.PollKey") {
                 if (args.Length != 0) { return false; }
                 code.Byte(110); valueType = "int"; return code.IsValid();
+            }
+            if (name == "System.Australis.Display.AllocateBuffer" ||
+                name == "System.Australis.Display.DestroyBuffer" ||
+                name == "System.Australis.Display.BeginBuffer" ||
+                name == "System.Australis.Display.FillBufferRect" ||
+                name == "System.Australis.Display.SubmitBuffer" ||
+                name == "System.Australis.Display.BufferCompletion" ||
+                name == "System.Australis.Display.ReleaseBuffer") {
+                int expected = 1; int opcode = 115;
+                if (name == "System.Australis.Display.AllocateBuffer") {
+                    expected = 4; opcode = 114;
+                } else if (name == "System.Australis.Display.BeginBuffer") {
+                    opcode = 116;
+                } else if (name == "System.Australis.Display.FillBufferRect") {
+                    expected = 6; opcode = 117;
+                } else if (name == "System.Australis.Display.SubmitBuffer") {
+                    opcode = 118;
+                } else if (name == "System.Australis.Display.BufferCompletion") {
+                    expected = 2; opcode = 119;
+                } else if (name == "System.Australis.Display.ReleaseBuffer") {
+                    expected = 2; opcode = 120;
+                }
+                if (args.Length != expected) { return false; }
+                int i = 0;
+                while (i < expected) {
+                    if (!CompileExpression(args[i]) || !Numeric(valueType)) {
+                        return false;
+                    }
+                    i = i + 1;
+                }
+                code.Byte(opcode); valueType = "int"; return code.IsValid();
             }
             if (name == "System.Australis.Process.EnvironmentCount") {
                 if (args.Length != 0) { return false; }

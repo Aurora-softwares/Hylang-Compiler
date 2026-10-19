@@ -439,6 +439,19 @@ namespace Hydrogen.Compiler.Binding {
             }
             e.SetResolvedOwner(module.NamespaceOf(name)); return "int";
         }
+        private string IntrinsicNInt(IrExpression e, string name,
+            int expected) {
+            if (e.Arguments().Length != expected) {
+                Error("wrong argument count calling '" + name + "'");
+            }
+            int i = 0;
+            while (i < e.Arguments().Length) {
+                Require(Expression(e.Arguments()[i]), "int",
+                    "argument type mismatch calling '" + name + "'");
+                i = i + 1;
+            }
+            e.SetResolvedOwner(module.NamespaceOf(name)); return "int";
+        }
         private string Call(IrExpression e) {
             string qualified = Qualified(e.Target());
             if (qualified == "System.Kernel.Managed.Release") {
@@ -557,8 +570,13 @@ namespace Hydrogen.Compiler.Binding {
                 return Intrinsic(e, qualified, "int", "", "int");
             }
             if (qualified == "System.Australis.Display.Acquire" ||
-                qualified == "System.Australis.Display.Release") {
+                qualified == "System.Australis.Display.Release" ||
+                qualified == "System.Australis.Display.BeginFrame" ||
+                qualified == "System.Australis.Display.PresentFrame") {
                 return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Display.Stats") {
+                return Intrinsic(e, qualified, "byte[]", "", "int");
             }
             if (qualified == "System.Australis.Display.SetMode") {
                 return Intrinsic(e, qualified, "int", "int", "int");
@@ -574,6 +592,21 @@ namespace Hydrogen.Compiler.Binding {
             }
             if (qualified == "System.Australis.Display.PollKey") {
                 return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Display.AllocateBuffer") {
+                return IntrinsicNInt(e, qualified, 4);
+            }
+            if (qualified == "System.Australis.Display.DestroyBuffer" ||
+                qualified == "System.Australis.Display.BeginBuffer" ||
+                qualified == "System.Australis.Display.SubmitBuffer") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Display.FillBufferRect") {
+                return IntrinsicNInt(e, qualified, 6);
+            }
+            if (qualified == "System.Australis.Display.BufferCompletion" ||
+                qualified == "System.Australis.Display.ReleaseBuffer") {
+                return Intrinsic(e, qualified, "int", "int", "int");
             }
             if (qualified == "System.Australis.Files.StatKind" ||
                 qualified == "System.Australis.Files.StatTimeFlags" ||

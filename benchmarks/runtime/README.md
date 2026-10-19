@@ -68,14 +68,14 @@ medians with seven timed runs and two warmups. C/C++ used GCC 15.2 and Rust
 used 1.93.1. Hydrogen used the rebuilt native stage-1 compiler. Times are in
 milliseconds and exclude source compilation.
 
-| Workload | Hydrogen native | C | C++ | Rust | Native / C |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Integer loop | 94.7 | 46.6 | 45.8 | 40.4 | 2.03× |
-| Array fill/scan | 157.1 | 63.9 | 66.9 | 55.8 | 2.46× |
-| Log scan | 6.54 | 1.78 | 5.37 | 2.83 | 3.67× |
-| CSV aggregation | 4.27 | 1.87 | 4.59 | 2.43 | 2.29× |
-| Binary checksum | 15.2 | 7.76 | 12.1 | 7.86 | 1.96× |
-| Linked objects | 4.51 | 1.52 | 2.46 | 2.07 | 2.96× |
+| Workload        | Hydrogen | C    | Native / C | C++  | Native / C++ | Rust | Native / Rust |
+| ---             | ---:     | ---: | ---:       | ---: | ---:         | ---: | ---:          |
+| Integer loop    | 94.7     | 46.6 | 2.03×      | 45.8 |              | 40.4 |               |
+| Array fill/scan | 157.1    | 63.9 | 2.46×      | 66.9 |              | 55.8 |               |
+| Log scan        | 6.54     | 1.78 | 3.67×      | 5.37 |              | 2.83 |               |
+| CSV aggregation | 4.27     | 1.87 | 2.29×      | 4.59 |              | 2.43 |               |
+| Binary checksum | 15.2     | 7.76 | 1.96×      | 12.1 |              | 7.86 |               |
+| Linked objects  | 4.51     | 1.52 | 2.96×      | 2.46 |              | 2.07 |               |
 
 The self-hosted compiler previously allocated a new string on every evaluation
 of a string literal. On this same hashed log input, the native scan took 8.07
