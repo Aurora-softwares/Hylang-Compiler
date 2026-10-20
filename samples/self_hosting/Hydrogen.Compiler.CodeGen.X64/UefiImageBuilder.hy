@@ -3032,9 +3032,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 		    code.EmitByte(0xfc); code.EmitByte(0xf3); code.EmitByte(0x48); code.EmitByte(0xab);
 		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(272);
 		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(280);
-		    code.EmitByte(0x48); code.EmitByte(0xb8); code.Emit32(pageCount * 4096); code.Emit32(0);
+		    // Each literal allocation consumes the next slice of the same reserved
+		    // interval. Publish the combined span, not only the final slice.
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x87); code.Emit32(288);
+		    code.EmitByte(0x48); code.EmitByte(0x05); code.Emit32(pageCount * 4096);
 		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(288);
-		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(296); code.Emit32(pageCount);
+		    code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0x87); code.Emit32(296); code.Emit32(pageCount);
 		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
             return failureCount;
         }
