@@ -639,6 +639,34 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 code.Byte(opcode); valueType = "int"; return code.IsValid();
             }
+            if (name == "System.Australis.Gpu.Create" ||
+                name == "System.Australis.Gpu.Destroy" ||
+                name == "System.Australis.Gpu.Clear" ||
+                name == "System.Australis.Gpu.FillRect" ||
+                name == "System.Australis.Gpu.ReadPixel" ||
+                name == "System.Australis.Gpu.Blit") {
+                int expected = 2; int opcode = 121;
+                if (name == "System.Australis.Gpu.Destroy") {
+                    expected = 1; opcode = 122;
+                } else if (name == "System.Australis.Gpu.Clear") {
+                    opcode = 123;
+                } else if (name == "System.Australis.Gpu.FillRect") {
+                    expected = 6; opcode = 124;
+                } else if (name == "System.Australis.Gpu.ReadPixel") {
+                    expected = 3; opcode = 125;
+                } else if (name == "System.Australis.Gpu.Blit") {
+                    expected = 3; opcode = 126;
+                }
+                if (args.Length != expected) { return false; }
+                int i = 0;
+                while (i < expected) {
+                    if (!CompileExpression(args[i]) || !Numeric(valueType)) {
+                        return false;
+                    }
+                    i = i + 1;
+                }
+                code.Byte(opcode); valueType = "int"; return code.IsValid();
+            }
             if (name == "System.Australis.Process.EnvironmentCount") {
                 if (args.Length != 0) { return false; }
                 code.Byte(84); valueType = "int"; return code.IsValid();

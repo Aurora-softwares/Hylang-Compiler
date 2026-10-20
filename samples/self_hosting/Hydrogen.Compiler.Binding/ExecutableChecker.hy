@@ -608,6 +608,20 @@ namespace Hydrogen.Compiler.Binding {
                 qualified == "System.Australis.Display.ReleaseBuffer") {
                 return Intrinsic(e, qualified, "int", "int", "int");
             }
+            if (qualified == "System.Australis.Gpu.Create" ||
+                qualified == "System.Australis.Gpu.Clear") {
+                return IntrinsicNInt(e, qualified, 2);
+            }
+            if (qualified == "System.Australis.Gpu.Destroy") {
+                return IntrinsicNInt(e, qualified, 1);
+            }
+            if (qualified == "System.Australis.Gpu.FillRect") {
+                return IntrinsicNInt(e, qualified, 6);
+            }
+            if (qualified == "System.Australis.Gpu.ReadPixel" ||
+                qualified == "System.Australis.Gpu.Blit") {
+                return IntrinsicNInt(e, qualified, 3);
+            }
             if (qualified == "System.Australis.Files.StatKind" ||
                 qualified == "System.Australis.Files.StatTimeFlags" ||
                 qualified == "System.Australis.Files.DirectoryCount" ||
