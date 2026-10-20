@@ -3,21 +3,24 @@ using Hydrogen.Compiler.IR;
 namespace Hydrogen.Compiler.CodeGen.X64 {
     // The direct backend intentionally starts with an executable language subset.
     // It does not rely on C emission, an assembler, or a linker at runtime.
-    public class DirectImageResult {
-        private bool success;
-        private byte[] image;
-        private string message;
+	public class DirectImageResult {
+		private bool success;
+		private byte[] image;
+		private string message;
+		private int panicEntryOffset;
 
-        public DirectImageResult(bool inputSuccess, byte[] inputImage, string inputMessage) {
-            success = inputSuccess;
-            image = inputImage;
-            message = inputMessage;
-        }
+		public DirectImageResult(bool inputSuccess, byte[] inputImage, string inputMessage, int inputPanicEntryOffset) {
+			success = inputSuccess;
+			image = inputImage;
+			message = inputMessage;
+			panicEntryOffset = inputPanicEntryOffset;
+		}
 
-        public bool Success() { return success; }
-        public byte[] Image() { return image; }
-        public string Message() { return message; }
-    }
+		public bool Success() { return success; }
+		public byte[] Image() { return image; }
+		public string Message() { return message; }
+		public int PanicEntryOffset() { return panicEntryOffset; }
+	}
 
     // Function records are shared by resolution, reachable-body lowering and rel32 fixups.
     public class NativeFunction {
@@ -192,16 +195,21 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 byte[] executable = windowsImage.BuildCodeAndData(code.ToArray(), payloads,
                     payloadPatchOffsets, payloadPatchIndexes, runtimeStart, windowsRuntime);
                 if (executable == null) { return Failed("Windows PE image exceeds format limits"); }
-                return new DirectImageResult(true, executable, "");
+                return new DirectImageResult(true, executable, "", -1);
             }
-            return new DirectImageResult(true, imageBuilder.BuildCodeAndData(code.ToArray(), payloads, payloadPatchOffsets, payloadPatchIndexes), "");
+            return new DirectImageResult(true, imageBuilder.BuildCodeAndData(code.ToArray(), payloads, payloadPatchOffsets, payloadPatchIndexes), "", -1);
         }
 
         // Emit only a reachable freestanding method graph. The EFI handoff
         // passes one boot-information pointer on the Hydrogen stack and checks
         // the returned int status. Runtime helpers use the kernel's page range.
-        public DirectImageResult CompileFreestanding(IrModule input, string owner, string methodName) {
-            Reset(input);
+		public DirectImageResult CompileFreestanding(IrModule input, string owner, string methodName) {
+			return CompileFreestanding(input, owner, methodName, false);
+		}
+
+		public DirectImageResult CompileFreestanding(IrModule input, string owner, string methodName, bool includePanic) {
+
+			Reset(input);
             freestanding = true;
             windows = false;
             mainFunction = -1;
@@ -222,8 +230,34 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 method.Parameters()[0].Type().DisplayName() != "long") {
                 return Failed("freestanding entry must be static int Run(long bootInfo)");
             }
-            functions[entry].Require();
-            if (!CompileNeededFunctions()) { return Failed(failure); }
+			functions[entry].Require();
+
+			int panicEntry = -1;
+
+			// Include the kernel's additional panic entry point.
+			if (includePanic) {
+				i = 0;
+
+				while (i < functionCount) {
+					if (functions[i].Owner() == "Australis.Kernel.Diagnostics.PanicQr" && functions[i].Declaration().Name() == "Render" && functions[i].Declaration().IsStatic()) {
+						if (panicEntry >= 0) { return Failed("ambiguous panic entry point"); }
+						panicEntry = i;
+					}
+					i = i + 1;
+				}
+				if (panicEntry < 0) { return Failed("missing PanicQr.Render entry point"); }
+				IrMethod panicMethod = functions[panicEntry].Declaration();
+				if (panicMethod.ReturnType().DisplayName() != "int" ||
+					panicMethod.Parameters().Length != 1 ||
+					panicMethod.Parameters()[0].Type().DisplayName() != "long") {
+
+					return Failed("panic entry must be static int Render(long bootInfo)");
+				}
+
+				functions[panicEntry].Require();
+			}
+
+			if (!CompileNeededFunctions()) { return Failed(failure); }
             if (functions[entry].Position() != 0) {
                 return Failed("freestanding entry must start at code offset zero");
             }
@@ -257,7 +291,18 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 PatchRelative(payloadPatchOffsets[i], payloadOffsets[payloadPatchIndexes[i]]);
                 i = i + 1;
             }
-            return new DirectImageResult(true, code.ToArray(), "");
+
+            int panicOffset = -1;
+
+			if (includePanic) {
+				panicOffset = functions[panicEntry].Position();
+
+				if (panicOffset <= 0) {
+					return Failed("panic entry was not emitted");
+				}
+			}
+
+			return new DirectImageResult(true, code.ToArray(), "", panicOffset);
         }
 
         private bool CompileNeededFunctions() {
@@ -342,7 +387,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private DirectImageResult Failed(string message) {
-            return new DirectImageResult(false, new byte[0], message);
+            return new DirectImageResult(true, code.ToArray(), "", -1);
         }
 
         private void CollectFunctions(IrClass[] classes, string namespaceName) {

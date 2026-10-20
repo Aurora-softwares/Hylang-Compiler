@@ -1088,7 +1088,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (rawKernelLoad) {
                 // AUKR header plus nonempty code, capped at 1 MiB. Keep the
                 // exact size so a short EFI_FILE_PROTOCOL.Read is rejected.
-                code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(16);
+                code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(24);
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x86); failureCount = failureCount + 1; // jbe
                 code.EmitByte(0x48); code.EmitByte(0x3d); code.Emit32(1048576);
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x87); failureCount = failureCount + 1; // ja
@@ -1122,17 +1122,54 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // rcx = image base
                 code.EmitByte(0x81); code.EmitByte(0x39); code.Emit32(1380668737); // AUKR
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
-                code.EmitByte(0x83); code.EmitByte(0x79); code.EmitByte(4); code.EmitByte(1); // version
+                code.EmitByte(0x83); code.EmitByte(0x79); code.EmitByte(4); code.EmitByte(2); // AUKR v2
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
-                code.EmitByte(0x83); code.EmitByte(0x79); code.EmitByte(12); code.EmitByte(16); // entry offset
+                code.EmitByte(0x83); code.EmitByte(0x79); code.EmitByte(12); code.EmitByte(24); // entry offset
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
                 code.EmitByte(0x8b); code.EmitByte(0x41); code.EmitByte(8); // eax = code length
                 code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x54); code.EmitByte(0x24); code.EmitByte(112);
-                code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xea); code.EmitByte(16);
+                code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xea); code.EmitByte(24);
                 code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xd0);
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
                 EmitStoreRaxRva(code, textRva, bootInfoRva + 1032);
-                code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x41); code.EmitByte(16);
+				// AUKR v2: read the Hydrogen-generated panic entry offset.
+				// EAX still contains the validated native code length.
+				// RCX points to the loaded AUKR header.
+
+				// mov edx, [rcx + 16]
+				code.EmitByte(0x8b);
+				code.EmitByte(0x51);
+				code.EmitByte(16);
+
+				// Reject a zero panic entry offset.
+				// test edx, edx
+				code.EmitByte(0x85);
+				code.EmitByte(0xd2);
+
+				failureJumps[failureCount] =
+					EmitConditionalJump(code, 0x84); // jz
+				failureCount = failureCount + 1;
+
+				// Reject offsets outside the native code.
+				// cmp edx, eax
+				code.EmitByte(0x39);
+				code.EmitByte(0xc2);
+
+				failureJumps[failureCount] =
+					EmitConditionalJump(code, 0x83); // jae
+				failureCount = failureCount + 1;
+
+				// Calculate the absolute panic function address.
+				// lea rax, [rcx + rdx + 24]
+				code.EmitByte(0x48);
+				code.EmitByte(0x8d);
+				code.EmitByte(0x44);
+				code.EmitByte(0x11);
+				code.EmitByte(24);
+
+				// Publish panic entry in KernelBootInfo + 3616.
+				EmitStoreRaxRva(code, textRva, bootInfoRva + 3616);
+                code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x41); code.EmitByte(24);
                 EmitStoreRaxRva(code, textRva, bootInfoRva + 1024);
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8);
                 EmitStoreRaxRva(code, textRva, bootInfoRva + 1040);
@@ -2193,13 +2230,154 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             EmitPanicHexFromStack(code, digits + lineSize * line, 16); line = line + 1;  // R13
             EmitPanicHexFromStack(code, digits + lineSize * line, 8); line = line + 1;   // R14
             EmitPanicHexFromStack(code, digits + lineSize * line, 0);                   // R15
-            EmitPanicSerialReport(code);
-            EmitPanicFramebufferReport(code, textRva, fontRva);
+			// Always produce the human-readable diagnostic report first.
+			EmitPanicSerialReport(code);
+			EmitPanicFramebufferReport(code, textRva, fontRva);
+
+			// Optional Hydrogen QR diagnostics.
+			//
+			// Text has already been rendered.
+			// This uses the dedicated preallocated panic stack.
+			EmitPanicQrAfterText(code);
             code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(2672); code.Emit32(2);
             int haltAt = code.Position(); code.Patch32(nestedPanic, haltAt - (nestedPanic + 4));
             EmitKernelHalt(code);
             return start;
         }
+
+		// Call the compiled Hydrogen panic QR renderer.
+		//
+		// R12 contains KernelBootInfo.
+		//
+		// The existing serial and framebuffer text reports must
+		// already have completed before this method executes.
+		//
+		// Missing entry/stack: skip QR and preserve the text.
+		//
+		// Hydrogen's native convention takes its bootInfo
+		// argument on the stack.
+		private void EmitPanicQrAfterText(X64Assembler code) {
+
+			// R11 = compiled Hydrogen panic entry.
+			// mov r11, [r12 + 3616]
+			code.EmitByte(0x4d);
+			code.EmitByte(0x8b);
+			code.EmitByte(0x9c);
+			code.EmitByte(0x24);
+			code.Emit32(3616);
+
+			// test r11, r11
+			code.EmitByte(0x4d);
+			code.EmitByte(0x85);
+			code.EmitByte(0xdb);
+
+			int missingEntry = EmitConditionalJump(code, 0x84);
+
+			// RAX = emergency stack top.
+			// mov rax, [r12 + 3680]
+			code.EmitByte(0x49);
+			code.EmitByte(0x8b);
+			code.EmitByte(0x84);
+			code.EmitByte(0x24);
+			code.Emit32(3680);
+
+			// RDX = emergency stack base.
+			// mov rdx, [r12 + 3672]
+			code.EmitByte(0x49);
+			code.EmitByte(0x8b);
+			code.EmitByte(0x94);
+			code.EmitByte(0x24);
+			code.Emit32(3672);
+
+			// Reject an invalid stack base.
+			// cmp rdx, 4096
+			code.EmitByte(0x48);
+			code.EmitByte(0x81);
+			code.EmitByte(0xfa);
+			code.Emit32(4096);
+
+			int invalidBase = EmitConditionalJump(code, 0x82);
+
+			// Validate top - base == 16384.
+			// mov rcx, rax
+			code.EmitByte(0x48);
+			code.EmitByte(0x89);
+			code.EmitByte(0xc1);
+
+			// sub rcx, rdx
+			code.EmitByte(0x48);
+			code.EmitByte(0x29);
+			code.EmitByte(0xd1);
+
+			// cmp rcx, 16384
+			code.EmitByte(0x48);
+			code.EmitByte(0x81);
+			code.EmitByte(0xf9);
+			code.Emit32(16384);
+
+			int invalidBounds = EmitConditionalJump(code, 0x85);
+
+			// Require a 16-byte-aligned stack top.
+			// test rax, 15
+			code.EmitByte(0x48);
+			code.EmitByte(0xa9);
+			code.Emit32(15);
+
+			int invalidAlignment = EmitConditionalJump(code, 0x85);
+
+			// Switch to the emergency panic stack.
+			// mov rsp, rax
+			code.EmitByte(0x48);
+			code.EmitByte(0x89);
+			code.EmitByte(0xc4);
+
+			// Preserve R12 across the native call.
+			// push r12
+			code.EmitByte(0x41);
+			code.EmitByte(0x54);
+
+			// Push the Hydrogen bootInfo argument.
+			// push r12
+			code.EmitByte(0x41);
+			code.EmitByte(0x54);
+
+			// Call compiled PanicQr.Render(bootInfo).
+			// call r11
+			code.EmitByte(0x41);
+			code.EmitByte(0xff);
+			code.EmitByte(0xd3);
+
+			// Discard the argument.
+			// add rsp, 8
+			code.EmitByte(0x48);
+			code.EmitByte(0x83);
+			code.EmitByte(0xc4);
+			code.EmitByte(8);
+
+			// Restore KernelBootInfo into R12.
+			// pop r12
+			code.EmitByte(0x41);
+			code.EmitByte(0x5c);
+
+			// All failure paths skip QR generation.
+			int done = code.Position();
+
+			code.Patch32(
+				missingEntry,
+				done - (missingEntry + 4));
+
+			code.Patch32(
+				invalidBase,
+				done - (invalidBase + 4));
+
+			code.Patch32(
+				invalidBounds,
+				done - (invalidBounds + 4));
+
+			code.Patch32(
+				invalidAlignment,
+				done - (invalidAlignment + 4));
+		}
 
         // Stubs avoid firmware services and enter a single allocation-free
         // panic reporter. Masked IRQs and APIC handlers still acknowledge their

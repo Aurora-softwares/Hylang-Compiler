@@ -288,7 +288,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (ops[i].Kind() == IrOp.KindExecuteKernel() && !rawKernelLoad) {
                     DirectMainCompiler direct = new DirectMainCompiler();
                     if (progress != null) { direct.SetBuildProgress(progress); }
-                    DirectImageResult compiled = direct.CompileFreestanding(lowering.Lower(program), "KernelMain", "Run");
+                    DirectImageResult compiled = direct.CompileFreestanding(lowering.Lower(program), "KernelMain", "Run", true);
                     if (!compiled.Success()) {
                         return new NativeCompilerResult(false, inputPath + ": error: freestanding kernel compilation failed: " + compiled.Message() + "\n");
                     }
@@ -343,27 +343,67 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             IrLowering lowering = new IrLowering();
             DirectMainCompiler direct = new DirectMainCompiler();
             if (progress != null) { direct.SetBuildProgress(progress); }
-            DirectImageResult compiled = direct.CompileFreestanding(lowering.Lower(program), "KernelMain", "Run");
+            DirectImageResult compiled = direct.CompileFreestanding(lowering.Lower(program), "KernelMain", "Run", true);
             if (!compiled.Success()) {
                 return new NativeCompilerResult(false, inputPath + ": error: kernel compilation failed: " + compiled.Message() + "\n");
             }
-            byte[] code = compiled.Image();
-            if (code.Length == 0 || code.Length > 1048560) {
-                return new NativeCompilerResult(false, inputPath + ": error: kernel code exceeds the 1 MiB loader limit\n");
-            }
-            byte[] image = new byte[16 + code.Length];
-            image[0] = (byte)65; image[1] = (byte)85; image[2] = (byte)75; image[3] = (byte)82;
-            image[4] = (byte)1; // version
-            int length = code.Length;
-            int i = 0;
-            while (i < 4) {
-                image[8 + i] = (byte)(length % 256);
-                length = length / 256;
-                i = i + 1;
-            }
-            image[12] = (byte)16; // entry offset
-            i = 0;
-            while (i < code.Length) { image[16 + i] = code[i]; i = i + 1; }
+			byte[] code = compiled.Image();
+			int panicOffset = compiled.PanicEntryOffset();
+
+			if (code.Length == 0 || code.Length > 1048552) {
+				return new NativeCompilerResult(
+					false,
+					inputPath + ": error: kernel code exceeds the 1 MiB loader limit\n");
+			}
+
+			if (panicOffset <= 0 || panicOffset >= code.Length) {
+				return new NativeCompilerResult(
+					false,
+					inputPath + ": error: invalid kernel panic entry offset\n");
+			}
+			// AUKR v2: 24-byte header.
+			byte[] image = new byte[24 + code.Length];
+
+			// Magic: AUKR
+			image[0] = (byte)65;
+			image[1] = (byte)85;
+			image[2] = (byte)75;
+			image[3] = (byte)82;
+
+			// Format version 2.
+			image[4] = (byte)2;
+
+			// Native code length.
+			int length = code.Length;
+			int i = 0;
+
+			while (i < 4) {
+				image[8 + i] = (byte)(length % 256);
+				length = length / 256;
+				i = i + 1;
+			}
+
+			// Normal kernel entry begins at byte 24.
+			image[12] = (byte)24;
+
+			// Panic function offset, relative to native code start.
+			int offset = panicOffset;
+			i = 0;
+
+			while (i < 4) {
+				image[16 + i] = (byte)(offset % 256);
+				offset = offset / 256;
+				i = i + 1;
+			}
+
+			// Bytes 20–23 are reserved and remain zero.
+
+			// Copy Hydrogen-generated native machine code.
+			i = 0;
+			while (i < code.Length) {
+				image[24 + i] = code[i];
+				i = i + 1;
+			}
             if (progress != null) { progress.Step("Generated kernel image"); }
             if (progress != null) { progress.Begin("Writing " + outputPath); }
             System.IO.File.WriteAllBytes(outputPath, image);
