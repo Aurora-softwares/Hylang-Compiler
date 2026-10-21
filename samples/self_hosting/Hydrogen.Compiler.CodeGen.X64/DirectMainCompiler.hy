@@ -387,7 +387,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private DirectImageResult Failed(string message) {
-            return new DirectImageResult(true, code.ToArray(), "", -1);
+            return new DirectImageResult(false, new byte[0], message, -1);
         }
 
         private void CollectFunctions(IrClass[] classes, string namespaceName) {

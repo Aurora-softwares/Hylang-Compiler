@@ -189,6 +189,12 @@ namespace Hydrogen.Compiler.Tests {
             DirectImageResult directImage = directMain.Compile(new Hydrogen.Compiler.Binding.Binder().Bind(directTree.Root(), new DiagnosticBag()).Module());
             Assert.True(directImage.Success(), "direct backend should lower locals, comparison, if, WriteLine, and return");
             Assert.True(directImage.Image().Length > 200, "direct backend image should include generated code and rodata");
+            DirectImageResult missingEntry = directMain.CompileFreestanding(
+                new Hydrogen.Compiler.Binding.Binder().Bind(directTree.Root(), new DiagnosticBag()).Module(),
+                "Missing", "Run", false);
+            Assert.True(!missingEntry.Success() &&
+                missingEntry.Message() == "missing freestanding entry method Missing.Run",
+                "direct backend must report compilation failures instead of returning partial code");
 
             ProjectClosure cliClosure = ProjectClosure.Collect(FindRepoPath("samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj"));
             string[] projects = cliClosure.Projects();

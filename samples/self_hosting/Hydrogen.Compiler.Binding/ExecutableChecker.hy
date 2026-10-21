@@ -622,6 +622,12 @@ namespace Hydrogen.Compiler.Binding {
                 qualified == "System.Australis.Gpu.Blit") {
                 return IntrinsicNInt(e, qualified, 3);
             }
+            if (qualified == "System.Australis.Gpu.BlitRegion") {
+                return IntrinsicNInt(e, qualified, 7);
+            }
+            if (qualified == "System.Australis.Gpu.CopyRegion") {
+                return IntrinsicNInt(e, qualified, 8);
+            }
             if (qualified == "System.Australis.Files.StatKind" ||
                 qualified == "System.Australis.Files.StatTimeFlags" ||
                 qualified == "System.Australis.Files.DirectoryCount" ||

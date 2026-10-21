@@ -644,7 +644,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 name == "System.Australis.Gpu.Clear" ||
                 name == "System.Australis.Gpu.FillRect" ||
                 name == "System.Australis.Gpu.ReadPixel" ||
-                name == "System.Australis.Gpu.Blit") {
+                name == "System.Australis.Gpu.Blit" ||
+                name == "System.Australis.Gpu.BlitRegion" ||
+                name == "System.Australis.Gpu.CopyRegion") {
                 int expected = 2; int opcode = 121;
                 if (name == "System.Australis.Gpu.Destroy") {
                     expected = 1; opcode = 122;
@@ -656,6 +658,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     expected = 3; opcode = 125;
                 } else if (name == "System.Australis.Gpu.Blit") {
                     expected = 3; opcode = 126;
+                } else if (name == "System.Australis.Gpu.BlitRegion") {
+                    expected = 7; opcode = 127;
+                } else if (name == "System.Australis.Gpu.CopyRegion") {
+                    expected = 8; opcode = 128;
                 }
                 if (args.Length != expected) { return false; }
                 int i = 0;
