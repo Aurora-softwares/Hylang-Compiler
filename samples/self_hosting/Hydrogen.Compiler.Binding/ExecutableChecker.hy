@@ -628,6 +628,25 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.Australis.Gpu.CopyRegion") {
                 return IntrinsicNInt(e, qualified, 8);
             }
+
+            if (qualified == "System.Australis.Gpu.BeginFrame") {
+                return IntrinsicNInt(e, qualified, 1);
+            }
+
+            if (qualified == "System.Australis.Gpu.DrawWindow") {
+                return IntrinsicNInt(e, qualified, 3);
+            }
+
+            if (qualified == "System.Australis.Gpu.EndFrame") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Gpu.FramePixel") {
+                return IntrinsicNInt(e, qualified, 2);
+            }
+            if (qualified == "System.Australis.Gpu.FillFrameRect") {
+                return IntrinsicNInt(e, qualified, 5);
+            }
+
             if (qualified == "System.Australis.Files.StatKind" ||
                 qualified == "System.Australis.Files.StatTimeFlags" ||
                 qualified == "System.Australis.Files.DirectoryCount" ||

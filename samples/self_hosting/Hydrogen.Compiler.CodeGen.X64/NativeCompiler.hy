@@ -350,10 +350,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 			byte[] code = compiled.Image();
 			int panicOffset = compiled.PanicEntryOffset();
 
-			if (code.Length == 0 || code.Length > 1048552) {
+            // Maximum AUKR image: 4 MiB, including 24-byte header.
+            if (code.Length == 0 || code.Length > 4194280) {
 				return new NativeCompilerResult(
 					false,
-					inputPath + ": error: kernel code exceeds the 1 MiB loader limit\n");
+					inputPath + ": error: kernel code exceeds the 4 MiB loader limit\n");
 			}
 
 			if (panicOffset <= 0 || panicOffset >= code.Length) {

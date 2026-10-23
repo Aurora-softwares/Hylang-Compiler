@@ -639,6 +639,83 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 code.Byte(opcode); valueType = "int"; return code.IsValid();
             }
+            if (name == "System.Australis.Gpu.BeginFrame" ||
+                name == "System.Australis.Gpu.DrawWindow" ||
+                name == "System.Australis.Gpu.EndFrame") {
+
+                int expected = 1;
+                int opcode = 129;
+
+                if (name == "System.Australis.Gpu.DrawWindow") {
+                    expected = 3;
+                    opcode = 130;
+                } else if (
+                    name == "System.Australis.Gpu.EndFrame") {
+                    expected = 0;
+                    opcode = 131;
+                }
+
+                if (args.Length != expected) {
+                    return false;
+                }
+
+                int i = 0;
+
+                while (i < expected) {
+                    if (!CompileExpression(args[i]) ||
+                        !Numeric(valueType)) {
+                        return false;
+                    }
+
+                    i = i + 1;
+                }
+
+                code.Byte(opcode);
+                valueType = "int";
+                return code.IsValid();
+            }
+
+            if (name == "System.Australis.Gpu.FramePixel") {
+                if (args.Length != 2) {
+                    return false;
+                }
+
+                int i = 0;
+
+                while (i < 2) {
+                    if (!CompileExpression(args[i]) ||
+                        !Numeric(valueType)) {
+                        return false;
+                    }
+
+                    i = i + 1;
+                }
+
+                code.Byte(132);
+                valueType = "int";
+                return code.IsValid();
+            }
+
+            if (name == "System.Australis.Gpu.FillFrameRect") {
+                if (args.Length != 5) {
+                    return false;
+                }
+
+                int i = 0;
+
+                while (i < 5) {
+                    if (!CompileExpression(args[i]) ||
+                        !Numeric(valueType)) {
+                        return false;
+                    }
+                    i = i + 1;
+                }
+
+                code.Byte(133);
+                valueType = "int";
+                return code.IsValid();
+            }
+
             if (name == "System.Australis.Gpu.Create" ||
                 name == "System.Australis.Gpu.Destroy" ||
                 name == "System.Australis.Gpu.Clear" ||

@@ -147,11 +147,25 @@ namespace Hydrogen.Compiler.Syntax {
             int fieldCount = 0;
             MethodDeclarationSyntax[] methods = new MethodDeclarationSyntax[0];
             int methodCount = 0;
+            int previousIndex = -1;
             while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
                 bool isStatic = false;
                 bool isPrivate = false;
 				bool isVirtual = false;
 				bool isOverride = false;
+
+                if (index == previousIndex) {
+                    diagnostics.Report(
+                        Current().Line(),
+                        Current().Column(),
+                        "parser made no progress in class members");
+
+                    Advance();
+                    continue;
+                }
+
+                previousIndex = index;
+
 				while (SyntaxFacts.IsModifier(Current().Kind())) {
                     if (Current().Kind() == SyntaxKind.PrivateKeyword) { isPrivate = true; }
 					if (Current().Kind() == SyntaxKind.StaticKeyword) {

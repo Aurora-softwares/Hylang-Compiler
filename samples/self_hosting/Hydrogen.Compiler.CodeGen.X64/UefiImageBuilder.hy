@@ -1090,7 +1090,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 // exact size so a short EFI_FILE_PROTOCOL.Read is rejected.
                 code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(24);
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x86); failureCount = failureCount + 1; // jbe
-                code.EmitByte(0x48); code.EmitByte(0x3d); code.Emit32(1048576);
+                code.EmitByte(0x48); code.EmitByte(0x3d); code.Emit32(4194304);
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x87); failureCount = failureCount + 1; // ja
                 EmitStoreRaxRsp(code, 112);
             }
