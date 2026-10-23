@@ -675,6 +675,23 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return code.IsValid();
             }
 
+            if (name == "System.Australis.Gpu.PresentFrame" ||
+                name == "System.Australis.Gpu.RestoreFrame") {
+
+                if (args.Length != 0) {
+                    return false;
+                }
+
+                if (name == "System.Australis.Gpu.PresentFrame") {
+                    code.Byte(134);
+                } else {
+                    code.Byte(135);
+                }
+
+                valueType = "int";
+                return code.IsValid();
+            }
+
             if (name == "System.Australis.Gpu.FramePixel") {
                 if (args.Length != 2) {
                     return false;

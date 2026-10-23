@@ -640,6 +640,10 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.Australis.Gpu.EndFrame") {
                 return Intrinsic(e, qualified, "", "", "int");
             }
+            if (qualified == "System.Australis.Gpu.PresentFrame" ||
+                qualified == "System.Australis.Gpu.RestoreFrame") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
             if (qualified == "System.Australis.Gpu.FramePixel") {
                 return IntrinsicNInt(e, qualified, 2);
             }
