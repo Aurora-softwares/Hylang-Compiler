@@ -1,11 +1,11 @@
-# Self-hosted Hydrogen optimisation checklist
+# Self-hosted Hydrogen optimisation evidence
 
 This plan targets **runtime speed of Linux x86-64 executables emitted by the
 Hydrogen-written compiler**. Implementation belongs in
 `samples/self_hosting/Hydrogen.Compiler.CodeGen.X64/` and
 `tools/native-runtime/runtime.S`. The C++ SDK compiler, C backend, and `hy run`
 interpreter remain bootstrap or comparison tools; their optimisation is outside
-this checklist. Compiler build latency is tracked separately.
+this review. Compiler build latency is tracked separately.
 
 ## Measurement
 
@@ -35,101 +35,42 @@ the same checksum. The [larger-case samples](benchmarks/runtime/results-2026-10-
 are retained. Input sizes differ, so these ratios locate bottlenecks in these
 cases; they are not an overall language speed rating.
 
-## Completed native runtime work
+## Measured changes
 
-- 🟢 **Store string literals in executable data.** The native compiler used
-  to allocate a string each time a literal expression ran. On the same hashed
-  1 MB log input, scanning fell from 8.07 s to 25.9 ms, about 312× faster.
-  The [pre-change samples](benchmarks/runtime/results-2026-10-17-before-literals.json)
-  and a native allocation regression preserve that result.
-- 🟢 **Lower signed `int` division by positive constant divisors with a
-  reciprocal multiply.** The direct x64 compiler now computes quotient and
-  remainder without a hardware `idiv` for constants from 3 through
-  2,147,483,647. The variable-divisor path is unchanged. A regression compares
-  both paths across signed edge values and 20,000 generated values. The
-  arithmetic case fell from 418.6 to 136.1 ms; the array case from 348.2 to
-  194.8 ms. This closes the constant-divisor part of code generation, while
-  general code generation remains below.
-- 🟢 **Pack small objects into shared 4 KiB pages.** The native runtime now
-  uses 64, 128, 256, and 512-byte slots, tracks spans with free slots, and
-  returns wholly dead spans after collection. The conservative page index
-  resolves interior pointers to individual objects within a span. A new
-  runtime regression checks 12,000 live objects, collection, traversal, and
-  mapped heap size. The 20,000-node case fell from 71.7 to 3.48 ms. An initial
-  span scan scaled poorly at 100,000 nodes; the available-span list removed
-  that repeated scan. For the 20,000-node executable, a local `/usr/bin/time`
-  check saw peak RSS fall from 80,012 to 2,560 KB; `strace -c` counted 20,013
-  versus 650 `mmap` calls. These diagnostic counts include process startup.
-- 🟢 **Batch native `Console.WriteBytes`.** The first pass packed up to 4 KiB
-  per `write` call, taking its 1 MiB diagnostic from 427 to 2.36 ms. The
-  packed `byte[]` layout now lets the runtime write directly from array
-  storage. The chunk-boundary regression still covers output correctness.
-- 🟢 **Use x64 immediates and inline checked packed-array addresses.**
-  Numeric literal arithmetic and comparisons now avoid a stack spill and a
-  literal load. Native `byte[]` and `int[]` indexing checks null, negative,
-  and upper bounds inline before loading or storing. The integer loop fell
-  from 136.1 to 94.7 ms and the array pass from 194.8 to 157.1 ms. The
-  broader code-generation item remains open for other redundant operations.
-- 🟢 **Compare one-byte string literals directly.** Native equality and
-  inequality keep null and length checks, then compare one byte without a
-  general string helper call. The 1 MB log scan fell from 25.5 to 6.54 ms;
-  a regression covers empty, null, longer, and both operand orders.
-- 🟢 **Pack `byte[]`/`int[]` and read/write byte files directly.** Linux
-  native byte arrays use one-byte slots and integer arrays four-byte slots;
-  reference arrays and freestanding arrays retain eight-byte slots. Native
-  `ReadAllBytes` reads into the packed array and `WriteAllBytes` and
-  `Console.WriteBytes` write it directly. CSV fell from 9.65 to 4.27 ms and
-  the binary checksum from 35.2 to 15.2 ms. Regressions check storage,
-  signed values, GC, bounds errors, and byte-file round trips.
+The native compiler now stores string literals in executable data, lowers
+signed division by positive constants with reciprocal multiplication, packs
+small objects into shared pages, batches `Console.WriteBytes`, uses x64
+immediates and inline checked packed-array addresses, compares one-byte
+literals directly, and packs native `byte[]` and `int[]` elements. The
+[benchmark samples](benchmarks/runtime/README.md) and native regressions
+retain the detailed before/after results. The corresponding project work is
+recorded in [#44](https://github.com/Aurora-softwares/Hylang-Compiler/issues/44),
+[#45](https://github.com/Aurora-softwares/Hylang-Compiler/issues/45),
+[#46](https://github.com/Aurora-softwares/Hylang-Compiler/issues/46),
+[#47](https://github.com/Aurora-softwares/Hylang-Compiler/issues/47),
+[#48](https://github.com/Aurora-softwares/Hylang-Compiler/issues/48), and
+[#49](https://github.com/Aurora-softwares/Hylang-Compiler/issues/49).
 
-## Next runtime work, ranked by measured impact
+On 23 October, local right operands and array indexes avoided some stack
+traffic. An unsigned length comparison retained negative and upper-bound
+failures with fewer instructions. The 10-million-element array median fell
+from 139.45 to 129.94 ms (6.8%) and the integer-loop median from 84.72 to
+83.37 ms (1.6%) on this host. Local string indexes and one unsigned `rt_char`
+length check reduced the 1 MB log-scan median from 7.43 to 7.05 ms (5.0%).
+A direct inline string load was slower in a paired 30-run check and was
+reverted. The [raw samples](benchmarks/runtime/results-2026-10-23-index-paths.json)
+retain 30 timed runs and three warmups for each comparison, with source and
+input hashes. Hardware performance counters were unavailable here
+(`perf_event_paranoid=4`), so these are whole-process measurements.
 
-1. 🟡 **Improve general direct x64 code generation.** A local right operand
-   and a local array index now avoid needless stack traffic. An unsigned
-   length comparison retains negative and upper-bound failures with fewer
-   instructions. On 23 October, the 10-million-element array median fell
-   from 139.45 to 129.94 ms (6.8%) and the integer-loop median from 84.72
-   to 83.37 ms (1.6%) on this host. Continue reducing general spills and
-   loads; hoist checks only with loop proofs. Preserve signed-width and
-   overflow behaviour, and keep stage 2 and 3 outputs identical.
-2. 🟡 **Specialise hot string indexing.** Local indexes avoid a receiver
-   spill, and `rt_char` now uses one unsigned length check for negative and
-   upper-bound indexes. The 1 MB log-scan median fell from 7.43 to 7.05 ms
-   (5.0%) on this host, but indexing still calls a runtime helper. A prior
-   direct inline checked load was slower in a paired 30-run check (7.96
-   versus 6.89 ms) and was reverted. Continue profiling surrounding branches
-   and register pressure; retain empty, multi-byte, null, and range tests.
-3. 🔴 **Remove repeated string copying.** Add a builder or buffer-backed
-   append path for concatenation in text-heavy programs and compiler
-   diagnostics. Measure copied bytes and live heap size before changing the
-   representation.
-4. 🔴 **Reduce full-GC work and pauses when traces justify it.** Profile
-   root scans, the page index, span sweeping, and recycled-page budget on
-   allocation-heavy applications. Preserve conservative interior roots and
-   cycles; add incremental or generational collection only with evidence.
-5. 🔴 **Buffer repeated small console writes and trim startup.** Measure a
-   logging workload and a tiny command independently. Preserve terminal and
-   flush behaviour.
-6. 🔴 **Vectorise proven bulk operations.** Test SIMD or library-backed
-   copy/search/compare with scalar fallbacks. Pack other primitive array types
-   when a representative workload shows enough benefit.
-
-## Build-time work, separate from runtime ranking
-
-- 🔴 Profile the complete self-build (token and AST allocation, symbol
-  lookup, method lowering, image assembly) and cache unchanged parses and
-  dependencies by content hash. Retain a clean bootstrap proof mode.
-- 🔴 Parse independent files or compile independent methods concurrently
-  only when shared state and deterministic output are safe. Measure elapsed
-  time and peak RSS together.
-
-For each runtime item, check exact output and exit status, save raw timings
-and input hashes, run the relevant native regressions, and verify bootstrap
-equivalence. A speedup in SDK C output alone does not close an item here.
-
-The [23 October raw samples](benchmarks/runtime/results-2026-10-23-index-paths.json)
-contain 30 timed runs and three warmups for each before/after comparison,
-including source and input hashes. All routes produced the exact Python
-reference output. Hardware performance counters were unavailable on this
-host (`perf_event_paranoid=4`), so these are whole-process measurements rather
-than a sampled CPU profile; both items remain in progress.
+The Development project tracks further code-generation and string-index work
+in [#127](https://github.com/Aurora-softwares/Hylang-Compiler/issues/127)
+and [#128](https://github.com/Aurora-softwares/Hylang-Compiler/issues/128),
+text copying in [#129](https://github.com/Aurora-softwares/Hylang-Compiler/issues/129),
+GC profiling in [#130](https://github.com/Aurora-softwares/Hylang-Compiler/issues/130),
+console/startup costs in [#131](https://github.com/Aurora-softwares/Hylang-Compiler/issues/131),
+bulk-operation vectorisation in [#132](https://github.com/Aurora-softwares/Hylang-Compiler/issues/132),
+self-build profiling and caching in [#133](https://github.com/Aurora-softwares/Hylang-Compiler/issues/133),
+and safe parallel compilation in [#134](https://github.com/Aurora-softwares/Hylang-Compiler/issues/134).
+For performance changes, retain exact output and exit status, raw timings and
+input hashes, relevant native regressions, and bootstrap equivalence.

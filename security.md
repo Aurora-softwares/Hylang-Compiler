@@ -1,84 +1,43 @@
-# Hydrogen security review checklist
+# Hydrogen security review evidence
 
-Review date: 17 October 2026; hardening update: 23 October 2026. Scope: the
-C++ SDK build/test path, its generated C runtime, the self-hosted Linux x86-64
-compiler, its native runtime, and the ELF files it emits. This is a source
-review with a sample ELF header check and
-the native runtime regression suite; it is not a fuzzing or penetration test.
-Priorities follow the Hydrogen Development project. 🟢 means the
-specific check has been verified, not that the whole component is secure.
+The 17 October 2026 source review covered the C++ SDK build and test path,
+generated C runtime, self-hosted Linux x86-64 compiler, native runtime, and
+emitted ELF files. The 23 October hardening pass added focused regression
+coverage. This review and its sample ELF inspection are not a fuzzing or
+penetration test. The [Hydrogen Development Project](https://github.com/orgs/Aurora-softwares/projects/4)
+tracks the work and current status.
 
-## Confirmed issues
+The SDK now starts compilers, archivers, and test executables with literal
+argument vectors. The `hy_sdk_shell_characters` regression covers paths with
+spaces, quotes, `$`, command substitution, and a shell fragment in `CC` on
+Linux. The Windows spawning path is implemented, with real Windows host
+verification tracked by [#75](https://github.com/Aurora-softwares/Hylang-Compiler/issues/75).
+The file-I/O helpers use checked 4 KiB reads and writes and report short
+results; the Linux `hy_sdk_short_file_io` regression exercises truncated and
+injected-short reads and writes. These changes are recorded in
+[#67](https://github.com/Aurora-softwares/Hylang-Compiler/issues/67) and
+[#68](https://github.com/Aurora-softwares/Hylang-Compiler/issues/68).
 
-- 🔴 **P0, 0.1.0 — Diagnose collection-dependent parsing in the compiled compiler.**
-  The 17 October run reported spurious lexer errors in `DirectMainCompiler.hy`
-  with `HYLANG_GC_THRESHOLD=1048576`. On 23 October, the compiled CLI checked
-  its complete project closure at that threshold successfully. The earlier
-  failure remains unexplained. Reduce the case, identify the cause, and add a
-  deterministic regression before closing this release gate.
-- 🟢 **P1 — Remove shell interpretation from SDK build and test commands.**
-  `src/hylang.cpp` now uses argument-vector process spawning for the compiler,
-  archiver, and test executable. `CC` is parsed into a program and literal
-  arguments; it is never evaluated by a shell. `hy_sdk_shell_characters` covers
-  compiler, archiver, and test paths with spaces, quotes, `$`, command
-  substitution, and a shell fragment in `CC`; it verifies that no marker
-  command runs on Linux. The Windows spawning path is
-  implemented but has not been exercised in this Linux test run.
-- 🟢 **P2 — Report short reads and writes in generated C file helpers.**
-  The emitted byte helpers now read and write in 4 KiB chunks and fail on a
-  short result; the text reader also rejects a short read. The
-  `hy_sdk_short_file_io` Linux regression truncates a file during the read,
-  injects short `fread` and `fwrite` returns, and checks normal byte roundtrips.
-  The native Linux runtime uses separate helpers.
+The native ELF output declares a read/write, non-executable stack. A checked
+sample had a read/execute load segment and an `rw-p` stack mapping. Compiler
+source and manifest reads are capped at 16 MiB and reject short or growing
+reads. The relevant regressions cover oversized inputs and inconsistent
+sysfs/procfs lengths; see [#91](https://github.com/Aurora-softwares/Hylang-Compiler/issues/91)
+and [#92](https://github.com/Aurora-softwares/Hylang-Compiler/issues/92).
+Native runtime regressions cover null and out-of-range indexes, negative
+array sizes, file errors, packed arrays, GC traversal, and byte comparisons.
+These are tests of the named paths, not a general security guarantee.
 
-## Native executable hardening
+The 17 October full CTest run passed 175 tests. On 23 October, the SDK file-I/O,
+interpreted and compiled native-runtime, native ELF, and stage 1–3 bootstrap
+proof regressions passed after hardening. A generated HexLab executable also
+passed one manual undefined-behaviour sanitizer run on 17 October.
 
-- 🔴 **P0, 0.3.0 — Add address randomisation for native Linux executables.**
-  `ElfImageBuilder.WriteElfHeader` emits `ET_EXEC` with entry address based on
-  `0x400000`. A checked sample has one fixed-address `PT_LOAD` segment. Plan
-  position-independent output and relocations where needed; verify repeated
-  launches map code at different addresses and preserve the bootstrap proof.
-- 🟢 **P0, 0.3.0 — Emit an explicit non-executable stack program header.**
-  Linux native ELF output now includes a read/write `PT_GNU_STACK` header;
-  the code/data `PT_LOAD` remains read/execute. The native ELF regression
-  checks both header count and stack flags, `readelf -W -l` confirms the
-  segment, and a running generated executable had an `rw-p` stack mapping.
-- 🟢 **P0, 0.3.0 — Bound compiler source and manifest reads.** The SDK
-  compiler, its generated C runtime, and the native runtime cap text reads at
-  16 MiB. They reject short or growing reads; the SDK and native paths check
-  seek and close outcomes. The regressions exercise oversized `.hy` and
-  `.hyproj` inputs and inconsistent sysfs/procfs lengths.
-- 🔴 **P1, 0.3.0 — Make compiler output replacement atomic and symlink aware.** The
-  native file writer opens output paths with `O_CREAT|O_TRUNC` and follows
-  symlinks. For build artifacts, write a temporary file in the destination
-  directory, check the final write and close, then rename it. Decide and test
-  the intended behaviour when an output path is a symlink or is in a shared
-  writable directory.
-
-## Verification to add
-
-The 17 October full Hydrogen CTest suite passed (175/175), including the
-bootstrap proof, HexLab PNG assertion, self-hosted source check, and native
-runtime tests. On 23 October, the SDK file-I/O, interpreted and compiled
-native-runtime, native ELF, and stage 1–3 bootstrap proof regressions passed
-after this hardening. The generated HexLab test executable also passed one
-manual undefined-behaviour sanitizer run on 17 October. PIE, atomic output,
-fuzzing, and sanitizer CI remain release work.
-
-- 🔴 Fuzz the lexer, parser, project manifest reader, and native compiler
-  with time and memory limits. Keep crash and timeout inputs as regressions.
-- 🔴 Run the C++ SDK and generated C runtime tests with address and undefined
-  behaviour sanitizers in CI; test malformed lengths, arrays, file I/O, and
-  failed allocations.
-- 🔴 Verify Linux native output under a restrictive address-space limit and
-  inspect emitted ELF headers for write/execute mappings, stack permissions,
-  and load-address assumptions.
-
-## Checks already made
-
-- 🟢 The reviewed native ELF sample's code/data load segment has read/execute
-  flags rather than write/execute flags (`readelf -l` on a native runtime
-  regression executable).
-- 🟢 Native runtime regressions cover null and out-of-range indices, negative
-  array sizes, file errors, packed byte/int arrays, GC traversal, and byte
-  comparisons. These checks cover the tested paths, not all malformed inputs.
+The remaining investigations have dedicated project issues: the unexplained
+GC-threshold-dependent parser report [#70](https://github.com/Aurora-softwares/Hylang-Compiler/issues/70),
+ASLR-compatible PIE output [#90](https://github.com/Aurora-softwares/Hylang-Compiler/issues/90),
+atomic and symlink-aware output replacement [#93](https://github.com/Aurora-softwares/Hylang-Compiler/issues/93),
+fuzzing [#94](https://github.com/Aurora-softwares/Hylang-Compiler/issues/94),
+and sanitizer CI [#95](https://github.com/Aurora-softwares/Hylang-Compiler/issues/95).
+Restrictive address-space testing and emitted ELF permission review are part
+of the release security gate [#142](https://github.com/Aurora-softwares/Hylang-Compiler/issues/142).
