@@ -11,7 +11,9 @@
 
 #ifdef _WIN32
 #include <io.h>
+#include <windows.h>
 #else
+#include <sys/ioctl.h>
 #include <unistd.h>
 #endif
 
@@ -30,7 +32,7 @@ public:
     ~BuildDisplay() { finish(); }
 
     void begin(const std::string& input) {
-        if (log_) std::cerr << "Building " << input << '\n';
+        if (log_) std::cerr << fit("Building " + input) << '\n';
         if (terminal_ && spinner_) {
             running_ = true;
             worker_ = std::thread([this] {
@@ -58,8 +60,8 @@ public:
         message_ = message;
         if (terminal_ && active_ && (progress_ || spinner_)) std::cerr << "\r\x1b[2K";
         if (finished_action) {
-            if (progress_) std::cerr << "100% " << message << '\n';
-            else if (log_) std::cerr << message << '\n';
+            if (progress_) std::cerr << fit("100% " + message) << '\n';
+            else if (log_) std::cerr << fit(message) << '\n';
             active_ = false;
         } else {
             active_ = true;
@@ -88,23 +90,66 @@ public:
             std::cerr << std::flush;
         }
         if (terminal_ && progress_ && total_ != 0 && completed_ >= total_) {
-            std::cerr << '[' << std::string(60, '#') << "] 100% total\n";
+            const std::size_t width = columns();
+            const std::size_t bar_width = width > 14 ? std::min<std::size_t>(60, width - 14) : 0;
+            const std::string result = bar_width > 0
+                ? "[" + std::string(bar_width, '#') + "] 100% total" : "100% total";
+            std::cerr << fit(result) << '\n';
         }
     }
 
 private:
+    std::size_t columns() const {
+        if (!terminal_) return 0;
+#ifdef _WIN32
+        CONSOLE_SCREEN_BUFFER_INFO info{};
+        const HANDLE handle = GetStdHandle(STD_ERROR_HANDLE);
+        if (handle != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(handle, &info))
+            return static_cast<std::size_t>(info.srWindow.Right - info.srWindow.Left + 1);
+#else
+        winsize size{};
+        if (ioctl(fileno(stderr), TIOCGWINSZ, &size) == 0 && size.ws_col > 0)
+            return size.ws_col;
+#endif
+        return 0;
+    }
+
+    std::string fit(std::string line) const {
+        if (!terminal_) return line;
+        const std::size_t width = columns();
+        if (width == 0) return line;
+        const std::size_t limit = width - 1; // Avoid the terminal's last-column wrap.
+        for (char& ch : line) if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
+        if (line.size() <= limit) return line;
+        if (limit <= 3) return std::string(limit, '.');
+        std::size_t end = limit - 3;
+        while (end > 0 && end < line.size() &&
+               (static_cast<unsigned char>(line[end]) & 0xc0) == 0x80) --end;
+        return line.substr(0, end) + "...";
+    }
+
     void draw() {
         static const char* frames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
         if (terminal_) std::cerr << "\r\x1b[2K";
-        if (spinner_) std::cerr << frames[frame_ % 10] << ' ';
+        std::string line;
+        if (spinner_) line = std::string(frames[frame_ % 10]) + ' ';
         if (progress_) {
             const std::size_t overall_percent = total_ == 0 ? 0 : completed_ * 100 / total_;
-            const std::size_t filled = overall_percent * 60 / 100;
-            std::cerr << '[' << std::string(filled, '#') << std::string(60 - filled, '-')
-                      << "] " << overall_percent << "% total | " << action_percent_ << "% ";
+            const std::string suffix = "] " + std::to_string(overall_percent) + "% total | " +
+                                       std::to_string(action_percent_) + "% ";
+            const std::size_t width = columns();
+            const std::size_t reserve = width / 3;
+            const std::size_t bar_width = width > line.size() + suffix.size() + reserve + 2
+                ? std::min<std::size_t>(60, width - line.size() - suffix.size() - reserve - 2) : 0;
+            if (bar_width >= 8) {
+                const std::size_t filled = overall_percent * bar_width / 100;
+                line += '[' + std::string(filled, '#') + std::string(bar_width - filled, '-') + suffix;
+            } else if (width > 16) {
+                line += std::to_string(overall_percent) + "% | " + std::to_string(action_percent_) + "% ";
+            }
         }
-        if (terminal_) std::cerr << message_ << std::flush;
-        else std::cerr << message_;
+        line += message_;
+        std::cerr << fit(line) << std::flush;
     }
 
     bool progress_;

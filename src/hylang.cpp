@@ -33,6 +33,7 @@
 #include <windows.h>
 #else
 #include <spawn.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 extern char** environ;
@@ -2309,6 +2310,8 @@ struct SemanticModel {
     MethodSymbol* console_write_bool = nullptr;
     MethodSymbol* console_write_bytes = nullptr;
     MethodSymbol* console_is_terminal = nullptr;
+    MethodSymbol* console_terminal_width = nullptr;
+    MethodSymbol* console_utf8_byte_at = nullptr;
     MethodSymbol* console_writeline_string = nullptr;
     MethodSymbol* console_writeline_int = nullptr;
     MethodSymbol* console_writeline_bool = nullptr;
@@ -3072,6 +3075,9 @@ private:
         model.console_write_bytes = create_builtin(model.console_class, "WriteBytes", &model.void_type,
                                                    {{"value", model.get_array_type(&model.byte_type)}});
         model.console_is_terminal = create_builtin(model.console_class, "IsTerminal", &model.bool_type, {});
+        model.console_terminal_width = create_builtin(model.console_class, "TerminalWidth", &model.int_type, {});
+        model.console_utf8_byte_at = create_builtin(model.console_class, "Utf8ByteAt", &model.int_type,
+                                                   {{"value", &model.string_type}, {"index", &model.int_type}});
         model.console_writeline_string =
             create_builtin(model.console_class, "WriteLine", &model.void_type, {{"value", &model.string_type}});
         model.console_writeline_int =
@@ -6354,6 +6360,29 @@ private:
                 return Value{isatty(fileno(stdout)) != 0};
 #endif
             }
+            if (method.owner == program_.semantic_model.console_class && method.name == "TerminalWidth") {
+#ifdef _WIN32
+                CONSOLE_SCREEN_BUFFER_INFO info{};
+                const HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+                if (handle != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(handle, &info))
+                    return Value{int64_t{info.srWindow.Right - info.srWindow.Left + 1}};
+#else
+                winsize size{};
+                if (ioctl(fileno(stdout), TIOCGWINSZ, &size) == 0 && size.ws_col > 0)
+                    return Value{int64_t{size.ws_col}};
+#endif
+                return Value{int64_t{0}};
+            }
+            if (method.owner == program_.semantic_model.console_class && method.name == "Utf8ByteAt") {
+                if (arguments.size() != 2 || !std::holds_alternative<string>(arguments[0].data) ||
+                    !std::holds_alternative<int64_t>(arguments[1].data))
+                    throw std::runtime_error("Utf8ByteAt requires a string and index");
+                const string& value = std::get<string>(arguments[0].data);
+                const int64_t index = std::get<int64_t>(arguments[1].data);
+                if (index < 0 || static_cast<std::size_t>(index) >= value.size())
+                    throw std::runtime_error("String index out of range");
+                return Value{int64_t{static_cast<unsigned char>(value[static_cast<std::size_t>(index)])}};
+            }
             if (method.owner == program_.semantic_model.console_class && method.name == "WriteBytes") {
                 if (arguments.size() != 1 || !std::holds_alternative<std::shared_ptr<RuntimeArray>>(arguments[0].data)) {
                     throw std::runtime_error("System.Console.WriteBytes requires a byte array");
@@ -7373,7 +7402,7 @@ private:
         out << "#include <stdio.h>\n";
         out << "#include <stdlib.h>\n";
         out << "#include <string.h>\n\n";
-        out << "#ifdef _WIN32\n#include <io.h>\n#else\n#include <unistd.h>\n#endif\n\n";
+        out << "#ifdef _WIN32\n#include <io.h>\n#include <windows.h>\n#else\n#include <sys/ioctl.h>\n#include <unistd.h>\n#endif\n\n";
         out << "static int32_t hy_wrap_i32(uint32_t bits) { int32_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n";
         out << "static int64_t hy_wrap_i64(uint64_t bits) { int64_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n\n";
 
@@ -7919,6 +7948,22 @@ private:
         out << "static bool hy_console_is_terminal(void) {\n";
         out << "#ifdef _WIN32\n    return _isatty(_fileno(stdout)) != 0;\n";
         out << "#else\n    return isatty(1) != 0;\n#endif\n";
+        out << "}\n";
+        out << "static int64_t hy_console_terminal_width(void) {\n";
+        out << "#ifdef _WIN32\n";
+        out << "    CONSOLE_SCREEN_BUFFER_INFO info;\n";
+        out << "    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);\n";
+        out << "    if (handle != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(handle, &info))\n";
+        out << "        return (int64_t)(info.srWindow.Right - info.srWindow.Left + 1);\n";
+        out << "#else\n";
+        out << "    struct winsize size;\n";
+        out << "    if (ioctl(1, TIOCGWINSZ, &size) == 0 && size.ws_col > 0) return (int64_t)size.ws_col;\n";
+        out << "#endif\n";
+        out << "    return 0;\n";
+        out << "}\n";
+        out << "static int32_t hy_console_utf8_byte_at(HyString* value, int32_t index) {\n";
+        out << "    if (value == NULL || index < 0 || (int64_t)index >= value->length) hy_runtime_fail(\"String index out of range\");\n";
+        out << "    return (unsigned char)value->bytes[index];\n";
         out << "}\n";
         out << "static void hy_console_write_int(int64_t value) {\n";
         out << "    printf(\"%lld\", (long long)value);\n";
@@ -9197,6 +9242,13 @@ private:
                 if (call.method->is_builtin && call.method->owner == program_.semantic_model.console_class) {
                     if (call.method == program_.semantic_model.console_is_terminal) {
                         return "hy_console_is_terminal()";
+                    }
+                    if (call.method == program_.semantic_model.console_terminal_width) {
+                        return "hy_console_terminal_width()";
+                    }
+                    if (call.method == program_.semantic_model.console_utf8_byte_at) {
+                        return "hy_console_utf8_byte_at(" + emit_expression(*call.arguments[0]) + ", " +
+                               emit_expression(*call.arguments[1]) + ")";
                     }
                     if (!call.arguments.empty() &&
                         call.arguments[0]->type != nullptr &&

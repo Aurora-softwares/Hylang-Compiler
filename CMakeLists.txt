@@ -35,6 +35,22 @@ target_link_libraries(hy PRIVATE hylang)
 enable_testing()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME hy_sdk_progress_width
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/progress_width.py
+                $<TARGET_FILE:hy>)
+        add_test(NAME hyc_sdk_progress_width
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/progress_width.py
+                $<TARGET_FILE:hyc>)
+        add_test(NAME hy_interpreted_progress_width
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/progress_width.py
+                $<TARGET_FILE:hy>
+                ${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj)
+    endif()
     add_test(
         NAME hy_sdk_shell_characters
         COMMAND ${CMAKE_COMMAND}
@@ -1362,6 +1378,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
     )
     set_tests_properties(hy_stage1_project_closure PROPERTIES
         FIXTURES_SETUP hydrogen_stage1 TIMEOUT 240 RUN_SERIAL TRUE)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME hy_stage1_progress_width
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/progress_width.py
+                ${stage1_test_dir}/hydrogen-stage1)
+        set_tests_properties(hy_stage1_progress_width PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 180 RUN_SERIAL TRUE)
+    endif()
     foreach(suite NativeStaticCalls NativeRuntime NativeCompilationFailures ExecutableIr)
         add_test(NAME hy_stage1_${suite}
             COMMAND ${CMAKE_COMMAND}

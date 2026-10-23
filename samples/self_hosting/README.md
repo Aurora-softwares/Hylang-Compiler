@@ -30,7 +30,7 @@ hydrogen-stage1 new app|lib|tool|test|workspace|os|efi|kernel|exec|windows <name
 hydrogen-stage1 stage-compare <project.hyproj> --stage1 <artifact> --stage2 <artifact>
 ```
 
-`build` updates one terminal line per action and leaves its `100%` result when complete. Its braille spinner and 60-character bar show overall completed milestones; the adjacent action percentage uses source position for lexing and consumed tokens for parsing. Stages without a known denominator complete at 100%. Append `--hide-progress`, `--hide-spinner`, and/or `--hide-log` to control the display. Using all three flags leaves only the final `wrote` line or an error. OS projects report each referenced image separately.
+`build` updates one terminal line per action and leaves its `100%` result when complete. Its braille spinner and bar of up to 60 characters show overall completed milestones; the adjacent action percentage uses source position for lexing and consumed tokens for parsing. Narrow terminals get a shorter bar and `...` at the end of long progress text, with the width checked on every redraw. Redirected output keeps the full text. Stages without a known denominator complete at 100%. Append `--hide-progress`, `--hide-spinner`, and/or `--hide-log` to control the display. Using all three flags leaves only the final `wrote` line or an error. OS projects report each referenced image separately.
 
 `tokens` prints lexer tokens/locations. `parse` prints a syntax outline. `check` performs semantic checking; `--emit-ir` prints typed executable method-body IR. `compile` emits a Linux executable by default, a Windows PE32+ console program with `--target windows-x64`, or a constrained UEFI application with `--target uefi-x64`. `build` accepts format-2 `exe`, `windows`, `efi`, `kernel`, `exec`, `native`, and `os` projects. Windows uses the same direct language backend as Linux, with Win32 implementations of the managed runtime's memory, argument, console, and file services. An `exec` project emits an Australis AUEX v1 program. Its structured backend supports control flow, scalar and bounded string/byte-array data, application method calls, terminal/file APIs, and concurrent AUEX child processes. A `native` project emits AUN1 v2 machine code for a single static `Main(string[] args)` with ASCII literal `System.Australis.Terminal.Write` calls and a literal integer return status; it has no general runtime. OS builds emit referenced images below the specified output directory and may include `exec` projects. `stage-compare` compares existing files exactly; it does not build or behaviorally test them.
 
@@ -180,7 +180,7 @@ It prints `Answer: 42`. Arrays are mutable, zero/default-initialized, and bounds
 
 | API | Operations |
 | --- | --- |
-| `System.Console` | `Write(value)`, `WriteLine(value)`, native-only empty `WriteLine()` |
+| `System.Console` | `Write(value)`, `WriteLine(value)`, `WriteBytes(bytes)`, `IsTerminal()`, `TerminalWidth()` (zero when unavailable), `Utf8ByteAt(text, index)`, native-only empty `WriteLine()` |
 | `System.IO.File` | `Exists(path)`, `ReadAllText(path)`, `ReadAllBytes(path)`, `WriteAllText(path, text)`, `WriteAllBytes(path, bytes)` |
 | `System.Convert` | `ToInt32(text)` returning Hydrogen's `int` |
 | `System.Runtime.GC` | `Collect()` in native code and SDK C output (`hy run` treats it as a no-op); `GetAllocatedBytes()` in native code only |

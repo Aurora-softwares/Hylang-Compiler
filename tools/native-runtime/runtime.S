@@ -847,6 +847,31 @@ rt_isatty:
  sete al
  movzx eax,al
  ret
+rt_terminal_width:
+ sub rsp,16
+ mov eax,16
+ mov edi,1
+ mov esi,0x5413
+ mov rdx,rsp
+ syscall
+ test rax,rax
+ js .unknown_width
+ movzx eax,word ptr [rsp+2]
+ add rsp,16
+ ret
+.unknown_width:
+ xor eax,eax
+ add rsp,16
+ ret
+rt_string_byte_at:
+ test rdi,rdi
+ jz rt_null_error
+ test rsi,rsi
+ js rt_index_error
+ cmp rsi,[rdi]
+ jae rt_index_error
+ movzx eax,byte ptr [rdi+rsi+8]
+ ret
 rt_write_all:
  test rdx,rdx
  jz .written

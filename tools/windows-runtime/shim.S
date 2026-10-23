@@ -158,12 +158,31 @@ win_syscall:
 .isatty:
  mov ecx,-11
  call win_GetStdHandle
+ mov [rsp+152],rax
  mov rcx,rax
  lea rdx,[rsp+120]
  call win_GetConsoleMode
  test eax,eax
- mov eax,0
- jnz .done
+ jz .not_console
+ mov rdx,[rsp+88]
+ mov word ptr [rdx+2],0
+ mov rcx,[rsp+152]
+ lea rdx,[rsp+120]
+ call win_GetConsoleScreenBufferInfo
+ test eax,eax
+ jz .console_ok
+ movsx eax,word ptr [rsp+134]
+ movsx edx,word ptr [rsp+130]
+ sub eax,edx
+ inc eax
+ test eax,eax
+ jle .console_ok
+ mov rdx,[rsp+88]
+ mov [rdx+2],ax
+.console_ok:
+ xor eax,eax
+ jmp .done
+.not_console:
  mov rax,-25
  jmp .done
 .mkdir:
@@ -358,6 +377,7 @@ import CreateFileW
 import CloseHandle
 import SetFilePointerEx
 import GetConsoleMode
+import GetConsoleScreenBufferInfo
 import CreateDirectoryW
 import GetLastError
 import ExitProcess

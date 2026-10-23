@@ -24,7 +24,7 @@ The [security review checklist](security.md) records confirmed issues and harden
 
 ## Build output
 
-`hy build`, `hyc build`, and the self-hosted `hy build` update one terminal line per action. The braille spinner and 60-character bar show overall build progress, with a separate percentage for the active action. The line becomes its `100%` result when that action completes. Overall progress counts completed milestones, while lexing and parsing use source and token positions for their action percentages. Stages without measurable internal work stay at 0% until completion. The SDK spinner animates while a terminal build is busy. Redirected output uses plain text without terminal escape codes.
+`hy build`, `hyc build`, and the self-hosted `hy build` update one terminal line per action. The braille spinner and bar show overall build progress, with a separate percentage for the active action. The bar uses up to 60 characters and shrinks in narrow terminals; long interactive progress text ends in `...` instead of wrapping. Terminal width is checked on each redraw, so resizing takes effect during a build. The line becomes its `100%` result when that action completes. Overall progress counts completed milestones, while lexing and parsing use source and token positions for their action percentages. Stages without measurable internal work stay at 0% until completion. The SDK spinner animates while a terminal build is busy. Redirected output uses full plain text without terminal escape codes.
 
 Use `--hide-progress`, `--hide-spinner`, or `--hide-log` to remove individual parts. For example, `hy build MyApp/MyApp.hyproj --hide-progress` keeps the spinner and messages. Using all three flags leaves the normal output path or `wrote` result, plus any errors.
 

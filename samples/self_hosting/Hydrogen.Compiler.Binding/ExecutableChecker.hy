@@ -476,6 +476,12 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.Console.IsTerminal") {
                 return Intrinsic(e, qualified, "", "", "bool");
             }
+            if (qualified == "System.Console.TerminalWidth") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Console.Utf8ByteAt") {
+                return Intrinsic(e, qualified, "string", "int", "int");
+            }
             if (qualified == "System.Console.ReadLine") { return Intrinsic(e, qualified, "", "", "string"); }
             if (qualified == "System.Australis.Terminal.EndOfInput") {
                 return Intrinsic(e, qualified, "", "", "bool");

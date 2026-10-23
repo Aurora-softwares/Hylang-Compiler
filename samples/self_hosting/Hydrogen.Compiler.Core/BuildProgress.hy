@@ -33,7 +33,7 @@ namespace Hydrogen.Compiler.Core {
             frame = 0;
             completedSteps = 0;
             totalSteps = steps;
-            if (showLog) { System.Console.WriteLine("Building " + project); }
+            if (showLog) { System.Console.WriteLine(FitLine("Building " + project, AvailableColumns())); }
         }
 
         public void Begin(string message) {
@@ -73,13 +73,17 @@ namespace Hydrogen.Compiler.Core {
         public void Step(string message) {
             ClearActive();
             if (completedSteps < totalSteps) { completedSteps = completedSteps + 1; }
-            if (showProgress) { System.Console.WriteLine("100% " + message); }
-            else if (showLog) { System.Console.WriteLine(message); }
+            if (showProgress) { System.Console.WriteLine(FitLine("100% " + message, AvailableColumns())); }
+            else if (showLog) { System.Console.WriteLine(FitLine(message, AvailableColumns())); }
             if (terminal && showProgress && totalSteps > 0 && completedSteps == totalSteps) {
+                int available = AvailableColumns();
+                int barWidth = 60;
+                if (available >= 0 && barWidth > available - 13) { barWidth = available - 13; }
                 string bar = "[";
                 int i = 0;
-                while (i < 60) { bar = bar + "#"; i = i + 1; }
-                System.Console.WriteLine(bar + "] 100% total");
+                while (i < barWidth) { bar = bar + "#"; i = i + 1; }
+                if (barWidth > 0) { System.Console.WriteLine(FitLine(bar + "] 100% total", available)); }
+                else { System.Console.WriteLine(FitLine("100% total", available)); }
             }
             action = "";
             detail = "";
@@ -108,10 +112,50 @@ namespace Hydrogen.Compiler.Core {
             activeLine = false;
         }
 
+        private int AvailableColumns() {
+            if (!terminal) { return -1; }
+            int width = System.Console.TerminalWidth();
+            if (width < 1) { return -1; }
+            return width - 1; // Avoid the terminal's last-column wrap.
+        }
+
+        private string FitLine(string text, int limit) {
+            if (limit < 0) { return text; }
+            string clean = "";
+            int i = 0;
+            while (i < text.Length) {
+                if (text[i] == "\n" || text[i] == "\r" || text[i] == "\t") { clean = clean + " "; }
+                else { clean = clean + text[i]; }
+                i = i + 1;
+            }
+            if (clean.Length <= limit) { return clean; }
+            if (limit <= 3) {
+                string dots = "";
+                i = 0;
+                while (i < limit) { dots = dots + "."; i = i + 1; }
+                return dots;
+            }
+            int cut = limit - 3;
+            // Do not end in the middle of a UTF-8 character.
+            while (cut > 0 && cut < clean.Length) {
+                int next = System.Console.Utf8ByteAt(clean, cut);
+                if (next < 128 || next > 191) { break; }
+                cut = cut - 1;
+            }
+            string result = "";
+            i = 0;
+            while (i < cut) { result = result + clean[i]; i = i + 1; }
+            return result + "...";
+        }
+
         private void DrawActive() {
             if (!terminal || action == "" || (!showProgress && !showSpinner)) { return; }
             ClearActive();
-            if (showSpinner) {
+            int available = AvailableColumns();
+            bool drawSpinner = showSpinner;
+            if (available >= 0 && available < 5) { drawSpinner = false; }
+            int spinnerBytes = 0;
+            if (drawSpinner) {
                 // Braille U+2800..U+28FF, emitted as bytes for the native backend.
                 byte[] glyph = new byte[3];
                 glyph[0] = (byte)226;
@@ -125,22 +169,36 @@ namespace Hydrogen.Compiler.Core {
                 System.Console.WriteBytes(glyph);
                 System.Console.Write(" ");
                 frame = frame + 1;
+                spinnerBytes = 4;
             }
+            string prefix = "";
             if (showProgress) {
                 int totalPercent = 0;
                 if (totalSteps > 0) { totalPercent = completedSteps * 100 / totalSteps; }
-                int filled = totalPercent * 60 / 100;
-                string bar = "[";
-                int i = 0;
-                while (i < 60) {
-                    if (i < filled) { bar = bar + "#"; }
-                    else { bar = bar + "-"; }
-                    i = i + 1;
+                string suffix = "] " + totalPercent + "% total | " + percent + "% ";
+                int barWidth = 60;
+                if (available >= 0) {
+                    int room = available - spinnerBytes - suffix.Length - available / 3 - 1;
+                    if (room < barWidth) { barWidth = room; }
                 }
-                System.Console.Write(bar + "] " + totalPercent + "% total | " + percent + "% ");
+                if (barWidth >= 8) {
+                    int filled = totalPercent * barWidth / 100;
+                    string bar = "[";
+                    int i = 0;
+                    while (i < barWidth) {
+                        if (i < filled) { bar = bar + "#"; }
+                        else { bar = bar + "-"; }
+                        i = i + 1;
+                    }
+                    prefix = bar + suffix;
+                } else if (available < 0 || available > 16) {
+                    prefix = totalPercent + "% | " + percent + "% ";
+                }
             }
-            System.Console.Write(action);
-            if (detail != "") { System.Console.Write(" (" + detail + ")"); }
+            string line = prefix + action;
+            if (detail != "") { line = line + " (" + detail + ")"; }
+            if (available >= 0) { available = available - spinnerBytes; }
+            System.Console.Write(FitLine(line, available));
             activeLine = true;
         }
     }
