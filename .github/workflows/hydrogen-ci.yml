@@ -1,0 +1,77 @@
+name: Hydrogen CI
+
+on:
+  push:
+    branches:
+      - Development
+      - Release
+      - 'ci/**'
+  pull_request:
+    branches:
+      - Development
+      - Release
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compiler:
+    name: Bootstrap and cross-target tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake util-linux
+
+      - name: Configure compiler
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      # Builds the Stage 0 C++ seed, the updated Hydrogen Stage 1,
+      # then Stage 2 and Stage 3 using Hydrogen itself.
+      # The existing proof checks the native corpus and requires
+      # byte-identical Stage 2 / Stage 3 compiler output.
+      - name: Verify native self-hosting
+        run: cmake --build build --target hydrogen_bootstrap_proof --parallel 2
+
+      # Includes the Stage 1 CTest fixture and target tests for
+      # Linux native code, Windows PE generation, UEFI and OS images.
+      - name: Run Stage 1 regression tests
+        run: ctest --test-dir build --output-on-failure --parallel 2 -R '^hy_stage1_'
+
+      - name: Record source and binary checksums
+        run: |
+          cd build/self_hosting
+          sha256sum hydrogen-stage1 hydrogen-stage2 hydrogen-stage3 > SHA256SUMS
+          printf 'source_commit=%s\nsource_ref=%s\n' "$GITHUB_SHA" "$GITHUB_REF" > BUILD-INFO.txt
+
+      # Artifacts are uploaded only after all of the above checks pass.
+      # This does not publish a release or replace the trusted seed.
+      - name: Upload verified Hydrogen compilers
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-verified-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/self_hosting/hydrogen-stage1
+            build/self_hosting/hydrogen-stage2
+            build/self_hosting/hydrogen-stage3
+            build/self_hosting/bootstrap-proof.txt
+            build/self_hosting/SHA256SUMS
+            build/self_hosting/BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload CTest failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-test-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
