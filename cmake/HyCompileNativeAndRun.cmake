@@ -42,6 +42,12 @@ file(READ "${OUTPUT_FILE}" elf_magic HEX OFFSET 0 LIMIT 4)
 if(NOT elf_magic STREQUAL "7f454c46")
     message(FATAL_ERROR "generated output is not an ELF file; magic=${elf_magic}")
 endif()
+file(READ "${OUTPUT_FILE}" elf_phnum HEX OFFSET 56 LIMIT 2)
+file(READ "${OUTPUT_FILE}" elf_stack_header HEX OFFSET 120 LIMIT 8)
+if(NOT elf_phnum STREQUAL "0200" OR
+   NOT elf_stack_header STREQUAL "51e5746406000000")
+    message(FATAL_ERROR "generated ELF lacks a read/write, non-executable PT_GNU_STACK")
+endif()
 
 file(CHMOD "${OUTPUT_FILE}" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 execute_process(

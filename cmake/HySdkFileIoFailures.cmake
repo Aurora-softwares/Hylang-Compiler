@@ -87,3 +87,52 @@ execute_process(COMMAND "${CMAKE_COMMAND}" -E env HY_FAIL_WRITE=1
 if(_result EQUAL 0 OR NOT _stderr MATCHES "File write failed")
     message(FATAL_ERROR "Short write was not reported: ${_result}\n${_stderr}")
 endif()
+
+# Text reads back the compiler's source and manifest loader. Check the same
+# 16 MiB budget and files whose advertised length differs from their contents.
+set(_text_source "${TEMP_DIR}/text.hy")
+set(_text_executable "${TEMP_DIR}/text")
+file(WRITE "${_text_source}" [[using System.IO;
+public class Program {
+    public static int Main(string[] args) {
+        string text = File.ReadAllText(args[0]);
+        if (text.Length != 5) { return 7; }
+        return 0;
+    }
+}
+]])
+execute_process(COMMAND "${HY_BINARY}" build "${_text_source}" -o "${_text_executable}"
+                RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+if(NOT _result EQUAL 0)
+    message(FATAL_ERROR "SDK text fixture build failed: ${_result}\n${_stdout}\n${_stderr}")
+endif()
+file(WRITE "${_input}" "hello")
+execute_process(COMMAND "${_text_executable}" "${_input}"
+                RESULT_VARIABLE _result ERROR_VARIABLE _stderr)
+if(NOT _result EQUAL 0)
+    message(FATAL_ERROR "Normal text read failed: ${_result}\n${_stderr}")
+endif()
+string(REPEAT "x" 16777217 _oversized_text)
+file(WRITE "${_input}" "${_oversized_text}")
+unset(_oversized_text)
+execute_process(COMMAND "${_text_executable}" "${_input}"
+                RESULT_VARIABLE _result ERROR_VARIABLE _stderr)
+if(_result EQUAL 0 OR NOT _stderr MATCHES "File text read exceeds 16 MiB")
+    message(FATAL_ERROR "Oversized text was not rejected: ${_result}\n${_stderr}")
+endif()
+foreach(_extension hy hyproj)
+    set(_compiler_input "${TEMP_DIR}/oversized.${_extension}")
+    file(COPY_FILE "${_input}" "${_compiler_input}")
+    execute_process(COMMAND "${HY_BINARY}" check "${_compiler_input}"
+                    RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0 OR NOT "${_stdout}${_stderr}" MATCHES "exceeds 16 MiB")
+        message(FATAL_ERROR "Oversized ${_extension} compiler input was not rejected: ${_result}\n${_stdout}\n${_stderr}")
+    endif()
+endforeach()
+foreach(_changing_input /sys/devices/system/cpu/online /proc/self/cmdline)
+    execute_process(COMMAND "${_text_executable}" "${_changing_input}"
+                    RESULT_VARIABLE _result ERROR_VARIABLE _stderr)
+    if(_result EQUAL 0 OR NOT _stderr MATCHES "File (read failed|changed during read)")
+        message(FATAL_ERROR "Inconsistent text ${_changing_input} was not rejected: ${_result}\n${_stderr}")
+    endif()
+endforeach()

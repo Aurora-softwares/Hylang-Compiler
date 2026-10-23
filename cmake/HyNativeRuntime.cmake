@@ -3,6 +3,7 @@ foreach(required HY_BINARY PROJECT_TARGET SOURCE_DIR TEMP_DIR)
         message(FATAL_ERROR "${required} is required")
     endif()
 endforeach()
+
 file(MAKE_DIRECTORY "${TEMP_DIR}")
 set(compiler_command "${HY_BINARY}" run "${PROJECT_TARGET}" --)
 if(COMPILE_CLI)
@@ -131,5 +132,39 @@ foreach(case array_index array_store byte_index byte_store string_index string_n
     if(NOT result STREQUAL "1" OR NOT stdout STREQUAL "" OR
        NOT stderr STREQUAL "runtime error: ${reason_${case}}\n")
         message(FATAL_ERROR "${case}: expected clean runtime failure, got ${result}\nstdout:\n${stdout}\nstderr:\n${stderr}")
+    endif()
+endforeach()
+
+# The native text reader has a 16 MiB budget. Use CMake alone because the
+# bootstrap proof deliberately runs this suite with an empty PATH.
+set(oversized_input "${TEMP_DIR}/oversized-text")
+string(REPEAT "x" 16777217 oversized_text)
+file(WRITE "${oversized_input}" "${oversized_text}")
+unset(oversized_text)
+execute_process(COMMAND "${TEMP_DIR}/file" "${oversized_input}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 10)
+if(NOT result STREQUAL "1" OR NOT stdout STREQUAL "" OR
+   NOT stderr STREQUAL "runtime error: invalid allocation size\n")
+    message(FATAL_ERROR "oversized text: expected bounded failure, got ${result}\n${stdout}\n${stderr}")
+endif()
+foreach(extension hy hyproj)
+    set(compiler_input "${TEMP_DIR}/oversized.${extension}")
+    file(COPY_FILE "${oversized_input}" "${compiler_input}")
+    execute_process(COMMAND ${compiler_command} check "${compiler_input}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 10)
+    if(NOT result STREQUAL "1" OR
+       NOT "${stdout}${stderr}" MATCHES "(16 MiB|invalid allocation size)")
+        message(FATAL_ERROR "oversized ${extension} compiler input was not rejected: ${result}\n${stdout}\n${stderr}")
+    endif()
+endforeach()
+
+# sysfs advertises a 4096-byte file that returns less data; procfs advertises
+# a zero-byte file that returns more. Both must fail rather than return a partial string.
+foreach(changing_input /sys/devices/system/cpu/online /proc/self/cmdline)
+    execute_process(COMMAND "${TEMP_DIR}/file" "${changing_input}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 10)
+    if(NOT result STREQUAL "1" OR NOT stdout STREQUAL "" OR
+       NOT stderr STREQUAL "runtime error: file I/O failed\n")
+        message(FATAL_ERROR "inconsistent text input ${changing_input}: expected I/O failure, got ${result}\n${stdout}\n${stderr}")
     endif()
 endforeach()

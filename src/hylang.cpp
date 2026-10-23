@@ -46,6 +46,30 @@ using std::unique_ptr;
 using std::vector;
 namespace fs = std::filesystem;
 
+constexpr std::size_t kMaxCompilerTextBytes = 16 * 1024 * 1024;
+
+enum class TextReadResult { Ok, OpenFailed, TooLarge, IoError };
+
+TextReadResult read_bounded_text_file(const fs::path& path, string& output) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return TextReadResult::OpenFailed;
+    input.seekg(0, std::ios::end);
+    const auto size = input.tellg();
+    if (size < 0) return TextReadResult::IoError;
+    if (size > static_cast<std::streamoff>(kMaxCompilerTextBytes)) return TextReadResult::TooLarge;
+    input.seekg(0, std::ios::beg);
+    if (!input) return TextReadResult::IoError;
+    string text(static_cast<std::size_t>(size), '\0');
+    if (!input.read(text.data(), static_cast<std::streamsize>(text.size()))) return TextReadResult::IoError;
+    char extra;
+    if (input.get(extra) || input.bad()) return TextReadResult::IoError;
+    input.clear();
+    input.close();
+    if (input.fail()) return TextReadResult::IoError;
+    output = std::move(text);
+    return TextReadResult::Ok;
+}
+
 struct DiagnosticBag {
     std::vector<Diagnostic> items;
 
@@ -6360,13 +6384,11 @@ private:
                 if (arguments.empty() || !std::holds_alternative<string>(arguments[0].data)) {
                     return Value{nullptr};
                 }
-                std::ifstream input(std::get<string>(arguments[0].data));
-                if (!input) {
-                    return Value{nullptr};
-                }
-                std::ostringstream buffer;
-                buffer << input.rdbuf();
-                return Value{buffer.str()};
+                string text;
+                const auto result = read_bounded_text_file(std::get<string>(arguments[0].data), text);
+                if (result == TextReadResult::OpenFailed) return Value{nullptr};
+                if (result != TextReadResult::Ok) throw std::runtime_error("File text read failed or exceeds 16 MiB");
+                return Value{std::move(text)};
             }
             if (method.owner == program_.semantic_model.file_class && method.name == "WriteAllText") {
                 if (arguments.size() < 2 || !std::holds_alternative<string>(arguments[0].data)) {
@@ -7933,11 +7955,13 @@ private:
         out << "    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return NULL; }\n";
         out << "    long size = ftell(file);\n";
         out << "    if (size < 0) { fclose(file); return NULL; }\n";
+        out << "    if (size > 16777216) { fclose(file); hy_runtime_fail(\"File text read exceeds 16 MiB\"); }\n";
         out << "    if (fseek(file, 0, SEEK_SET) != 0) { fclose(file); return NULL; }\n";
         out << "    char* buf = (char*)malloc((size_t)size + 1);\n";
         out << "    if (!buf) { fclose(file); hy_runtime_fail(\"File read allocation failed\"); }\n";
         out << "    size_t read_count = fread(buf, 1, (size_t)size, file);\n";
         out << "    if (read_count != (size_t)size) { free(buf); fclose(file); hy_runtime_fail(\"File read failed\"); }\n";
+        out << "    if (fgetc(file) != EOF || ferror(file)) { free(buf); fclose(file); hy_runtime_fail(\"File changed during read\"); }\n";
         out << "    if (fclose(file) != 0) { free(buf); hy_runtime_fail(\"File close failed\"); }\n";
         out << "    buf[read_count] = '\\0';\n";
         out << "    HyString* result = (HyString*)hy_gc_alloc(sizeof(HyString));\n";
@@ -9715,11 +9739,16 @@ void validate_manifest_metadata(const fs::path& path, ProjectManifest& manifest,
 }
 
 std::optional<ProjectManifest> load_project_manifest(const fs::path& path, DiagnosticBag& diagnostics) {
-    std::ifstream input(path);
-    if (!input) {
-        diagnostics.add(path, 1, 1, "Could not open project manifest");
+    string manifest_text;
+    const auto read_result = read_bounded_text_file(path, manifest_text);
+    if (read_result != TextReadResult::Ok) {
+        diagnostics.add(path, 1, 1, read_result == TextReadResult::TooLarge
+            ? "Project manifest exceeds 16 MiB"
+            : read_result == TextReadResult::OpenFailed
+                ? "Could not open project manifest" : "Could not read project manifest");
         return std::nullopt;
     }
+    std::istringstream input(manifest_text);
 
     ProjectManifest manifest;
     manifest.manifest_path = path;
@@ -9818,14 +9847,7 @@ std::optional<ProjectManifest> load_project_manifest(const fs::path& path, Diagn
 }
 
 bool read_text_file(const fs::path& path, string& output) {
-    std::ifstream input(path);
-    if (!input) {
-        return false;
-    }
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-    output = buffer.str();
-    return true;
+    return read_bounded_text_file(path, output) == TextReadResult::Ok;
 }
 
 void collect_project_sources(const fs::path& path,
@@ -9897,8 +9919,10 @@ vector<CompilationUnitSyntax> parse_units(const vector<fs::path>& source_files, 
     for (const auto& source_file : source_files) {
         if (on_parsing) on_parsing(source_file);
         string source_text;
-        if (!read_text_file(source_file, source_text)) {
-            diagnostics.add(source_file, 1, 1, "Could not read source file");
+        const auto read_result = read_bounded_text_file(source_file, source_text);
+        if (read_result != TextReadResult::Ok) {
+            diagnostics.add(source_file, 1, 1, read_result == TextReadResult::TooLarge
+                ? "Source file exceeds 16 MiB" : "Could not read source file");
             continue;
         }
         Lexer lexer(source_file, source_text, diagnostics);

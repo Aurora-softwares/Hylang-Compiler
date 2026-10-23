@@ -914,12 +914,16 @@ rt_read_text:
  syscall
  test rax,rax
  js rt_io_error
+ cmp rax,0x1000000
+ ja rt_size_error
  mov r12,rax
  mov rdi,rbx
  xor esi,esi
  xor edx,edx
  mov eax,8
  syscall
+ test rax,rax
+ js rt_io_error
  lea rdi,[r12+9]
  call rt_alloc
  mov r13,rax
@@ -928,9 +932,21 @@ rt_read_text:
  mov rdx,r12
  mov rdi,rbx
  call rt_read_all
+.check_extra:
+ mov rdi,rbx
+ lea rsi,[r13+r12+8]
+ mov edx,1
+ xor eax,eax
+ syscall
+ cmp rax,-4
+ je .check_extra
+ test rax,rax
+ jne rt_io_error
  mov rdi,rbx
  mov eax,3
  syscall
+ test rax,rax
+ js rt_io_error
  mov byte ptr [r13+r12+8],0
  mov rax,r13
  pop r13

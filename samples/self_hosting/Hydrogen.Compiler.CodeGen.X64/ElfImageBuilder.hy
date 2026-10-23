@@ -34,7 +34,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 i = i + 1;
             }
 
-            int headerSize = 64 + 56;
+            int headerSize = 64 + 56 * 2;
             X64Assembler code = new X64Assembler();
 
             int[] leaSites = new int[0];
@@ -124,7 +124,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         // same length/data/NUL layout as heap strings. Patch offsets point at
         // the disp32 of RIP-relative references to their string headers.
         public byte[] BuildCodeAndData(byte[] codeBytes, string[] payloads, int[] patchOffsets, int[] payloadIndexes) {
-            int headerSize = 64 + 56;
+            int headerSize = 64 + 56 * 2;
             int codeOffset = headerSize;
             int rodataOffset = codeOffset + codeBytes.Length;
             int[] payloadOffsets = new int[payloads.Length];
@@ -200,8 +200,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 payload = payload + "\n";
             }
 
-            // ELF layout: [hdr64=64][phdr=56][padding...][code][rodata]
-            int headerSize = 64 + 56;
+            // ELF layout: [hdr64=64][two phdrs=112][code][rodata]
+            int headerSize = 64 + 56 * 2;
             X64Assembler code = new X64Assembler();
 
             // Linux syscall ABI:
@@ -273,7 +273,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             Write32(image, 48, 0);
             Write16(image, 52, 64);
             Write16(image, 54, 56);
-            Write16(image, 56, 1);
+            Write16(image, 56, 2);
             Write16(image, 58, 0);
             Write16(image, 60, 0);
             Write16(image, 62, 0);
@@ -288,6 +288,15 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             Write64(image, 96, totalSize);
             Write64(image, 104, totalSize);
             Write64(image, 112, 0x1000);
+            // PT_GNU_STACK: the process stack is readable and writable, never executable.
+            Write32(image, 120, 0x6474e551);
+            Write32(image, 124, 6);
+            Write64(image, 128, 0);
+            Write64(image, 136, 0);
+            Write64(image, 144, 0);
+            Write64(image, 152, 0);
+            Write64(image, 160, 0);
+            Write64(image, 168, 16);
         }
 
         private string[] AppendString(string[] items, int count, string item) {
