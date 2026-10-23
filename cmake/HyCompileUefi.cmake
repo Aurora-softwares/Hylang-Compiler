@@ -26,6 +26,9 @@ endif()
 find_program(FILE_BINARY file REQUIRED)
 execute_process(COMMAND "${FILE_BINARY}" "${OUTPUT_FILE}"
     RESULT_VARIABLE FILE_RESULT OUTPUT_VARIABLE FILE_OUTPUT)
-if(NOT FILE_RESULT EQUAL 0 OR NOT FILE_OUTPUT MATCHES "PE32\\+ executable for EFI \\(application\\), x86-64")
+if(NOT FILE_RESULT EQUAL 0 OR
+   NOT FILE_OUTPUT MATCHES "PE32\\+ executable" OR
+   NOT FILE_OUTPUT MATCHES "EFI \\(application\\)" OR
+   NOT FILE_OUTPUT MATCHES "x86-64")
     message(FATAL_ERROR "self-hosted UEFI output is not a PE32+ x86_64 EFI application\n${FILE_OUTPUT}")
 endif()
