@@ -42,12 +42,14 @@ public class Program {
         System.Console.WriteLine(first.Describe());
         System.Console.WriteLine(first.Next().Describe());
         string text = "ab" + "cd";
-        if (text.Length != 4 || text[2] != "c" || text != "abcd") { return 91; }
+        int textIndex = 2;
+        if (text.Length != 4 || text[textIndex] != "c" || text != "abcd") { return 91; }
         string[] names = new string[3];
-        names[1] = text;
+        int nameIndex = 1;
+        names[nameIndex] = text;
         Node[] nodes = new Node[2];
         nodes[0] = first;
-        if (names[1] != "abcd" || nodes[0].Add(1) != 11) { return 92; }
+        if (names[nameIndex] != "abcd" || nodes[0].Add(1) != 11) { return 92; }
         System.Console.WriteLine(args.Length);
         System.Console.WriteLine(args[0]);
         Node untouched = new Node(1, "default");

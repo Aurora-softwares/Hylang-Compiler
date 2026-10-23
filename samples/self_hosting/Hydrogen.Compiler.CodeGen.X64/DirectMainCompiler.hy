@@ -801,11 +801,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (kind == IrExpression.KindIndex()) {
                 if (!CompileExpression(expression.Receiver())) { return false; }
                 string receiverType = valueType;
-                code.EmitByte(0x50);
-                if (!CompileExpression(expression.Index())) { return false; }
-                if (!Numeric(valueType)) { failure = "native index must be integral"; return false; }
-                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc6);
-                code.EmitByte(0x5f);
+                if (!CompileIndexOperands(expression.Index())) { return false; }
                 if (receiverType == "string") { EmitRuntime("rt_char"); valueType = "string"; return true; }
                 if (!IsArray(receiverType)) { failure = "native indexing requires array or string"; return false; }
                 if (!freestanding && receiverType == "byte[]") {
@@ -886,10 +882,21 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (!CompileExpression(expression.Left())) { return false; }
             string leftType = valueType;
             if (TryCompileImmediateBinary(expression, leftType)) { return true; }
-            code.EmitByte(0x50); // push rax
-            if (!CompileExpression(expression.Right())) { return false; }
+            IrExpression right = expression.Right();
+            int rightSlot = -1;
+            if (right.Kind() == IrExpression.KindName()) { rightSlot = FindLocal(right.Name()); }
+            if (rightSlot >= 0) {
+                // A local read cannot call into the runtime, so keep the left
+                // value in rcx without a push/pop around the right operand.
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // mov rcx, rax
+                EmitLoadLocal(rightSlot);
+                valueType = localTypes[rightSlot];
+            } else {
+                code.EmitByte(0x50); // push rax
+                if (!CompileExpression(right)) { return false; }
+                code.EmitByte(0x59); // pop rcx (left), rax is right
+            }
             string rightType = valueType;
-            code.EmitByte(0x59); // pop rcx (left), rax is right
             if (op == IrOperator.PlusToken() && (leftType == "string" || valueType == "string")) {
                 if (leftType != "string") {
                     code.EmitByte(0x50);
@@ -1474,17 +1481,33 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.Emit32(0);
         }
 
-        // rdi is the array and rsi is the signed index. Keep the same checks
-        // as rt_index while avoiding a helper call for each primitive element.
+        // The receiver is in rax. A local index needs no expression call, so
+        // load it directly into rsi and avoid spilling the receiver to stack.
+        private bool CompileIndexOperands(IrExpression index) {
+            int indexSlot = -1;
+            if (index.Kind() == IrExpression.KindName()) { indexSlot = FindLocal(index.Name()); }
+            if (indexSlot >= 0) {
+                if (!Numeric(localTypes[indexSlot])) { failure = "native index must be integral"; return false; }
+                code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0xb5);
+                code.Emit32(-8 * (indexSlot + 1)); // mov rsi, [rbp-offset]
+                MoveRdiRax();
+                return true;
+            }
+            code.EmitByte(0x50);
+            if (!CompileExpression(index)) { return false; }
+            if (!Numeric(valueType)) { failure = "native index must be integral"; return false; }
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc6); // mov rsi, rax
+            code.EmitByte(0x5f); // pop rdi
+            return true;
+        }
+
+        // rdi is the array and rsi is the signed index. The unsigned length
+        // comparison rejects negative indexes as well as indexes past the end.
         private void EmitCheckedPackedIndex(int elementBytes) {
             code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xff); // test rdi, rdi
             code.EmitByte(0x0f); code.EmitByte(0x85); int nonNull = code.Position(); code.Emit32(0);
             EmitRuntime("rt_null_error");
             PatchRelative(nonNull, code.Position());
-            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xf6); // test rsi, rsi
-            code.EmitByte(0x0f); code.EmitByte(0x89); int nonNegative = code.Position(); code.Emit32(0);
-            EmitRuntime("rt_index_error");
-            PatchRelative(nonNegative, code.Position());
             code.EmitByte(0x48); code.EmitByte(0x3b); code.EmitByte(0x37); // cmp rsi, [rdi]
             code.EmitByte(0x0f); code.EmitByte(0x82); int inRange = code.Position(); code.Emit32(0);
             EmitRuntime("rt_index_error");
@@ -1781,10 +1804,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     packedByteTarget = !freestanding && valueType == "byte[]";
                     packedIntTarget = !freestanding && valueType == "int[]";
                     expected = ElementType(valueType);
-                    code.EmitByte(0x50);
-                    if (!CompileExpression(target.Index())) { return false; }
-                    if (!Numeric(valueType)) { failure = "native index must be integral"; return false; }
-                    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc6); code.EmitByte(0x5f);
+                    if (!CompileIndexOperands(target.Index())) { return false; }
                     if (packedByteTarget) { EmitCheckedPackedIndex(1); }
                     else if (packedIntTarget) { EmitCheckedPackedIndex(4); }
                     else { EmitRuntime("rt_index"); }

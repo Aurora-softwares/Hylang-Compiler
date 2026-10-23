@@ -611,8 +611,7 @@ rt_int_array:
 rt_index:
  test rdi,rdi
  jz rt_null_error
- test rsi,rsi
- js rt_index_error
+ # An unsigned compare rejects negative indexes too.
  cmp rsi,[rdi]
  jae rt_index_error
  lea rax,[rdi+rsi*8+8]
@@ -620,8 +619,6 @@ rt_index:
 rt_byte_index:
  test rdi,rdi
  jz rt_null_error
- test rsi,rsi
- js rt_index_error
  cmp rsi,[rdi]
  jae rt_index_error
  lea rax,[rdi+rsi+8]
@@ -629,8 +626,6 @@ rt_byte_index:
 rt_int_index:
  test rdi,rdi
  jz rt_null_error
- test rsi,rsi
- js rt_index_error
  cmp rsi,[rdi]
  jae rt_index_error
  lea rax,[rdi+rsi*4+8]
@@ -705,8 +700,6 @@ rt_equal:
 rt_char:
  test rdi,rdi
  jz rt_null_error
- test rsi,rsi
- js rt_index_error
  cmp rsi,[rdi]
  jae rt_index_error
  movzx eax,byte ptr [rdi+rsi+8]

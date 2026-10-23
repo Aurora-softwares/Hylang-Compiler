@@ -84,17 +84,21 @@ cases; they are not an overall language speed rating.
 
 ## Next runtime work, ranked by measured impact
 
-1. 🔴 **Improve general direct x64 code generation.** The integer loop is
-   still 2.03× C and the array pass 2.46×. Profile emitted instructions and
-   reduce remaining stack spills, redundant loads, and per-element bounds
-   checks where loop proofs permit hoisting. Preserve signed-width, overflow,
-   and negative-index behaviour. Keep stage 2 and 3 compiler outputs identical.
-2. 🔴 **Specialise hot string indexing.** One-byte literal equality is done,
-   but the log scan is still 3.67× C and indexing still calls a runtime
-   helper. A direct inline checked load was slower in a paired 30-run check
-   (7.96 versus 6.89 ms) and was reverted. Profile surrounding spills and
-   branches before trying another path; retain empty, multi-byte, null, and
-   out-of-range tests.
+1. 🟡 **Improve general direct x64 code generation.** A local right operand
+   and a local array index now avoid needless stack traffic. An unsigned
+   length comparison retains negative and upper-bound failures with fewer
+   instructions. On 23 October, the 10-million-element array median fell
+   from 139.45 to 129.94 ms (6.8%) and the integer-loop median from 84.72
+   to 83.37 ms (1.6%) on this host. Continue reducing general spills and
+   loads; hoist checks only with loop proofs. Preserve signed-width and
+   overflow behaviour, and keep stage 2 and 3 outputs identical.
+2. 🟡 **Specialise hot string indexing.** Local indexes avoid a receiver
+   spill, and `rt_char` now uses one unsigned length check for negative and
+   upper-bound indexes. The 1 MB log-scan median fell from 7.43 to 7.05 ms
+   (5.0%) on this host, but indexing still calls a runtime helper. A prior
+   direct inline checked load was slower in a paired 30-run check (7.96
+   versus 6.89 ms) and was reverted. Continue profiling surrounding branches
+   and register pressure; retain empty, multi-byte, null, and range tests.
 3. 🔴 **Remove repeated string copying.** Add a builder or buffer-backed
    append path for concatenation in text-heavy programs and compiler
    diagnostics. Measure copied bytes and live heap size before changing the
@@ -122,3 +126,10 @@ cases; they are not an overall language speed rating.
 For each runtime item, check exact output and exit status, save raw timings
 and input hashes, run the relevant native regressions, and verify bootstrap
 equivalence. A speedup in SDK C output alone does not close an item here.
+
+The [23 October raw samples](benchmarks/runtime/results-2026-10-23-index-paths.json)
+contain 30 timed runs and three warmups for each before/after comparison,
+including source and input hashes. All routes produced the exact Python
+reference output. Hardware performance counters were unavailable on this
+host (`perf_event_paranoid=4`), so these are whole-process measurements rather
+than a sampled CPU profile; both items remain in progress.
