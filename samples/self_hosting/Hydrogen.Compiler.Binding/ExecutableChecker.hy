@@ -363,9 +363,19 @@ namespace Hydrogen.Compiler.Binding {
             if (k == IrExpression.KindUnary()) {
                 string actual = Expression(e.UnaryOperand());
                 if (e.UnaryOperatorKind() == IrOperator.BangToken()) { Require(actual, "bool", "logical operand must be bool"); return "bool"; }
+                if (e.UnaryOperatorKind() == IrOperator.TildeToken()) {
+                    if (!module.Numeric(actual) && actual != "<error>") { Error("bitwise complement requires an integral operand"); }
+                    return actual;
+                }
                 if (!Numeric(actual) && actual != "<error>") { Error("unary arithmetic requires numeric operand"); } return actual;
             }
             string left = Expression(e.Left()); string right = Expression(e.Right()); int op = e.OperatorKind();
+            if (op == IrOperator.AmpersandToken() || op == IrOperator.PipeToken() || op == IrOperator.CaretToken()) {
+                if ((!module.Numeric(left) || left != right) && left != "<error>" && right != "<error>") {
+                    Error("bitwise operators require matching integral operands");
+                }
+                return left;
+            }
             if (op == IrOperator.AmpersandAmpersandToken() || op == IrOperator.PipePipeToken()) { Require(left, "bool", "logical operand must be bool"); Require(right, "bool", "logical operand must be bool"); return "bool"; }
             if (op == IrOperator.PlusToken() && (left == "string" || right == "string")) {
                 if (!Printable(left) || !Printable(right)) { Error("string concatenation requires printable values"); } return "string";

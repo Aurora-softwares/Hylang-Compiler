@@ -861,6 +861,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0xc0); // movzx rax, al
                     return true;
                 }
+                if (expression.UnaryOperatorKind() == IrOperator.TildeToken()) {
+                    if (!Numeric(valueType)) { failure = "native bitwise complement requires an integral operand"; return false; }
+                    code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xd0); // not rax
+                    NormalizeRax(valueType);
+                    return true;
+                }
                 failure = "unsupported unary operator";
                 return false;
             }
@@ -946,6 +952,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (!Assignable(leftType, rightType) && !Assignable(rightType, leftType)) {
                 failure = "native binary operand type mismatch"; return false;
             }
+            if ((op == IrOperator.AmpersandToken() || op == IrOperator.PipeToken() || op == IrOperator.CaretToken()) &&
+                (leftType != rightType || !Numeric(leftType))) {
+                failure = "native bitwise operators require matching integral operands"; return false;
+            }
             if (op != IrOperator.EqualsEqualsToken() && op != IrOperator.BangEqualsToken() && !Numeric(rightType)) {
                 failure = "native arithmetic and ordering require integral operands"; return false;
             }
@@ -965,6 +975,15 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (op == IrOperator.StarToken()) {
                 code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xaf); code.EmitByte(0xc8); // imul rcx, rax
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
+                NormalizeRax(resultType); valueType = resultType;
+                return true;
+            }
+            if (op == IrOperator.AmpersandToken() || op == IrOperator.PipeToken() || op == IrOperator.CaretToken()) {
+                code.EmitByte(0x48);
+                if (op == IrOperator.AmpersandToken()) { code.EmitByte(0x21); }
+                if (op == IrOperator.PipeToken()) { code.EmitByte(0x09); }
+                if (op == IrOperator.CaretToken()) { code.EmitByte(0x31); }
+                code.EmitByte(0xc8); // operation rax, rcx
                 NormalizeRax(resultType); valueType = resultType;
                 return true;
             }

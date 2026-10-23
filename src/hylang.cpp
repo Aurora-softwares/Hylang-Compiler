@@ -160,6 +160,9 @@ enum class TokenKind {
     Percent,
     Bang,
     Ampersand,
+    Pipe,
+    Caret,
+    Tilde,
     Equals,
     EqualsEquals,
     BangEquals,
@@ -347,8 +350,14 @@ class Lexer {
 						if (match('|')) {
 							tokens.push_back(Token{TokenKind::PipePipe, "||", line, column});
 						} else {
-							diagnostics_.add(file_, line, column, "Unexpected '|'. Did you mean '||'?");
+							tokens.push_back(Token{TokenKind::Pipe, "|", line, column});
 						}
+						break;
+					case '^':
+						tokens.push_back(Token{TokenKind::Caret, "^", line, column});
+						break;
+					case '~':
+						tokens.push_back(Token{TokenKind::Tilde, "~", line, column});
 						break;
 					default:
 						diagnostics_.add(file_, line, column, "Unexpected character '" + string(1, current) + "'");
@@ -1550,8 +1559,53 @@ private:
     }
 
     unique_ptr<ExpressionSyntax> parse_logical_and_expression() {
-        auto expression = parse_equality_expression();
+        auto expression = parse_bitwise_or_expression();
         while (match(TokenKind::AmpAmp)) {
+            const Token token = previous();
+            auto binary = std::make_unique<BinaryExpressionSyntax>();
+            binary->line = token.line;
+            binary->column = token.column;
+            binary->left = std::move(expression);
+            binary->op = token.kind;
+            binary->right = parse_bitwise_or_expression();
+            expression = std::move(binary);
+        }
+        return expression;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_bitwise_or_expression() {
+        auto expression = parse_bitwise_xor_expression();
+        while (match(TokenKind::Pipe)) {
+            const Token token = previous();
+            auto binary = std::make_unique<BinaryExpressionSyntax>();
+            binary->line = token.line;
+            binary->column = token.column;
+            binary->left = std::move(expression);
+            binary->op = token.kind;
+            binary->right = parse_bitwise_xor_expression();
+            expression = std::move(binary);
+        }
+        return expression;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_bitwise_xor_expression() {
+        auto expression = parse_bitwise_and_expression();
+        while (match(TokenKind::Caret)) {
+            const Token token = previous();
+            auto binary = std::make_unique<BinaryExpressionSyntax>();
+            binary->line = token.line;
+            binary->column = token.column;
+            binary->left = std::move(expression);
+            binary->op = token.kind;
+            binary->right = parse_bitwise_and_expression();
+            expression = std::move(binary);
+        }
+        return expression;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_bitwise_and_expression() {
+        auto expression = parse_equality_expression();
+        while (match(TokenKind::Ampersand)) {
             const Token token = previous();
             auto binary = std::make_unique<BinaryExpressionSyntax>();
             binary->line = token.line;
@@ -1636,7 +1690,7 @@ private:
             cast->expression = parse_unary_expression();
             return cast;
         }
-        if (match(TokenKind::Bang) || match(TokenKind::Minus) || match(TokenKind::Plus) ||
+        if (match(TokenKind::Bang) || match(TokenKind::Tilde) || match(TokenKind::Minus) || match(TokenKind::Plus) ||
             match(TokenKind::Ampersand) || match(TokenKind::Star)) {
             const Token token = previous();
             auto unary = std::make_unique<UnaryExpressionSyntax>();
@@ -1901,6 +1955,7 @@ private:
                kind == TokenKind::Stackalloc ||
                kind == TokenKind::OpenParen ||
                kind == TokenKind::Bang ||
+               kind == TokenKind::Tilde ||
                kind == TokenKind::Ampersand ||
                kind == TokenKind::Minus ||
                kind == TokenKind::Plus ||
@@ -2499,6 +2554,18 @@ int integral_type_size_bytes(const TypeSymbol* type) {
             return 8;
     }
     return 8;
+}
+
+int64_t normalize_integral_bits(uint64_t bits, const TypeSymbol* type) {
+    const int width = integral_type_size_bytes(type) * 8;
+    if (width > 0 && width < 64) {
+        const uint64_t mask = (uint64_t{1} << width) - 1;
+        bits &= mask;
+        if (is_signed_integral_type(type) && (bits & (uint64_t{1} << (width - 1))) != 0) {
+            bits |= ~mask;
+        }
+    }
+    return std::bit_cast<int64_t>(bits);
 }
 
 bool integral_literal_fits_type(int64_t value, const TypeSymbol* destination) {
@@ -4780,7 +4847,7 @@ private:
                     } else {
                         if (!is_integral_type(bound->operand->type)) {
                             diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
-                                             "Unary '+' and '-' require int operands");
+                                             "Unary arithmetic and bitwise operators require integral operands");
                         }
                         bound->type = bound->operand->type;
                     }
@@ -4791,10 +4858,11 @@ private:
                                          "Operator '!' requires a bool operand");
                     }
                     bound->type = &program_.semantic_model.bool_type;
-                } else if (unary->op == TokenKind::Minus || unary->op == TokenKind::Plus) {
+                } else if (unary->op == TokenKind::Minus || unary->op == TokenKind::Plus ||
+                           unary->op == TokenKind::Tilde) {
                     if (!is_integral_type(bound->operand->type)) {
                         diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
-                                         "Unary '+' and '-' require int operands");
+                                         "Unary arithmetic and bitwise operators require integral operands");
                     }
                     bound->type = bound->operand->type;
                 }
@@ -4856,6 +4924,16 @@ private:
                             !is_integral_type(bound->right->type)) {
                             diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                              "Arithmetic operators require int operands");
+                        }
+                        bound->type = bound->left->type;
+                        break;
+                    case TokenKind::Ampersand:
+                    case TokenKind::Pipe:
+                    case TokenKind::Caret:
+                        if (!is_integral_type(bound->left->type) ||
+                            !are_types_equal(bound->left->type, bound->right->type)) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Bitwise operators require matching integral operands");
                         }
                         bound->type = bound->left->type;
                         break;
@@ -7001,6 +7079,9 @@ private:
                         return Value{-std::get<int64_t>(operand.data)};
                     case TokenKind::Plus:
                         return Value{std::get<int64_t>(operand.data)};
+                    case TokenKind::Tilde:
+                        return Value{normalize_integral_bits(~static_cast<uint64_t>(std::get<int64_t>(operand.data)),
+                                                            expression.type)};
                     default:
                         return Value{nullptr};
                 }
@@ -7082,6 +7163,18 @@ private:
                             return Value{std::bit_cast<int64_t>(numerator % denominator)};
                         }
                         return Value{std::get<int64_t>(left.data) % std::get<int64_t>(right.data)};
+                    case TokenKind::Ampersand:
+                        return Value{normalize_integral_bits(static_cast<uint64_t>(std::get<int64_t>(left.data)) &
+                                                             static_cast<uint64_t>(std::get<int64_t>(right.data)),
+                                                             expression.type)};
+                    case TokenKind::Pipe:
+                        return Value{normalize_integral_bits(static_cast<uint64_t>(std::get<int64_t>(left.data)) |
+                                                             static_cast<uint64_t>(std::get<int64_t>(right.data)),
+                                                             expression.type)};
+                    case TokenKind::Caret:
+                        return Value{normalize_integral_bits(static_cast<uint64_t>(std::get<int64_t>(left.data)) ^
+                                                             static_cast<uint64_t>(std::get<int64_t>(right.data)),
+                                                             expression.type)};
                     case TokenKind::AmpAmp:
                         return Value{std::get<bool>(left.data) && std::get<bool>(right.data)};
                     case TokenKind::PipePipe:
@@ -9180,6 +9273,16 @@ private:
                 if (unary.op == TokenKind::Star) {
                     return emit_pointer_load(emit_expression(*unary.operand), expression.type, "0");
                 }
+                if (unary.op == TokenKind::Tilde) {
+                    const string result_type = c_type_name(expression.type);
+                    const string unsigned_type = result_type == "int32_t" ? "uint32_t" : "uint64_t";
+                    if (result_type == "int32_t" || result_type == "int64_t") {
+                        const string helper = result_type == "int32_t" ? "hy_wrap_i32" : "hy_wrap_i64";
+                        return helper + "(~(" + unsigned_type + ")(" + emit_expression(*unary.operand) + "))";
+                    }
+                    return "((" + result_type + ")(~(" + result_type + ")(" +
+                           emit_expression(*unary.operand) + ")))";
+                }
                 return "(" + token_text(unary.op) + emit_expression(*unary.operand) + ")";
             }
             case BoundExpressionKind::Binary: {
@@ -9225,7 +9328,8 @@ private:
                     return binary.op == TokenKind::EqualsEquals ? comparison : "(!" + comparison + ")";
                 }
                 if (binary.op == TokenKind::Plus || binary.op == TokenKind::Minus ||
-                    binary.op == TokenKind::Star) {
+                    binary.op == TokenKind::Star || binary.op == TokenKind::Ampersand ||
+                    binary.op == TokenKind::Pipe || binary.op == TokenKind::Caret) {
                     const string result_type = c_type_name(binary.type);
                     if (result_type == "int32_t" || result_type == "int64_t") {
                         const string unsigned_type = result_type == "int32_t" ? "uint32_t" : "uint64_t";
@@ -9510,6 +9614,14 @@ private:
                 return "%";
             case TokenKind::Bang:
                 return "!";
+            case TokenKind::Ampersand:
+                return "&";
+            case TokenKind::Pipe:
+                return "|";
+            case TokenKind::Caret:
+                return "^";
+            case TokenKind::Tilde:
+                return "~";
             case TokenKind::EqualsEquals:
                 return "==";
             case TokenKind::BangEquals:

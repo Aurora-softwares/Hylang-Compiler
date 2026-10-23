@@ -654,20 +654,24 @@ namespace Hydrogen.Compiler.Syntax {
 
         private int UnaryPrecedence(SyntaxKind kind) {
             if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken || kind == SyntaxKind.BangToken ||
+                kind == SyntaxKind.TildeToken ||
                 kind == SyntaxKind.AmpersandToken || kind == SyntaxKind.StarToken) {
-                return 7;
+                return 11;
             }
             return 0;
         }
 
         private int BinaryPrecedence(SyntaxKind kind) {
-            if (kind == SyntaxKind.StarToken || kind == SyntaxKind.SlashToken || kind == SyntaxKind.PercentToken) { return 6; }
-            if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken) { return 5; }
+            if (kind == SyntaxKind.StarToken || kind == SyntaxKind.SlashToken || kind == SyntaxKind.PercentToken) { return 10; }
+            if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken) { return 9; }
             if (kind == SyntaxKind.LessToken || kind == SyntaxKind.LessEqualsToken ||
-                kind == SyntaxKind.GreaterToken || kind == SyntaxKind.GreaterEqualsToken) { return 4; }
-            if (kind == SyntaxKind.EqualsEqualsToken || kind == SyntaxKind.BangEqualsToken) { return 3; }
-            if (kind == SyntaxKind.AmpersandAmpersandToken) { return 2; }
-            if (kind == SyntaxKind.PipePipeToken) { return 1; }
+                kind == SyntaxKind.GreaterToken || kind == SyntaxKind.GreaterEqualsToken) { return 8; }
+            if (kind == SyntaxKind.EqualsEqualsToken || kind == SyntaxKind.BangEqualsToken) { return 7; }
+            if (kind == SyntaxKind.AmpersandToken) { return 6; }
+            if (kind == SyntaxKind.CaretToken) { return 5; }
+            if (kind == SyntaxKind.PipeToken) { return 4; }
+            if (kind == SyntaxKind.AmpersandAmpersandToken) { return 3; }
+            if (kind == SyntaxKind.PipePipeToken) { return 2; }
             return 0;
         }
 

@@ -77,5 +77,8 @@ namespace Hydrogen.Compiler.IR {
         public static int UnsafeKeyword() { return 74; }
         public static int SizeOfKeyword() { return 75; }
         public static int StackAllocKeyword() { return 76; }
+        public static int PipeToken() { return 77; }
+        public static int CaretToken() { return 78; }
+        public static int TildeToken() { return 79; }
     }
 }

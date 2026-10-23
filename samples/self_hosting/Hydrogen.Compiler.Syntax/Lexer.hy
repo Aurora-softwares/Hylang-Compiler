@@ -99,7 +99,10 @@ namespace Hydrogen.Compiler.Syntax {
             }
             if (current == "|") {
                 if (Match("|")) { return Token(SyntaxKind.PipePipeToken, "||", startLine, startColumn, start); }
+                return Token(SyntaxKind.PipeToken, current, startLine, startColumn, start);
             }
+            if (current == "^") { return Token(SyntaxKind.CaretToken, current, startLine, startColumn, start); }
+            if (current == "~") { return Token(SyntaxKind.TildeToken, current, startLine, startColumn, start); }
 
             diagnostics.Report(startLine, startColumn, "Unexpected character '" + current + "'");
             return Token(SyntaxKind.BadToken, current, startLine, startColumn, start);

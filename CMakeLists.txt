@@ -34,6 +34,14 @@ target_link_libraries(hy PRIVATE hylang)
 
 enable_testing()
 
+add_test(NAME hy_sdk_bitwise_operators
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/bitwise_operators.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/bitwise_sdk${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkBitwise.cmake)
+set_tests_properties(hy_sdk_bitwise_operators PROPERTIES TIMEOUT 120)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
@@ -1378,6 +1386,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
     )
     set_tests_properties(hy_stage1_project_closure PROPERTIES
         FIXTURES_SETUP hydrogen_stage1 TIMEOUT 240 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_bitwise_operators
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/bitwise_operators.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/bitwise_operators
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_bitwise_operators PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
     if(Python3_Interpreter_FOUND)
         add_test(NAME hy_stage1_progress_width
             COMMAND ${Python3_EXECUTABLE}
@@ -1453,6 +1473,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
                 RUN_SERIAL TRUE
                 LABELS "windows;crosscompile"
         )
+        add_test(NAME hy_stage1_windows_bitwise_operators
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/bitwise_operators.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/bitwise_operators.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_bitwise_operators PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
     else()
         message(STATUS
             "Wine not found: Windows execution/bootstrap tests disabled; PE validation remains enabled"

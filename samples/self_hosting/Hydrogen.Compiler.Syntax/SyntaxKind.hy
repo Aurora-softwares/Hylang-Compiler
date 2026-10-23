@@ -76,6 +76,9 @@ namespace Hydrogen.Compiler.Syntax {
         BaseKeyword,
         UnsafeKeyword,
         SizeOfKeyword,
-        StackAllocKeyword
+        StackAllocKeyword,
+        PipeToken,
+        CaretToken,
+        TildeToken
     }
 }
