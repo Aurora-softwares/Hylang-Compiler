@@ -137,9 +137,14 @@ The native tool has `new` scaffolding, but not the SDK's `run`, `test`, `fmt`, `
 | Class objects | Reference identity, inheritance, virtual dispatch, instance fields, initializers, constructors |
 | Calls | Static and instance methods, overloads, interface calls, parameters, returns, recursion |
 | Types | Signed and unsigned integer widths (`int` is 32-bit), `bool`, enums, strings, structs, classes, arrays; `void` returns |
-| Expressions | Arithmetic, comparisons, assignment, fields, indexing, numeric casts, short-circuit booleans |
+| Expressions | Arithmetic, bitwise `&`, `|`, `^`, `~`, `<<`, `>>`, comparisons, assignment, fields, indexing, numeric casts, short-circuit booleans |
 | Statements | Blocks, `var`, `if`/`else`, `while`, `for`, `break`, `continue`, returns |
 | Entry | Static `Main`, `int`/`void`, zero parameters or `string[]` user arguments |
+
+Bitwise operators use fixed-width integer results. Shift counts are masked by
+the left operand's width minus one; right shift is arithmetic for signed types
+and logical for unsigned types. Shift syntax is recognized in expressions
+without changing the two `>` tokens used by nested generic type names.
 
 Fatal freestanding CPU exceptions use an allocation-free IDT panic path. It
 captures the CPU exception frame, `CR2`, and all general registers, writes a

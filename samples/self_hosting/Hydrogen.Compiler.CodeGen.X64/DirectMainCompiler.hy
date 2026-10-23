@@ -949,12 +949,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (op == IrOperator.BangEqualsToken()) { code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xf0); code.EmitByte(1); }
                 valueType = "bool"; return true;
             }
-            if (!Assignable(leftType, rightType) && !Assignable(rightType, leftType)) {
+            if (op != IrOperator.ShiftLeftToken() && op != IrOperator.ShiftRightToken() &&
+                !Assignable(leftType, rightType) && !Assignable(rightType, leftType)) {
                 failure = "native binary operand type mismatch"; return false;
             }
             if ((op == IrOperator.AmpersandToken() || op == IrOperator.PipeToken() || op == IrOperator.CaretToken()) &&
                 (leftType != rightType || !Numeric(leftType))) {
                 failure = "native bitwise operators require matching integral operands"; return false;
+            }
+            if ((op == IrOperator.ShiftLeftToken() || op == IrOperator.ShiftRightToken()) &&
+                (!PrimitiveNumeric(leftType) || !PrimitiveNumeric(rightType))) {
+                failure = "native shift operators require integral operands"; return false;
             }
             if (op != IrOperator.EqualsEqualsToken() && op != IrOperator.BangEqualsToken() && !Numeric(rightType)) {
                 failure = "native arithmetic and ordering require integral operands"; return false;
@@ -984,6 +989,16 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (op == IrOperator.PipeToken()) { code.EmitByte(0x09); }
                 if (op == IrOperator.CaretToken()) { code.EmitByte(0x31); }
                 code.EmitByte(0xc8); // operation rax, rcx
+                NormalizeRax(resultType); valueType = resultType;
+                return true;
+            }
+            if (op == IrOperator.ShiftLeftToken() || op == IrOperator.ShiftRightToken()) {
+                code.EmitByte(0x48); code.EmitByte(0x91); // xchg rax, rcx: value in rax, count in rcx
+                code.EmitByte(0x83); code.EmitByte(0xe1); code.EmitByte(NumericBits(resultType) - 1); // mask count
+                code.EmitByte(0x48); code.EmitByte(0xd3);
+                if (op == IrOperator.ShiftLeftToken()) { code.EmitByte(0xe0); } // shl rax, cl
+                else if (Unsigned(leftType)) { code.EmitByte(0xe8); } // shr rax, cl
+                else { code.EmitByte(0xf8); } // sar rax, cl
                 NormalizeRax(resultType); valueType = resultType;
                 return true;
             }

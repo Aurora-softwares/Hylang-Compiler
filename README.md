@@ -357,6 +357,11 @@ SDK projects additionally support workspaces, test projects, local package depen
 
 The direct native route supports classes, inheritance, interfaces, virtual dispatch, structs, overloads, static and instance fields/methods, constructors, recursion, enums, signed and unsigned integer widths, `bool`, strings, arrays, `var`, `if`/`else`, `while`, `for`, `break`, `continue`, and returns. `int` is signed 32-bit. Strings have byte-based length/indexing; indexing returns a one-byte string. Native literals accept ASCII and common escaped control characters; file contents and arguments preserve raw bytes.
 
+The SDK and native compiler support fixed-width integer `&`, `|`, `^`, `~`,
+`<<`, and `>>`. Shift counts are masked by the left operand's width minus one;
+signed right shifts preserve the sign bit, while unsigned right shifts fill
+with zero.
+
 Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings or Windows `VirtualAlloc`/`VirtualFree`. Windows file paths are converted from Hydrogen UTF-8 strings to Win32 UTF-16. File reads require seekable files.
 
 The SDK additionally supports generics, string exceptions, `List<T>`, checked unsafe/manual-memory operations, `Buffer`, and `BinaryPrimitives`. These additional facilities are not implemented by the native compiler. The SDK interpreter evaluates both sides of `&&` and `||`; generated native and C-backed programs short-circuit. Write explicit conditional guards when sharing code with the interpreter.

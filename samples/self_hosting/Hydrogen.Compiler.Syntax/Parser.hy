@@ -402,16 +402,33 @@ namespace Hydrogen.Compiler.Syntax {
             }
 
             while (true) {
+                bool shiftLeft = ShiftLeftPair();
+                bool shiftRight = ShiftRightPair();
                 int precedence = BinaryPrecedence(Current().Kind());
+                if (shiftLeft || shiftRight) { precedence = 9; }
                 if (precedence == 0 || precedence <= parentPrecedence) {
                     return;
                 }
-                Emit("BinaryOperator " + SyntaxFacts.KindName(Current().Kind()));
+                string name = SyntaxFacts.KindName(Current().Kind());
+                if (shiftLeft) { name = "ShiftLeft"; }
+                if (shiftRight) { name = "ShiftRight"; }
+                Emit("BinaryOperator " + name);
                 Push();
                 EmitToken(Advance());
+                if (shiftLeft || shiftRight) { EmitToken(Advance()); }
                 ParseBinaryExpression(precedence);
                 Pop();
             }
+        }
+
+        private bool ShiftLeftPair() {
+            return Current().Kind() == SyntaxKind.LessToken && Peek(1).Kind() == SyntaxKind.LessToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
+        private bool ShiftRightPair() {
+            return Current().Kind() == SyntaxKind.GreaterToken && Peek(1).Kind() == SyntaxKind.GreaterToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
         }
 
         private void ParsePostfixExpression() {

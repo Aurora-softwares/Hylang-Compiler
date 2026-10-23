@@ -80,5 +80,7 @@ namespace Hydrogen.Compiler.IR {
         public static int PipeToken() { return 77; }
         public static int CaretToken() { return 78; }
         public static int TildeToken() { return 79; }
+        public static int ShiftLeftToken() { return 80; }
+        public static int ShiftRightToken() { return 81; }
     }
 }

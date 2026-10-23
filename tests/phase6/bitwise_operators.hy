@@ -12,6 +12,22 @@ public class Program {
         byte other = (byte)3;
         if ((small & other) != (byte)1) { return 17; }
         if ((~small) != (byte)250) { return 18; }
+        if ((1 << 3) != 8) { return 19; }
+        if ((16 >> 2) != 4) { return 20; }
+        if ((-8 >> 1) != -4) { return 21; }
+        uint unsignedValue = (uint)(1 << 31);
+        if ((unsignedValue >> 1) != (uint)0x40000000) { return 22; }
+        if ((1 << 33) != 2) { return 23; }
+        if (((1 + 1) << 2) != 8) { return 24; }
+        if ((small << 1) != (byte)10) { return 25; }
+        if (((byte)1 << 8) != (byte)1) { return 26; }
+        long wide = (long)1 << 40;
+        if ((wide >> 40) != (long)1) { return 27; }
+        ulong highBit = (ulong)1 << 63;
+        if ((highBit >> 63) != (ulong)1) { return 28; }
+        sbyte negative = (sbyte)-8;
+        if ((negative >> 1) != (sbyte)-4) { return 29; }
+        if ((~negative) != (sbyte)7) { return 30; }
         return 42;
     }
 }

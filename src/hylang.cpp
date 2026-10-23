@@ -163,6 +163,8 @@ enum class TokenKind {
     Pipe,
     Caret,
     Tilde,
+    ShiftLeft,
+    ShiftRight,
     Equals,
     EqualsEquals,
     BangEquals,
@@ -1634,7 +1636,7 @@ private:
     }
 
     unique_ptr<ExpressionSyntax> parse_relational_expression() {
-        auto expression = parse_additive_expression();
+        auto expression = parse_shift_expression();
         while (match(TokenKind::Less) || match(TokenKind::LessEquals) ||
                match(TokenKind::Greater) || match(TokenKind::GreaterEquals)) {
             const Token token = previous();
@@ -1643,6 +1645,25 @@ private:
             binary->column = token.column;
             binary->left = std::move(expression);
             binary->op = token.kind;
+            binary->right = parse_shift_expression();
+            expression = std::move(binary);
+        }
+        return expression;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_shift_expression() {
+        auto expression = parse_additive_expression();
+        while ((check(TokenKind::Less) && peek(1).kind == TokenKind::Less &&
+                peek(1).line == current().line && peek(1).column == current().column + 1) ||
+               (check(TokenKind::Greater) && peek(1).kind == TokenKind::Greater &&
+                peek(1).line == current().line && peek(1).column == current().column + 1)) {
+            const Token first = advance();
+            advance();
+            auto binary = std::make_unique<BinaryExpressionSyntax>();
+            binary->line = first.line;
+            binary->column = first.column;
+            binary->left = std::move(expression);
+            binary->op = first.kind == TokenKind::Less ? TokenKind::ShiftLeft : TokenKind::ShiftRight;
             binary->right = parse_additive_expression();
             expression = std::move(binary);
         }
@@ -2566,6 +2587,19 @@ int64_t normalize_integral_bits(uint64_t bits, const TypeSymbol* type) {
         }
     }
     return std::bit_cast<int64_t>(bits);
+}
+
+int64_t shift_integral_bits(int64_t value, int64_t count, const TypeSymbol* type, bool right) {
+    const int width = integral_type_size_bytes(type) * 8;
+    const uint64_t mask = width == 64 ? ~uint64_t{0} : (uint64_t{1} << width) - 1;
+    const uint64_t bits = static_cast<uint64_t>(value) & mask;
+    const unsigned amount = static_cast<unsigned>(count) & static_cast<unsigned>(width - 1);
+    uint64_t shifted = right ? bits >> amount : bits << amount;
+    if (right && amount != 0 && is_signed_integral_type(type) &&
+        (bits & (uint64_t{1} << (width - 1))) != 0) {
+        shifted |= ~uint64_t{0} << (width - amount);
+    }
+    return normalize_integral_bits(shifted, type);
 }
 
 bool integral_literal_fits_type(int64_t value, const TypeSymbol* destination) {
@@ -4937,6 +4971,14 @@ private:
                         }
                         bound->type = bound->left->type;
                         break;
+                    case TokenKind::ShiftLeft:
+                    case TokenKind::ShiftRight:
+                        if (!is_integral_type(bound->left->type) || !is_integral_type(bound->right->type)) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Shift operators require integral operands");
+                        }
+                        bound->type = bound->left->type;
+                        break;
                     case TokenKind::AmpAmp:
                     case TokenKind::PipePipe:
                         if (bound->left->type != &program_.semantic_model.bool_type ||
@@ -7175,6 +7217,12 @@ private:
                         return Value{normalize_integral_bits(static_cast<uint64_t>(std::get<int64_t>(left.data)) ^
                                                              static_cast<uint64_t>(std::get<int64_t>(right.data)),
                                                              expression.type)};
+                    case TokenKind::ShiftLeft:
+                        return Value{shift_integral_bits(std::get<int64_t>(left.data),
+                                                         std::get<int64_t>(right.data), expression.type, false)};
+                    case TokenKind::ShiftRight:
+                        return Value{shift_integral_bits(std::get<int64_t>(left.data),
+                                                         std::get<int64_t>(right.data), expression.type, true)};
                     case TokenKind::AmpAmp:
                         return Value{std::get<bool>(left.data) && std::get<bool>(right.data)};
                     case TokenKind::PipePipe:
@@ -7498,6 +7546,16 @@ private:
         out << "#ifdef _WIN32\n#include <io.h>\n#include <windows.h>\n#else\n#include <sys/ioctl.h>\n#include <unistd.h>\n#endif\n\n";
         out << "static int32_t hy_wrap_i32(uint32_t bits) { int32_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n";
         out << "static int64_t hy_wrap_i64(uint64_t bits) { int64_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n\n";
+        out << "static int8_t hy_wrap_i8(uint8_t bits) { int8_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n";
+        out << "static int16_t hy_wrap_i16(uint16_t bits) { int16_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n";
+        out << "static uint64_t hy_shift_bits(uint64_t bits, int64_t count, int width, int right, int sign) {\n";
+        out << "    uint64_t mask = width == 64 ? UINT64_MAX : (UINT64_C(1) << width) - 1;\n";
+        out << "    bits &= mask; unsigned amount = (unsigned)count & (unsigned)(width - 1);\n";
+        out << "    uint64_t result = right ? bits >> amount : bits << amount;\n";
+        out << "    if (right && sign && amount && (bits & (UINT64_C(1) << (width - 1))))\n";
+        out << "        result |= UINT64_MAX << (width - amount);\n";
+        out << "    return result & mask;\n";
+        out << "}\n\n";
 
         // --- Type ID constants ---
         out << "#define HY_TYPE_ID_STRING (-1)\n";
@@ -9280,6 +9338,12 @@ private:
                         const string helper = result_type == "int32_t" ? "hy_wrap_i32" : "hy_wrap_i64";
                         return helper + "(~(" + unsigned_type + ")(" + emit_expression(*unary.operand) + "))";
                     }
+                    if (result_type == "int8_t") {
+                        return "hy_wrap_i8((uint8_t)(~(uint8_t)(" + emit_expression(*unary.operand) + ")))";
+                    }
+                    if (result_type == "int16_t") {
+                        return "hy_wrap_i16((uint16_t)(~(uint16_t)(" + emit_expression(*unary.operand) + ")))";
+                    }
                     return "((" + result_type + ")(~(" + result_type + ")(" +
                            emit_expression(*unary.operand) + ")))";
                 }
@@ -9338,6 +9402,19 @@ private:
                                token_text(binary.op) + " (" + unsigned_type + ")(" +
                                emit_expression(*binary.right) + "))";
                     }
+                }
+                if (binary.op == TokenKind::ShiftLeft || binary.op == TokenKind::ShiftRight) {
+                    const string result_type = c_type_name(expression.type);
+                    const string shifted = "hy_shift_bits((uint64_t)(" + emit_expression(*binary.left) +
+                                           "), (int64_t)(" + emit_expression(*binary.right) + "), " +
+                                           std::to_string(integral_type_size_bytes(expression.type) * 8) + ", " +
+                                           (binary.op == TokenKind::ShiftRight ? "1" : "0") + ", " +
+                                           (is_signed_integral_type(expression.type) ? "1" : "0") + ")";
+                    if (result_type == "int8_t") return "hy_wrap_i8((uint8_t)(" + shifted + "))";
+                    if (result_type == "int16_t") return "hy_wrap_i16((uint16_t)(" + shifted + "))";
+                    if (result_type == "int32_t") return "hy_wrap_i32((uint32_t)(" + shifted + "))";
+                    if (result_type == "int64_t") return "hy_wrap_i64((uint64_t)(" + shifted + "))";
+                    return "((" + result_type + ")(" + shifted + "))";
                 }
                 return "(" + emit_expression(*binary.left) + " " + token_text(binary.op) + " " + emit_expression(*binary.right) + ")";
             }
@@ -9622,6 +9699,10 @@ private:
                 return "^";
             case TokenKind::Tilde:
                 return "~";
+            case TokenKind::ShiftLeft:
+                return "<<";
+            case TokenKind::ShiftRight:
+                return ">>";
             case TokenKind::EqualsEquals:
                 return "==";
             case TokenKind::BangEquals:

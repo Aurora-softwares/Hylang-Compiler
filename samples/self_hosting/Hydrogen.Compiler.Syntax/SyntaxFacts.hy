@@ -35,6 +35,8 @@ namespace Hydrogen.Compiler.Syntax {
             if (kind == SyntaxKind.PipeToken) { return "Pipe"; }
             if (kind == SyntaxKind.CaretToken) { return "Caret"; }
             if (kind == SyntaxKind.TildeToken) { return "Tilde"; }
+            if (kind == SyntaxKind.ShiftLeftToken) { return "ShiftLeft"; }
+            if (kind == SyntaxKind.ShiftRightToken) { return "ShiftRight"; }
             if (kind == SyntaxKind.UsingKeyword) { return "Using"; }
             if (kind == SyntaxKind.NamespaceKeyword) { return "Namespace"; }
             if (kind == SyntaxKind.ClassKeyword) { return "Class"; }

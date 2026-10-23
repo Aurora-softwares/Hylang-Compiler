@@ -79,6 +79,8 @@ namespace Hydrogen.Compiler.Syntax {
         StackAllocKeyword,
         PipeToken,
         CaretToken,
-        TildeToken
+        TildeToken,
+        ShiftLeftToken,
+        ShiftRightToken
     }
 }

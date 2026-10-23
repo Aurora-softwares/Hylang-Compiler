@@ -559,15 +559,34 @@ namespace Hydrogen.Compiler.Syntax {
         private ExpressionSyntax ParseBinaryExpression(int parentPrecedence) {
             ExpressionSyntax left = ParseUnary();
             while (true) {
+                bool shiftLeft = ShiftLeftPair();
+                bool shiftRight = ShiftRightPair();
                 int precedence = BinaryPrecedence(Current().Kind());
+                if (shiftLeft || shiftRight) { precedence = 9; }
                 if (precedence == 0 || precedence <= parentPrecedence) {
                     break;
                 }
-                SyntaxKind op = Advance().Kind();
+                SyntaxKind op = Current().Kind();
+                Advance();
+                if (shiftLeft || shiftRight) {
+                    Advance();
+                    if (shiftLeft) { op = SyntaxKind.ShiftLeftToken; }
+                    else { op = SyntaxKind.ShiftRightToken; }
+                }
                 ExpressionSyntax right = ParseBinaryExpression(precedence);
                 left = ExpressionSyntax.Binary(left, op, right);
             }
             return left;
+        }
+
+        private bool ShiftLeftPair() {
+            return Current().Kind() == SyntaxKind.LessToken && Peek(1).Kind() == SyntaxKind.LessToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
+        private bool ShiftRightPair() {
+            return Current().Kind() == SyntaxKind.GreaterToken && Peek(1).Kind() == SyntaxKind.GreaterToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
         }
 
         private ExpressionSyntax ParseUnary() {

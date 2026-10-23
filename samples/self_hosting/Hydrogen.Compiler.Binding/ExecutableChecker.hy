@@ -376,6 +376,12 @@ namespace Hydrogen.Compiler.Binding {
                 }
                 return left;
             }
+            if (op == IrOperator.ShiftLeftToken() || op == IrOperator.ShiftRightToken()) {
+                if ((!module.Numeric(left) || !module.Numeric(right)) && left != "<error>" && right != "<error>") {
+                    Error("shift operators require integral operands");
+                }
+                return left;
+            }
             if (op == IrOperator.AmpersandAmpersandToken() || op == IrOperator.PipePipeToken()) { Require(left, "bool", "logical operand must be bool"); Require(right, "bool", "logical operand must be bool"); return "bool"; }
             if (op == IrOperator.PlusToken() && (left == "string" || right == "string")) {
                 if (!Printable(left) || !Printable(right)) { Error("string concatenation requires printable values"); } return "string";
