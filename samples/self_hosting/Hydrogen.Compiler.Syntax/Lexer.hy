@@ -72,11 +72,26 @@ namespace Hydrogen.Compiler.Syntax {
             if (current == ",") { return Token(SyntaxKind.CommaToken, current, startLine, startColumn, start); }
             if (current == ".") { return Token(SyntaxKind.DotToken, current, startLine, startColumn, start); }
             if (current == ":") { return Token(SyntaxKind.ColonToken, current, startLine, startColumn, start); }
-            if (current == "+") { return Token(SyntaxKind.PlusToken, current, startLine, startColumn, start); }
-            if (current == "-") { return Token(SyntaxKind.MinusToken, current, startLine, startColumn, start); }
-            if (current == "*") { return Token(SyntaxKind.StarToken, current, startLine, startColumn, start); }
-            if (current == "/") { return Token(SyntaxKind.SlashToken, current, startLine, startColumn, start); }
-            if (current == "%") { return Token(SyntaxKind.PercentToken, current, startLine, startColumn, start); }
+            if (current == "+") {
+                if (Match("=")) { return Token(SyntaxKind.PlusEqualsToken, "+=", startLine, startColumn, start); }
+                return Token(SyntaxKind.PlusToken, current, startLine, startColumn, start);
+            }
+            if (current == "-") {
+                if (Match("=")) { return Token(SyntaxKind.MinusEqualsToken, "-=", startLine, startColumn, start); }
+                return Token(SyntaxKind.MinusToken, current, startLine, startColumn, start);
+            }
+            if (current == "*") {
+                if (Match("=")) { return Token(SyntaxKind.StarEqualsToken, "*=", startLine, startColumn, start); }
+                return Token(SyntaxKind.StarToken, current, startLine, startColumn, start);
+            }
+            if (current == "/") {
+                if (Match("=")) { return Token(SyntaxKind.SlashEqualsToken, "/=", startLine, startColumn, start); }
+                return Token(SyntaxKind.SlashToken, current, startLine, startColumn, start);
+            }
+            if (current == "%") {
+                if (Match("=")) { return Token(SyntaxKind.PercentEqualsToken, "%=", startLine, startColumn, start); }
+                return Token(SyntaxKind.PercentToken, current, startLine, startColumn, start);
+            }
             if (current == "!") {
                 if (Match("=")) { return Token(SyntaxKind.BangEqualsToken, "!=", startLine, startColumn, start); }
                 return Token(SyntaxKind.BangToken, current, startLine, startColumn, start);
@@ -95,13 +110,18 @@ namespace Hydrogen.Compiler.Syntax {
             }
             if (current == "&") {
                 if (Match("&")) { return Token(SyntaxKind.AmpersandAmpersandToken, "&&", startLine, startColumn, start); }
+                if (Match("=")) { return Token(SyntaxKind.AmpersandEqualsToken, "&=", startLine, startColumn, start); }
                 return Token(SyntaxKind.AmpersandToken, current, startLine, startColumn, start);
             }
             if (current == "|") {
                 if (Match("|")) { return Token(SyntaxKind.PipePipeToken, "||", startLine, startColumn, start); }
+                if (Match("=")) { return Token(SyntaxKind.PipeEqualsToken, "|=", startLine, startColumn, start); }
                 return Token(SyntaxKind.PipeToken, current, startLine, startColumn, start);
             }
-            if (current == "^") { return Token(SyntaxKind.CaretToken, current, startLine, startColumn, start); }
+            if (current == "^") {
+                if (Match("=")) { return Token(SyntaxKind.CaretEqualsToken, "^=", startLine, startColumn, start); }
+                return Token(SyntaxKind.CaretToken, current, startLine, startColumn, start);
+            }
             if (current == "~") { return Token(SyntaxKind.TildeToken, current, startLine, startColumn, start); }
 
             diagnostics.Report(startLine, startColumn, "Unexpected character '" + current + "'");

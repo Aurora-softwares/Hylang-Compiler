@@ -313,6 +313,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.Byte(12); code.Byte(slot); valueType = localTypes[slot]; return code.IsValid();
             }
             if (kind == IrExpression.KindAssignment()) {
+                if (expression.AssignmentOperatorKind() != IrOperator.EqualsToken()) { return false; }
                 IrExpression target = expression.Target();
                 if (target != null && target.Kind() == IrExpression.KindIndex()) {
                     if (!CompileExpression(target.Receiver()) || valueType != "byte[]" ||

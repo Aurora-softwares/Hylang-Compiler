@@ -419,6 +419,7 @@ namespace Hydrogen.Compiler.IR {
 		private IrExpression target;
 		private IrExpression[] arguments;
 		private IrExpression value;
+		private int assignmentOp;
 		private IrExpression left;
 		private int op;
 		private IrExpression right;
@@ -447,6 +448,7 @@ namespace Hydrogen.Compiler.IR {
 		public IrExpression Target() { return target; }
 		public IrExpression[] Arguments() { return arguments; }
 		public IrExpression Value() { return value; }
+		public int AssignmentOperatorKind() { return assignmentOp; }
 		public IrExpression Left() { return left; }
 		public int OperatorKind() { return op; }
 		public IrExpression Right() { return right; }
@@ -492,9 +494,10 @@ namespace Hydrogen.Compiler.IR {
 			return node;
 		}
 
-		public static IrExpression Assignment(IrExpression inputTarget, IrExpression inputValue) {
+		public static IrExpression Assignment(IrExpression inputTarget, int inputOp, IrExpression inputValue) {
 			IrExpression node = new IrExpression(KindAssignment());
 			node.target = inputTarget;
+			node.assignmentOp = inputOp;
 			node.value = inputValue;
 			return node;
 		}

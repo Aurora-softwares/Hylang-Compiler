@@ -548,17 +548,43 @@ namespace Hydrogen.Compiler.Syntax {
 
         private ExpressionSyntax ParseAssignment() {
             ExpressionSyntax left = ParseBinaryExpression(0);
-            if (Check(SyntaxKind.EqualsToken)) {
-                Advance();
+            if (ShiftLeftAssignmentPair() || ShiftRightAssignmentPair()) {
+                bool leftShift = ShiftLeftAssignmentPair();
+                Advance(); Advance();
+                SyntaxKind op = SyntaxKind.ShiftRightEqualsToken;
+                if (leftShift) { op = SyntaxKind.ShiftLeftEqualsToken; }
+                return ExpressionSyntax.Assignment(left, op, ParseAssignment());
+            }
+            if (IsAssignmentToken(Current().Kind())) {
+                SyntaxKind op = Advance().Kind();
                 ExpressionSyntax right = ParseAssignment();
-                return ExpressionSyntax.Assignment(left, right);
+                return ExpressionSyntax.Assignment(left, op, right);
             }
             return left;
+        }
+
+        private bool ShiftLeftAssignmentPair() {
+            return Current().Kind() == SyntaxKind.LessToken && Peek(1).Kind() == SyntaxKind.LessEqualsToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
+        private bool ShiftRightAssignmentPair() {
+            return Current().Kind() == SyntaxKind.GreaterToken && Peek(1).Kind() == SyntaxKind.GreaterEqualsToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
+        private bool IsAssignmentToken(SyntaxKind kind) {
+            return kind == SyntaxKind.EqualsToken || kind == SyntaxKind.PlusEqualsToken ||
+                kind == SyntaxKind.MinusEqualsToken || kind == SyntaxKind.StarEqualsToken ||
+                kind == SyntaxKind.SlashEqualsToken || kind == SyntaxKind.PercentEqualsToken ||
+                kind == SyntaxKind.AmpersandEqualsToken || kind == SyntaxKind.PipeEqualsToken ||
+                kind == SyntaxKind.CaretEqualsToken;
         }
 
         private ExpressionSyntax ParseBinaryExpression(int parentPrecedence) {
             ExpressionSyntax left = ParseUnary();
             while (true) {
+                if (ShiftLeftAssignmentPair() || ShiftRightAssignmentPair()) { break; }
                 bool shiftLeft = ShiftLeftPair();
                 bool shiftRight = ShiftRightPair();
                 int precedence = BinaryPrecedence(Current().Kind());

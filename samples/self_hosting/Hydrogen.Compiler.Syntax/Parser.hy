@@ -380,13 +380,36 @@ namespace Hydrogen.Compiler.Syntax {
             Emit("Expression");
             Push();
             ParseBinaryExpression(0);
-            if (Match(SyntaxKind.EqualsToken)) {
+            if (ShiftLeftAssignmentPair() || ShiftRightAssignmentPair()) {
+                EmitToken(Advance()); EmitToken(Advance());
+                Emit("AssignmentTail");
+                Push(); ParseAssignmentExpression(); Pop();
+            } else if (IsAssignmentToken(Current().Kind())) {
+                EmitToken(Advance());
                 Emit("AssignmentTail");
                 Push();
                 ParseAssignmentExpression();
                 Pop();
             }
             Pop();
+        }
+
+        private bool ShiftLeftAssignmentPair() {
+            return Current().Kind() == SyntaxKind.LessToken && Peek(1).Kind() == SyntaxKind.LessEqualsToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
+        private bool ShiftRightAssignmentPair() {
+            return Current().Kind() == SyntaxKind.GreaterToken && Peek(1).Kind() == SyntaxKind.GreaterEqualsToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
+        private bool IsAssignmentToken(SyntaxKind kind) {
+            return kind == SyntaxKind.EqualsToken || kind == SyntaxKind.PlusEqualsToken ||
+                kind == SyntaxKind.MinusEqualsToken || kind == SyntaxKind.StarEqualsToken ||
+                kind == SyntaxKind.SlashEqualsToken || kind == SyntaxKind.PercentEqualsToken ||
+                kind == SyntaxKind.AmpersandEqualsToken || kind == SyntaxKind.PipeEqualsToken ||
+                kind == SyntaxKind.CaretEqualsToken;
         }
 
         private void ParseBinaryExpression(int parentPrecedence) {
@@ -402,6 +425,7 @@ namespace Hydrogen.Compiler.Syntax {
             }
 
             while (true) {
+                if (ShiftLeftAssignmentPair() || ShiftRightAssignmentPair()) { return; }
                 bool shiftLeft = ShiftLeftPair();
                 bool shiftRight = ShiftRightPair();
                 int precedence = BinaryPrecedence(Current().Kind());

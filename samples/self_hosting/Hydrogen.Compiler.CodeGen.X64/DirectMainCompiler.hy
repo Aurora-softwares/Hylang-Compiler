@@ -1826,6 +1826,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
         private bool CompileAssignment(IrExpression expression) {
             IrExpression target = expression.Target();
+            int assignmentOp = expression.AssignmentOperatorKind();
+            bool compound = assignmentOp != IrOperator.EqualsToken();
             int slot = -1;
             string expected = "";
             bool packedByteTarget = false;
@@ -1853,8 +1855,63 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 expected = valueType;
                 code.EmitByte(0x50); // retain interior lvalue pointer as a GC root during RHS evaluation
             }
+            if (compound) {
+                if (!PrimitiveNumeric(expected)) { failure = "native compound assignment requires an integral target"; return false; }
+                if (slot >= 0) { EmitLoadLocal(slot); }
+                else if (packedByteTarget) {
+                    code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0x00); // movzx eax, byte [rax]
+                } else if (packedIntTarget) {
+                    code.EmitByte(0x8b); code.EmitByte(0x00); // mov eax, [rax]
+                    NormalizeRax(expected);
+                } else {
+                    code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x00); // mov rax, [rax]
+                    NormalizeRax(expected);
+                }
+                code.EmitByte(0x50); // preserve old value while evaluating RHS
+            }
             if (!CompileExpression(expression.Value())) { return false; }
-            if (!Assignable(valueType, expected)) { failure = "native assignment type mismatch"; return false; }
+            if (compound) {
+                if (!PrimitiveNumeric(valueType)) { failure = "native compound assignment requires an integral value"; return false; }
+                NormalizeRax(expected);
+                code.EmitByte(0x59); // old value in rcx, RHS in rax
+                if (assignmentOp == IrOperator.PlusEqualsToken()) {
+                    code.EmitByte(0x48); code.EmitByte(0x01); code.EmitByte(0xc8); // add rax, rcx
+                } else if (assignmentOp == IrOperator.MinusEqualsToken()) {
+                    code.EmitByte(0x48); code.EmitByte(0x29); code.EmitByte(0xc1); // sub rcx, rax
+                    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
+                } else if (assignmentOp == IrOperator.StarEqualsToken()) {
+                    code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xaf); code.EmitByte(0xc8); // imul rcx, rax
+                    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
+                } else if (assignmentOp == IrOperator.SlashEqualsToken() || assignmentOp == IrOperator.PercentEqualsToken()) {
+                    code.EmitByte(0x48); code.EmitByte(0x91); // xchg rax, rcx
+                    if (Unsigned(expected)) {
+                        code.EmitByte(0x31); code.EmitByte(0xd2); // xor edx, edx
+                        code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xf1); // div rcx
+                    } else {
+                        code.EmitByte(0x48); code.EmitByte(0x99); // cqo
+                        code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xf9); // idiv rcx
+                    }
+                    if (assignmentOp == IrOperator.PercentEqualsToken()) {
+                        code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd0); // mov rax, rdx
+                    }
+                } else if (assignmentOp == IrOperator.AmpersandEqualsToken() ||
+                           assignmentOp == IrOperator.PipeEqualsToken() || assignmentOp == IrOperator.CaretEqualsToken()) {
+                    code.EmitByte(0x48);
+                    if (assignmentOp == IrOperator.AmpersandEqualsToken()) { code.EmitByte(0x21); }
+                    if (assignmentOp == IrOperator.PipeEqualsToken()) { code.EmitByte(0x09); }
+                    if (assignmentOp == IrOperator.CaretEqualsToken()) { code.EmitByte(0x31); }
+                    code.EmitByte(0xc8); // operation rax, rcx
+                } else if (assignmentOp == IrOperator.ShiftLeftEqualsToken() ||
+                           assignmentOp == IrOperator.ShiftRightEqualsToken()) {
+                    code.EmitByte(0x48); code.EmitByte(0x91); // value in rax, count in rcx
+                    code.EmitByte(0x83); code.EmitByte(0xe1); code.EmitByte(NumericBits(expected) - 1);
+                    code.EmitByte(0x48); code.EmitByte(0xd3);
+                    if (assignmentOp == IrOperator.ShiftLeftEqualsToken()) { code.EmitByte(0xe0); }
+                    else if (Unsigned(expected)) { code.EmitByte(0xe8); }
+                    else { code.EmitByte(0xf8); }
+                } else { failure = "unsupported native compound assignment operator"; return false; }
+                NormalizeRax(expected);
+            } else if (!Assignable(valueType, expected)) { failure = "native assignment type mismatch"; return false; }
             PrepareValue(expected);
             if (slot >= 0) { EmitStoreLocal(slot); }
             else {

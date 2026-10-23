@@ -81,6 +81,16 @@ namespace Hydrogen.Compiler.Syntax {
         CaretToken,
         TildeToken,
         ShiftLeftToken,
-        ShiftRightToken
+        ShiftRightToken,
+        PlusEqualsToken,
+        MinusEqualsToken,
+        StarEqualsToken,
+        SlashEqualsToken,
+        PercentEqualsToken,
+        AmpersandEqualsToken,
+        PipeEqualsToken,
+        CaretEqualsToken,
+        ShiftLeftEqualsToken,
+        ShiftRightEqualsToken
     }
 }

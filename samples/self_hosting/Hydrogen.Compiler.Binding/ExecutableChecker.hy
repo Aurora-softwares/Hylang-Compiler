@@ -346,7 +346,12 @@ namespace Hydrogen.Compiler.Binding {
             if (k == IrExpression.KindAssignment()) {
                 string target = Expression(e.Target()); string value = Expression(e.Value());
                 if (!Writable(e.Target())) { Error("assignment target is not writable"); }
-                Require(value, target, "assignment type mismatch"); return target;
+                if (e.AssignmentOperatorKind() != IrOperator.EqualsToken()) {
+                    if ((!module.Numeric(target) || !module.Numeric(value)) && target != "<error>" && value != "<error>") {
+                        Error("compound assignment requires integral operands");
+                    }
+                } else { Require(value, target, "assignment type mismatch"); }
+                return target;
             }
             if (k == IrExpression.KindCast()) {
                 DeclareType(e.CastType(), false); string actual = Expression(e.CastExpression()); string expected = e.CastType().DisplayName();

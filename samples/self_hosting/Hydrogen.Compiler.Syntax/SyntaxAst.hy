@@ -401,6 +401,7 @@ using Hydrogen.Compiler.Text;
 		private ExpressionSyntax target;
 		private ExpressionSyntax[] arguments;
 		private ExpressionSyntax value;
+		private SyntaxKind assignmentOp;
 		private ExpressionSyntax left;
 		private SyntaxKind op;
 		private ExpressionSyntax right;
@@ -429,6 +430,7 @@ using Hydrogen.Compiler.Text;
 		public ExpressionSyntax Target() { return target; }
 		public ExpressionSyntax[] Arguments() { return arguments; }
 		public ExpressionSyntax Value() { return value; }
+		public SyntaxKind AssignmentOperatorKind() { return assignmentOp; }
 		public ExpressionSyntax Left() { return left; }
 		public SyntaxKind OperatorKind() { return op; }
 		public ExpressionSyntax Right() { return right; }
@@ -474,9 +476,10 @@ using Hydrogen.Compiler.Text;
 			return node;
 		}
 
-		public static ExpressionSyntax Assignment(ExpressionSyntax inputTarget, ExpressionSyntax inputValue) {
+		public static ExpressionSyntax Assignment(ExpressionSyntax inputTarget, SyntaxKind inputOp, ExpressionSyntax inputValue) {
 			ExpressionSyntax node = new ExpressionSyntax(KindAssignment());
 			node.target = inputTarget;
+			node.assignmentOp = inputOp;
 			node.value = inputValue;
 			return node;
 		}

@@ -154,17 +154,27 @@ enum class TokenKind {
     Comma,
     Dot,
     Plus,
+    PlusEquals,
     Minus,
+    MinusEquals,
     Star,
+    StarEquals,
     Slash,
+    SlashEquals,
     Percent,
+    PercentEquals,
     Bang,
     Ampersand,
+    AmpersandEquals,
     Pipe,
+    PipeEquals,
     Caret,
+    CaretEquals,
     Tilde,
     ShiftLeft,
     ShiftRight,
+    ShiftLeftEquals,
+    ShiftRightEquals,
     Equals,
     EqualsEquals,
     BangEquals,
@@ -222,6 +232,38 @@ enum class TokenKind {
     Stackalloc,
     Colon,
 };
+
+TokenKind compound_binary_operator(TokenKind kind) {
+    switch (kind) {
+        case TokenKind::PlusEquals: return TokenKind::Plus;
+        case TokenKind::MinusEquals: return TokenKind::Minus;
+        case TokenKind::StarEquals: return TokenKind::Star;
+        case TokenKind::SlashEquals: return TokenKind::Slash;
+        case TokenKind::PercentEquals: return TokenKind::Percent;
+        case TokenKind::AmpersandEquals: return TokenKind::Ampersand;
+        case TokenKind::PipeEquals: return TokenKind::Pipe;
+        case TokenKind::CaretEquals: return TokenKind::Caret;
+        case TokenKind::ShiftLeftEquals: return TokenKind::ShiftLeft;
+        case TokenKind::ShiftRightEquals: return TokenKind::ShiftRight;
+        default: return TokenKind::Equals;
+    }
+}
+
+int compound_operator_code(TokenKind kind) {
+    switch (kind) {
+        case TokenKind::Plus: return 1;
+        case TokenKind::Minus: return 2;
+        case TokenKind::Star: return 3;
+        case TokenKind::Slash: return 4;
+        case TokenKind::Percent: return 5;
+        case TokenKind::Ampersand: return 6;
+        case TokenKind::Pipe: return 7;
+        case TokenKind::Caret: return 8;
+        case TokenKind::ShiftLeft: return 9;
+        case TokenKind::ShiftRight: return 10;
+        default: return 0;
+    }
+}
 
 struct Token {
     TokenKind kind = TokenKind::EndOfFile;
@@ -299,19 +341,24 @@ class Lexer {
 						tokens.push_back(Token{TokenKind::Colon, ":", line, column});
 						break;
 					case '+':
-						tokens.push_back(Token{TokenKind::Plus, "+", line, column});
+						if (match('=')) tokens.push_back(Token{TokenKind::PlusEquals, "+=", line, column});
+						else tokens.push_back(Token{TokenKind::Plus, "+", line, column});
 						break;
 					case '-':
-						tokens.push_back(Token{TokenKind::Minus, "-", line, column});
+						if (match('=')) tokens.push_back(Token{TokenKind::MinusEquals, "-=", line, column});
+						else tokens.push_back(Token{TokenKind::Minus, "-", line, column});
 						break;
 					case '*':
-						tokens.push_back(Token{TokenKind::Star, "*", line, column});
+						if (match('=')) tokens.push_back(Token{TokenKind::StarEquals, "*=", line, column});
+						else tokens.push_back(Token{TokenKind::Star, "*", line, column});
 						break;
 					case '/':
-						tokens.push_back(Token{TokenKind::Slash, "/", line, column});
+						if (match('=')) tokens.push_back(Token{TokenKind::SlashEquals, "/=", line, column});
+						else tokens.push_back(Token{TokenKind::Slash, "/", line, column});
 						break;
 					case '%':
-						tokens.push_back(Token{TokenKind::Percent, "%", line, column});
+						if (match('=')) tokens.push_back(Token{TokenKind::PercentEquals, "%=", line, column});
+						else tokens.push_back(Token{TokenKind::Percent, "%", line, column});
 						break;
 					case '!':
 						if (match('=')) {
@@ -344,6 +391,8 @@ class Lexer {
 					case '&':
 						if (match('&')) {
 							tokens.push_back(Token{TokenKind::AmpAmp, "&&", line, column});
+						} else if (match('=')) {
+							tokens.push_back(Token{TokenKind::AmpersandEquals, "&=", line, column});
 						} else {
 							tokens.push_back(Token{TokenKind::Ampersand, "&", line, column});
 						}
@@ -351,12 +400,15 @@ class Lexer {
 					case '|':
 						if (match('|')) {
 							tokens.push_back(Token{TokenKind::PipePipe, "||", line, column});
+						} else if (match('=')) {
+							tokens.push_back(Token{TokenKind::PipeEquals, "|=", line, column});
 						} else {
 							tokens.push_back(Token{TokenKind::Pipe, "|", line, column});
 						}
 						break;
 					case '^':
-						tokens.push_back(Token{TokenKind::Caret, "^", line, column});
+						if (match('=')) tokens.push_back(Token{TokenKind::CaretEquals, "^=", line, column});
+						else tokens.push_back(Token{TokenKind::Caret, "^", line, column});
 						break;
 					case '~':
 						tokens.push_back(Token{TokenKind::Tilde, "~", line, column});
@@ -620,6 +672,7 @@ struct BaseExpressionSyntax final : ExpressionSyntax {};
 struct AssignmentExpressionSyntax final : ExpressionSyntax {
     unique_ptr<ExpressionSyntax> target;
     unique_ptr<ExpressionSyntax> expression;
+    TokenKind op = TokenKind::Equals;
 };
 
 struct UnaryExpressionSyntax final : ExpressionSyntax {
@@ -1533,16 +1586,36 @@ private:
 
     unique_ptr<ExpressionSyntax> parse_assignment_expression() {
         auto left = parse_logical_or_expression();
-        if (match(TokenKind::Equals)) {
+        if (shift_assignment_ahead(TokenKind::Less) || shift_assignment_ahead(TokenKind::Greater)) {
+            const Token first = advance();
+            advance();
+            auto assignment = std::make_unique<AssignmentExpressionSyntax>();
+            assignment->line = first.line;
+            assignment->column = first.column;
+            assignment->target = std::move(left);
+            assignment->op = first.kind == TokenKind::Less ? TokenKind::ShiftLeftEquals : TokenKind::ShiftRightEquals;
+            assignment->expression = parse_assignment_expression();
+            return assignment;
+        }
+        if (match(TokenKind::Equals) || match(TokenKind::PlusEquals) || match(TokenKind::MinusEquals) ||
+            match(TokenKind::StarEquals) || match(TokenKind::SlashEquals) || match(TokenKind::PercentEquals) ||
+            match(TokenKind::AmpersandEquals) || match(TokenKind::PipeEquals) || match(TokenKind::CaretEquals)) {
             const Token token = previous();
             auto assignment = std::make_unique<AssignmentExpressionSyntax>();
             assignment->line = token.line;
             assignment->column = token.column;
             assignment->target = std::move(left);
+            assignment->op = token.kind;
             assignment->expression = parse_assignment_expression();
             return assignment;
         }
         return left;
+    }
+
+    bool shift_assignment_ahead(TokenKind bracket) const {
+        const TokenKind second = bracket == TokenKind::Less ? TokenKind::LessEquals : TokenKind::GreaterEquals;
+        return check(bracket) && peek(1).kind == second && current().line == peek(1).line &&
+               peek(1).column == current().column + 1;
     }
 
     unique_ptr<ExpressionSyntax> parse_logical_or_expression() {
@@ -1637,8 +1710,9 @@ private:
 
     unique_ptr<ExpressionSyntax> parse_relational_expression() {
         auto expression = parse_shift_expression();
-        while (match(TokenKind::Less) || match(TokenKind::LessEquals) ||
-               match(TokenKind::Greater) || match(TokenKind::GreaterEquals)) {
+        while (!shift_assignment_ahead(TokenKind::Less) && !shift_assignment_ahead(TokenKind::Greater) &&
+               (match(TokenKind::Less) || match(TokenKind::LessEquals) ||
+               match(TokenKind::Greater) || match(TokenKind::GreaterEquals))) {
             const Token token = previous();
             auto binary = std::make_unique<BinaryExpressionSyntax>();
             binary->line = token.line;
@@ -1653,10 +1727,11 @@ private:
 
     unique_ptr<ExpressionSyntax> parse_shift_expression() {
         auto expression = parse_additive_expression();
-        while ((check(TokenKind::Less) && peek(1).kind == TokenKind::Less &&
+        while (!shift_assignment_ahead(TokenKind::Less) && !shift_assignment_ahead(TokenKind::Greater) &&
+               ((check(TokenKind::Less) && peek(1).kind == TokenKind::Less &&
                 peek(1).line == current().line && peek(1).column == current().column + 1) ||
                (check(TokenKind::Greater) && peek(1).kind == TokenKind::Greater &&
-                peek(1).line == current().line && peek(1).column == current().column + 1)) {
+                peek(1).line == current().line && peek(1).column == current().column + 1))) {
             const Token first = advance();
             advance();
             auto binary = std::make_unique<BinaryExpressionSyntax>();
@@ -2234,6 +2309,7 @@ struct BoundStringLengthExpression final : BoundExpression {
 struct BoundAssignmentExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> target;
     std::unique_ptr<BoundExpression> expression;
+    TokenKind compound_op = TokenKind::Equals;
 };
 
 struct BoundConversionExpression final : BoundExpression {
@@ -2600,6 +2676,37 @@ int64_t shift_integral_bits(int64_t value, int64_t count, const TypeSymbol* type
         shifted |= ~uint64_t{0} << (width - amount);
     }
     return normalize_integral_bits(shifted, type);
+}
+
+int64_t compound_integral_value(int64_t old_value, int64_t right_value, TokenKind op, const TypeSymbol* type) {
+    const uint64_t left_bits = static_cast<uint64_t>(old_value);
+    const uint64_t right_bits = static_cast<uint64_t>(right_value);
+    switch (op) {
+        case TokenKind::Plus: return normalize_integral_bits(left_bits + right_bits, type);
+        case TokenKind::Minus: return normalize_integral_bits(left_bits - right_bits, type);
+        case TokenKind::Star: return normalize_integral_bits(left_bits * right_bits, type);
+        case TokenKind::Ampersand: return normalize_integral_bits(left_bits & right_bits, type);
+        case TokenKind::Pipe: return normalize_integral_bits(left_bits | right_bits, type);
+        case TokenKind::Caret: return normalize_integral_bits(left_bits ^ right_bits, type);
+        case TokenKind::ShiftLeft: return shift_integral_bits(old_value, right_value, type, false);
+        case TokenKind::ShiftRight: return shift_integral_bits(old_value, right_value, type, true);
+        case TokenKind::Slash:
+        case TokenKind::Percent: {
+            const int64_t left = normalize_integral_bits(left_bits, type);
+            const int64_t right = normalize_integral_bits(right_bits, type);
+            if (right == 0) throw std::runtime_error("Division by zero");
+            if (is_signed_integral_type(type)) {
+                if (left == INT64_MIN && right == -1) throw std::runtime_error("Integer division overflow");
+                return normalize_integral_bits(static_cast<uint64_t>(op == TokenKind::Slash ? left / right : left % right), type);
+            }
+            const int width = integral_type_size_bytes(type) * 8;
+            const uint64_t mask = width == 64 ? ~uint64_t{0} : (uint64_t{1} << width) - 1;
+            const uint64_t result = op == TokenKind::Slash ? (left_bits & mask) / (right_bits & mask)
+                                                          : (left_bits & mask) % (right_bits & mask);
+            return normalize_integral_bits(result, type);
+        }
+        default: throw std::runtime_error("Unsupported compound assignment operator");
+    }
 }
 
 bool integral_literal_fits_type(int64_t value, const TypeSymbol* destination) {
@@ -4808,7 +4915,19 @@ private:
                 bound->kind = BoundExpressionKind::Assignment;
                 bound->line = expression.line;
                 bound->column = expression.column;
-                if (!is_expression_assignable_to_type(target->type, value.get())) {
+                if (assignment->op != TokenKind::Equals) {
+                    if (!is_integral_type(target->type) || !is_integral_type(value->type)) {
+                        diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                         "Compound assignment requires integral operands");
+                    }
+                    if (target->kind == BoundExpressionKind::PointerIndex ||
+                        (target->kind == BoundExpressionKind::Unary &&
+                         static_cast<const BoundUnaryExpression&>(*target).op == TokenKind::Star)) {
+                        diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                         "Compound assignment to pointer targets is not supported");
+                    }
+                    bound->compound_op = compound_binary_operator(assignment->op);
+                } else if (!is_expression_assignable_to_type(target->type, value.get())) {
                     diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                      "Cannot assign expression of type '" + value->type->display_name +
                                          "' to target of type '" + target->type->display_name + "'");
@@ -6918,7 +7037,7 @@ private:
         return {};
     }
 
-    Value& access_assignable(const BoundExpression& expression, Frame& frame) {
+    Value& access_assignable(const BoundExpression& expression, Frame& frame, Value& keepalive) {
         if (expression.kind == BoundExpressionKind::Local) {
             const auto& local = static_cast<const BoundLocalExpression&>(expression);
             return frame.locals[local.variable];
@@ -6932,17 +7051,18 @@ private:
             if (field.field->is_static) {
                 return static_fields_[field.field];
             }
-            auto receiver = std::get<std::shared_ptr<RuntimeObject>>(evaluate_expression(*field.receiver, frame).data);
+            keepalive = evaluate_expression(*field.receiver, frame);
+            auto receiver = std::get<std::shared_ptr<RuntimeObject>>(keepalive.data);
             return receiver->fields[field.field];
         }
         if (expression.kind == BoundExpressionKind::ArrayIndex) {
             const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
-            Value array_value = evaluate_expression(*access.array_expression, frame);
+            keepalive = evaluate_expression(*access.array_expression, frame);
             Value index_value = evaluate_expression(*access.index_expression, frame);
-            if (!std::holds_alternative<std::shared_ptr<RuntimeArray>>(array_value.data)) {
+            if (!std::holds_alternative<std::shared_ptr<RuntimeArray>>(keepalive.data)) {
                 throw std::runtime_error("Array index assignment requires an array");
             }
-            const auto& array = std::get<std::shared_ptr<RuntimeArray>>(array_value.data);
+            const auto& array = std::get<std::shared_ptr<RuntimeArray>>(keepalive.data);
             const int64_t index = std::get<int64_t>(index_value.data);
             if (array == nullptr || index < 0 || static_cast<std::size_t>(index) >= array->elements.size()) {
                 throw std::runtime_error("Array index out of range");
@@ -7032,6 +7152,20 @@ private:
             }
             case BoundExpressionKind::Assignment: {
                 const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
+                if (assignment.compound_op != TokenKind::Equals) {
+                    if (assignment.target->kind == BoundExpressionKind::Unary ||
+                        assignment.target->kind == BoundExpressionKind::PointerIndex) {
+                        throw std::runtime_error("Compound assignment to a pointer is unsupported");
+                    }
+                    Value keepalive;
+                    Value& destination = access_assignable(*assignment.target, frame, keepalive);
+                    const int64_t old_value = std::get<int64_t>(destination.data);
+                    const int64_t right_value = std::get<int64_t>(evaluate_expression(*assignment.expression, frame).data);
+                    Value stored{compound_integral_value(old_value, right_value, assignment.compound_op,
+                                                         assignment.target->type)};
+                    destination = stored;
+                    return stored;
+                }
                 Value value = evaluate_expression(*assignment.expression, frame);
                 Value stored = copy_value_for_type(value, assignment.target->type);
                 if (assignment.target->kind == BoundExpressionKind::Unary) {
@@ -7049,7 +7183,8 @@ private:
                     store_pointer_value(pointer, index, stored);
                     return stored;
                 }
-                access_assignable(*assignment.target, frame) = stored;
+                Value keepalive;
+                access_assignable(*assignment.target, frame, keepalive) = stored;
                 return stored;
             }
             case BoundExpressionKind::Conversion: {
@@ -7556,6 +7691,82 @@ private:
         out << "        result |= UINT64_MAX << (width - amount);\n";
         out << "    return result & mask;\n";
         out << "}\n\n";
+        out << R"HY(static void hy_runtime_fail(const char* message);
+typedef struct hy_compound_frame {
+    void* location;
+    uint64_t old;
+    int storage_bytes;
+    struct hy_compound_frame* previous;
+} hy_compound_frame;
+#if defined(_MSC_VER)
+static __declspec(thread) hy_compound_frame* hy_compound_top;
+#else
+static _Thread_local hy_compound_frame* hy_compound_top;
+#endif
+static void hy_compound_begin(void* location, int storage_bytes) {
+    hy_compound_frame* frame = (hy_compound_frame*)malloc(sizeof(hy_compound_frame));
+    if (!frame) hy_runtime_fail("Compound assignment allocation failed");
+    frame->location = location;
+    frame->storage_bytes = storage_bytes;
+    frame->previous = hy_compound_top;
+    frame->old = 0;
+    if (storage_bytes == 1) { uint8_t value; memcpy(&value, location, 1); frame->old = value; }
+    else if (storage_bytes == 2) { uint16_t value; memcpy(&value, location, 2); frame->old = value; }
+    else if (storage_bytes == 4) { uint32_t value; memcpy(&value, location, 4); frame->old = value; }
+    else { memcpy(&frame->old, location, 8); }
+    hy_compound_top = frame;
+}
+static void hy_compound_unwind(hy_compound_frame* marker) {
+    while (hy_compound_top != marker) {
+        if (!hy_compound_top) hy_runtime_fail("Compound assignment frame mismatch");
+        hy_compound_frame* frame = hy_compound_top;
+        hy_compound_top = frame->previous;
+        free(frame);
+    }
+}
+static int64_t hy_compound_integer(int64_t rhs, int op, int bits, int is_signed) {
+    hy_compound_frame* frame = hy_compound_top;
+    if (!frame) hy_runtime_fail("Compound assignment frame missing");
+    hy_compound_top = frame->previous;
+    void* location = frame->location;
+    int storage_bytes = frame->storage_bytes;
+    uint64_t old = frame->old;
+    free(frame);
+    uint64_t mask = bits == 64 ? UINT64_MAX : (UINT64_C(1) << bits) - 1;
+    uint64_t left = old & mask;
+    uint64_t right = (uint64_t)rhs & mask;
+    uint64_t result = 0;
+    if (op == 1) result = left + right;
+    else if (op == 2) result = left - right;
+    else if (op == 3) result = left * right;
+    else if (op == 6) result = left & right;
+    else if (op == 7) result = left | right;
+    else if (op == 8) result = left ^ right;
+    else if (op == 9 || op == 10) result = hy_shift_bits(left, rhs, bits, op == 10, is_signed);
+    else if (op == 4 || op == 5) {
+        if (right == 0) hy_runtime_fail("Division by zero");
+        if (is_signed) {
+            uint64_t sign_bit = UINT64_C(1) << (bits - 1);
+            int64_t signed_left = hy_wrap_i64((left & sign_bit) ? left | ~mask : left);
+            int64_t signed_right = hy_wrap_i64((right & sign_bit) ? right | ~mask : right);
+            if (signed_left == INT64_MIN && signed_right == -1)
+                hy_runtime_fail("Integer division overflow");
+            result = (uint64_t)(op == 4 ? signed_left / signed_right : signed_left % signed_right);
+        } else {
+            result = op == 4 ? left / right : left % right;
+        }
+    } else hy_runtime_fail("Unsupported compound assignment operator");
+    result &= mask;
+    uint64_t stored = result;
+    if (is_signed && (result & (UINT64_C(1) << (bits - 1)))) stored |= ~mask;
+    if (storage_bytes == 1) { uint8_t value = (uint8_t)stored; memcpy(location, &value, 1); }
+    else if (storage_bytes == 2) { uint16_t value = (uint16_t)stored; memcpy(location, &value, 2); }
+    else if (storage_bytes == 4) { uint32_t value = (uint32_t)stored; memcpy(location, &value, 4); }
+    else memcpy(location, &stored, 8);
+    return hy_wrap_i64(stored);
+}
+
+)HY";
 
         // --- Type ID constants ---
         out << "#define HY_TYPE_ID_STRING (-1)\n";
@@ -7890,6 +8101,24 @@ private:
         out << "    hy_gc_trace_object(obj);\n";
         out << "}\n\n";
 
+        out << "static void hy_gc_mark_compound_targets(void) {\n";
+        out << "    for (hy_compound_frame* frame = hy_compound_top; frame != NULL; frame = frame->previous) {\n";
+        out << "        uintptr_t address = (uintptr_t)frame->location;\n";
+        out << "        for (size_t i = 0; i < hy_gc_heap_count; ++i) {\n";
+        out << "            HyObjectHeader* obj = (HyObjectHeader*)hy_gc_heap[i];\n";
+        out << "            uintptr_t base = (uintptr_t)obj;\n";
+        out << "            int inside = address >= base && address - base < obj->gc_size;\n";
+        out << "            if (!inside && obj->type_id == HY_TYPE_ID_ARRAY) {\n";
+        out << "                HyArray* arr = (HyArray*)obj;\n";
+        out << "                uintptr_t elements = (uintptr_t)arr->elements;\n";
+        out << "                inside = arr->elements != NULL && address >= elements &&\n";
+        out << "                    (address - elements) / sizeof(int64_t) < (size_t)arr->length;\n";
+        out << "            }\n";
+        out << "            if (inside) { hy_gc_mark_object(obj); break; }\n";
+        out << "        }\n";
+        out << "    }\n";
+        out << "}\n\n";
+
         // --- GC collect ---
         out << "static void hy_gc_collect(void) {\n";
         out << "    hy_gc_index_heap();\n";
@@ -7898,6 +8127,7 @@ private:
         out << "    }\n";
         out << "    hy_gc_mark_statics();\n";
         out << "    hy_gc_mark_roots();\n";
+        out << "    hy_gc_mark_compound_targets();\n";
         out << "    size_t live = 0;\n";
         out << "    size_t live_bytes = 0;\n";
         out << "    for (size_t i = 0; i < hy_gc_heap_count; i++) {\n";
@@ -8994,6 +9224,8 @@ private:
                 indent(out, level + 1);
                 out << "jmp_buf* hy__prev_catch_" << id << " = hy_exception_target;\n";
                 indent(out, level + 1);
+                out << "hy_compound_frame* hy__prev_compound_" << id << " = hy_compound_top;\n";
+                indent(out, level + 1);
                 out << "hy_exception_target = &hy__catch_" << id << ";\n";
                 indent(out, level + 1);
                 out << "if (setjmp(hy__catch_" << id << ") == 0) {\n";
@@ -9004,6 +9236,8 @@ private:
                 out << "} else {\n";
                 indent(out, level + 2);
                 out << "hy_exception_target = hy__prev_catch_" << id << ";\n";
+                indent(out, level + 2);
+                out << "hy_compound_unwind(hy__prev_compound_" << id << ");\n";
                 if (try_statement.catch_variable != nullptr) {
                     indent(out, level + 2);
                     out << local_name(*try_statement.catch_variable)
@@ -9234,6 +9468,24 @@ private:
             }
             case BoundExpressionKind::Assignment: {
                 const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
+                if (assignment.compound_op != TokenKind::Equals) {
+                    string location;
+                    int storage_bytes = integral_type_size_bytes(assignment.target->type);
+                    if (assignment.target->kind == BoundExpressionKind::ArrayIndex) {
+                        const auto& access = static_cast<const BoundArrayIndexExpression&>(*assignment.target);
+                        location = "hy_array_ptr(" + emit_expression(*access.array_expression) + ", " +
+                                   emit_expression(*access.index_expression) + ")";
+                        storage_bytes = 8;
+                    } else {
+                        location = "&(" + emit_expression(*assignment.target) + ")";
+                    }
+                    return "((" + c_type_name(assignment.type) + ")(hy_compound_begin(" + location + ", " +
+                           std::to_string(storage_bytes) + "), hy_compound_integer((int64_t)(" +
+                           emit_expression(*assignment.expression) + "), " +
+                           std::to_string(compound_operator_code(assignment.compound_op)) + ", " +
+                           std::to_string(integral_type_size_bytes(assignment.type) * 8) + ", " +
+                           std::to_string(is_signed_integral_type(assignment.type) ? 1 : 0) + ")))";
+                }
                 // Array index assignment requires storing into int64_t element storage
                 if (assignment.target->kind == BoundExpressionKind::ArrayIndex) {
                     const auto& access = static_cast<const BoundArrayIndexExpression&>(*assignment.target);

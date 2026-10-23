@@ -37,6 +37,16 @@ namespace Hydrogen.Compiler.Syntax {
             if (kind == SyntaxKind.TildeToken) { return "Tilde"; }
             if (kind == SyntaxKind.ShiftLeftToken) { return "ShiftLeft"; }
             if (kind == SyntaxKind.ShiftRightToken) { return "ShiftRight"; }
+            if (kind == SyntaxKind.PlusEqualsToken) { return "PlusEquals"; }
+            if (kind == SyntaxKind.MinusEqualsToken) { return "MinusEquals"; }
+            if (kind == SyntaxKind.StarEqualsToken) { return "StarEquals"; }
+            if (kind == SyntaxKind.SlashEqualsToken) { return "SlashEquals"; }
+            if (kind == SyntaxKind.PercentEqualsToken) { return "PercentEquals"; }
+            if (kind == SyntaxKind.AmpersandEqualsToken) { return "AmpersandEquals"; }
+            if (kind == SyntaxKind.PipeEqualsToken) { return "PipeEquals"; }
+            if (kind == SyntaxKind.CaretEqualsToken) { return "CaretEquals"; }
+            if (kind == SyntaxKind.ShiftLeftEqualsToken) { return "ShiftLeftEquals"; }
+            if (kind == SyntaxKind.ShiftRightEqualsToken) { return "ShiftRightEquals"; }
             if (kind == SyntaxKind.UsingKeyword) { return "Using"; }
             if (kind == SyntaxKind.NamespaceKeyword) { return "Namespace"; }
             if (kind == SyntaxKind.ClassKeyword) { return "Class"; }
