@@ -5,7 +5,6 @@ on:
     branches:
       - Development
       - Release
-      - 'ci/**'
   pull_request:
     branches:
       - Development
@@ -44,6 +43,15 @@ jobs:
       # Linux native code, Windows PE generation, UEFI and OS images.
       - name: Run Stage 1 regression tests
         run: ctest --test-dir build --output-on-failure --parallel 2 -R '^hy_stage1_'
+
+      # Also exercise the C++ SDK, interpreter, and host C backend.
+      # The native Stage 1 tests ran above; the Stage 6 proof was
+      # already executed directly as hydrogen_bootstrap_proof.
+      - name: Build SDK test tools
+        run: cmake --build build --parallel 2
+
+      - name: Run SDK and integration regression tests
+        run: ctest --test-dir build --output-on-failure --parallel 2 -E '^(hy_stage1_|hy_stage6_)'
 
       - name: Record source and binary checksums
         run: |
