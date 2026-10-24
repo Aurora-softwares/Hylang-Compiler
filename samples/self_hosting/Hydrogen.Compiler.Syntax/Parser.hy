@@ -480,8 +480,12 @@ namespace Hydrogen.Compiler.Syntax {
         private void ParsePostfixExpression() {
             ParsePrimaryExpression();
             while (true) {
-                if (Match(SyntaxKind.DotToken)) {
-                    Emit("MemberAccessExpression");
+                if (Check(SyntaxKind.DotToken) || (Check(SyntaxKind.QuestionToken) && Peek(1).Kind() == SyntaxKind.DotToken)) {
+                    bool conditional = Check(SyntaxKind.QuestionToken);
+                    if (conditional) { EmitToken(Advance()); }
+                    EmitToken(Advance());
+                    if (conditional) { Emit("NullConditionalMemberAccessExpression"); }
+                    else { Emit("MemberAccessExpression"); }
                     Push();
                     EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected member name"));
                     Pop();
@@ -491,8 +495,12 @@ namespace Hydrogen.Compiler.Syntax {
                     ParseArgumentList();
                     continue;
                 }
-                if (Match(SyntaxKind.OpenBracketToken)) {
-                    Emit("ElementAccessExpression");
+                if (Check(SyntaxKind.OpenBracketToken) || (Check(SyntaxKind.QuestionToken) && Peek(1).Kind() == SyntaxKind.OpenBracketToken)) {
+                    bool conditional = Check(SyntaxKind.QuestionToken);
+                    if (conditional) { EmitToken(Advance()); }
+                    EmitToken(Advance());
+                    if (conditional) { Emit("NullConditionalElementAccessExpression"); }
+                    else { Emit("ElementAccessExpression"); }
                     Push();
                     ParseExpression();
                     EmitToken(Consume(SyntaxKind.CloseBracketToken, "Expected ']'"));

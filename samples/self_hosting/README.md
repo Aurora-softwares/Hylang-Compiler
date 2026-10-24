@@ -154,6 +154,10 @@ Conditional expressions use `condition ? whenTrue : whenFalse`; only the
 selected branch executes, and both branches must have compatible types.
 Null coalescing uses `left ?? fallback` for references. The left expression
 evaluates once; the fallback runs only when the left is null.
+Null-conditional member, method, and index access uses `?.` and `?[index]`.
+The receiver evaluates once, and a null receiver produces null without running
+call arguments or index expressions. The result must be a reference value;
+primitive results and null-conditional assignment targets are rejected.
 
 Fatal freestanding CPU exceptions use an allocation-free IDT panic path. It
 captures the CPU exception frame, `CR2`, and all general registers, writes a

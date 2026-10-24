@@ -399,6 +399,7 @@ using Hydrogen.Compiler.Text;
 		private string literalText;
 		private ExpressionSyntax receiver;
 		private string memberName;
+		private bool nullConditional;
 		private ExpressionSyntax target;
 		private ExpressionSyntax[] arguments;
 		private ExpressionSyntax value;
@@ -432,6 +433,8 @@ using Hydrogen.Compiler.Text;
 		public string LiteralText() { return literalText; }
 		public ExpressionSyntax Receiver() { return receiver; }
 		public string MemberName() { return memberName; }
+		public bool NullConditional() { return nullConditional; }
+		public void SetNullConditional(bool value) { nullConditional = value; }
 		public ExpressionSyntax Target() { return target; }
 		public ExpressionSyntax[] Arguments() { return arguments; }
 		public ExpressionSyntax Value() { return value; }

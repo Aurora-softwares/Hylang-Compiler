@@ -655,10 +655,13 @@ namespace Hydrogen.Compiler.Syntax {
         private ExpressionSyntax ParsePostfix() {
             ExpressionSyntax expr = ParsePrimary();
             while (true) {
-                if (Check(SyntaxKind.DotToken)) {
+                if (Check(SyntaxKind.DotToken) || (Check(SyntaxKind.QuestionToken) && Peek(1).Kind() == SyntaxKind.DotToken)) {
+                    bool conditional = Check(SyntaxKind.QuestionToken);
+                    if (conditional) { Advance(); }
                     Advance();
                     string name = ConsumeIdentifier("Expected member name");
                     expr = ExpressionSyntax.MemberAccess(expr, name);
+                    expr.SetNullConditional(conditional);
                     continue;
                 }
                 if (Check(SyntaxKind.OpenParenToken)) {
@@ -666,11 +669,14 @@ namespace Hydrogen.Compiler.Syntax {
                     expr = ExpressionSyntax.Invocation(expr, args);
                     continue;
                 }
-                if (Check(SyntaxKind.OpenBracketToken)) {
+                if (Check(SyntaxKind.OpenBracketToken) || (Check(SyntaxKind.QuestionToken) && Peek(1).Kind() == SyntaxKind.OpenBracketToken)) {
+                    bool conditional = Check(SyntaxKind.QuestionToken);
+                    if (conditional) { Advance(); }
                     Advance();
                     ExpressionSyntax indexExpr = ParseExpression();
                     Consume(SyntaxKind.CloseBracketToken, "Expected ']'");
                     expr = ExpressionSyntax.IndexExpr(expr, indexExpr);
+                    expr.SetNullConditional(conditional);
                     continue;
                 }
                 if (Check(SyntaxKind.PlusPlusToken) || Check(SyntaxKind.MinusMinusToken)) {

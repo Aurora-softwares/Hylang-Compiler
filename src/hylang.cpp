@@ -711,11 +711,13 @@ struct BinaryExpressionSyntax final : ExpressionSyntax {
 struct MemberAccessExpressionSyntax final : ExpressionSyntax {
     unique_ptr<ExpressionSyntax> target;
     string member_name;
+    bool null_conditional = false;
 };
 
 struct ElementAccessExpressionSyntax final : ExpressionSyntax {
     unique_ptr<ExpressionSyntax> target;
     unique_ptr<ExpressionSyntax> index;
+    bool null_conditional = false;
 };
 
 struct InvocationExpressionSyntax final : ExpressionSyntax {
@@ -1850,13 +1852,16 @@ private:
     unique_ptr<ExpressionSyntax> parse_postfix_expression() {
         auto expression = parse_primary_expression();
         while (true) {
-            if (match(TokenKind::Dot)) {
+            if (check(TokenKind::Dot) || (check(TokenKind::Question) && peek(1).kind == TokenKind::Dot)) {
+                const bool conditional = match(TokenKind::Question);
+                consume(TokenKind::Dot, "Expected '.' after '?'");
                 const Token member = consume(TokenKind::Identifier, "Expected member name after '.'");
                 auto access = std::make_unique<MemberAccessExpressionSyntax>();
                 access->line = member.line;
                 access->column = member.column;
                 access->target = std::move(expression);
                 access->member_name = member.text;
+                access->null_conditional = conditional;
                 expression = std::move(access);
                 continue;
             }
@@ -1876,12 +1881,15 @@ private:
                 continue;
             }
 
-            if (match(TokenKind::OpenBracket)) {
+            if (check(TokenKind::OpenBracket) || (check(TokenKind::Question) && peek(1).kind == TokenKind::OpenBracket)) {
+                const bool conditional = match(TokenKind::Question);
+                consume(TokenKind::OpenBracket, "Expected '[' after '?'");
                 auto access = std::make_unique<ElementAccessExpressionSyntax>();
                 access->line = previous().line;
                 access->column = previous().column;
                 access->target = std::move(expression);
                 access->index = parse_expression();
+                access->null_conditional = conditional;
                 consume(TokenKind::CloseBracket, "Expected ']' after index expression");
                 expression = std::move(access);
                 continue;
@@ -2352,6 +2360,7 @@ struct BoundThisExpression final : BoundExpression {};
 struct BoundFieldExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> receiver;
     const FieldSymbol* field = nullptr;
+    bool null_conditional = false;
 };
 
 struct BoundArrayLengthExpression final : BoundExpression {
@@ -2361,6 +2370,7 @@ struct BoundArrayLengthExpression final : BoundExpression {
 struct BoundArrayIndexExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> array_expression;
     std::unique_ptr<BoundExpression> index_expression;
+    bool null_conditional = false;
 };
 
 struct BoundPointerIndexExpression final : BoundExpression {
@@ -2371,6 +2381,7 @@ struct BoundPointerIndexExpression final : BoundExpression {
 struct BoundStringIndexExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> string_expression;
     std::unique_ptr<BoundExpression> index_expression;
+    bool null_conditional = false;
 };
 
 struct BoundStringLengthExpression final : BoundExpression {
@@ -2408,6 +2419,7 @@ struct BoundConditionalExpression final : BoundExpression {
 struct BoundCallExpression final : BoundExpression {
     const MethodSymbol* method = nullptr;
     std::unique_ptr<BoundExpression> receiver;
+    bool null_conditional = false;
     vector<std::unique_ptr<BoundExpression>> arguments;
     bool dispatch_virtual = false;
     bool dispatch_interface = false;
@@ -4987,6 +4999,13 @@ private:
             }
 
             if (const auto* assignment = dynamic_cast<const AssignmentExpressionSyntax*>(&expression)) {
+                if ((dynamic_cast<const MemberAccessExpressionSyntax*>(assignment->target.get()) != nullptr &&
+                     static_cast<const MemberAccessExpressionSyntax*>(assignment->target.get())->null_conditional) ||
+                    (dynamic_cast<const ElementAccessExpressionSyntax*>(assignment->target.get()) != nullptr &&
+                     static_cast<const ElementAccessExpressionSyntax*>(assignment->target.get())->null_conditional)) {
+                    diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                     "Null-conditional access is not an assignment target");
+                }
                 auto target = bind_assignable_expression(*assignment->target);
                 auto value = bind_expression(*assignment->expression);
                 auto bound = std::make_unique<BoundAssignmentExpression>();
@@ -5302,6 +5321,10 @@ private:
         std::unique_ptr<BoundExpression> bind_element_access(const ElementAccessExpressionSyntax& syntax) {
             auto target_expression = bind_expression(*syntax.target);
             auto index_expression = bind_expression(*syntax.index);
+            if (syntax.null_conditional && !is_reference_type(target_expression->type)) {
+                diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                 "Null-conditional indexing requires a reference receiver");
+            }
             if (!is_integral_type(index_expression->type)) {
                 diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
                                  "Indices must be of type 'int'");
@@ -5315,10 +5338,15 @@ private:
                 bound->type = &program_.semantic_model.string_type;
                 bound->string_expression = std::move(target_expression);
                 bound->index_expression = std::move(index_expression);
+                bound->null_conditional = syntax.null_conditional;
                 return bound;
             }
 
             if (is_pointer_type(target_expression->type) && target_expression->type->element_type != nullptr) {
+                if (syntax.null_conditional) {
+                    diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                     "Null-conditional pointer indexing is not supported");
+                }
                 if (unsafe_depth_ == 0) {
                     diagnostics_.add(find_file_for_class(&current_class_),
                                      syntax.line,
@@ -5341,6 +5369,7 @@ private:
             bound->column = syntax.column;
             bound->array_expression = std::move(target_expression);
             bound->index_expression = std::move(index_expression);
+            bound->null_conditional = syntax.null_conditional;
 
             if (bound->array_expression->type == nullptr || bound->array_expression->type->kind != TypeKind::Array ||
                 bound->array_expression->type->element_type == nullptr) {
@@ -5351,6 +5380,10 @@ private:
             }
 
             bound->type = bound->array_expression->type->element_type;
+            if (syntax.null_conditional && !is_reference_type(bound->type)) {
+                diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                 "Null-conditional access requires a reference result");
+            }
             return bound;
         }
 
@@ -5534,6 +5567,18 @@ private:
             call->line = syntax.line;
             call->column = syntax.column;
             call->method = selected;
+            if (const auto* member = dynamic_cast<const MemberAccessExpressionSyntax*>(syntax.callee.get());
+                member != nullptr && member->null_conditional) {
+                call->null_conditional = true;
+                if (entity.receiver == nullptr || selected->is_static) {
+                    diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                     "Null-conditional invocation requires an instance receiver");
+                }
+                if (!is_reference_type(selected->return_type)) {
+                    diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                     "Null-conditional access requires a reference result");
+                }
+            }
             if (entity.receiver != nullptr && selected->owner != nullptr) {
                 call->receiver = convert_expression(make_named_type(*selected->owner), std::move(entity.receiver));
             } else {
@@ -5857,6 +5902,12 @@ private:
                 if (base.kind == EntityResolution::Kind::Error) {
                     return {};
                 }
+                if (member->null_conditional && (base.kind != EntityResolution::Kind::Value ||
+                                                 base.value == nullptr || !is_reference_type(base.value->type))) {
+                    diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                     "Null-conditional access requires a reference receiver");
+                    return {};
+                }
                 if (base.kind == EntityResolution::Kind::Namespace) {
                     const string candidate = base.namespace_name + "." + member->member_name;
                     if (is_namespace(candidate)) {
@@ -5961,6 +6012,10 @@ private:
 
                 if (base.kind == EntityResolution::Kind::Value) {
                     if (base.value->type != nullptr && base.value->type->kind == TypeKind::Array && member->member_name == "Length") {
+                        if (member->null_conditional) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Null-conditional access requires a reference result");
+                        }
                         auto length = std::make_unique<BoundArrayLengthExpression>();
                         length->kind = BoundExpressionKind::ArrayLength;
                         length->type = &program_.semantic_model.int_type;
@@ -5974,6 +6029,10 @@ private:
                     }
 
                     if (base.value->type == &program_.semantic_model.string_type && member->member_name == "Length") {
+                        if (member->null_conditional) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Null-conditional access requires a reference result");
+                        }
                         auto length = std::make_unique<BoundStringLengthExpression>();
                         length->kind = BoundExpressionKind::StringLength;
                         length->type = &program_.semantic_model.int_type;
@@ -6002,6 +6061,13 @@ private:
                         EntityResolution result;
                         result.kind = EntityResolution::Kind::Value;
                         result.value = make_field_expression(std::move(base.value), field, expression.line, expression.column);
+                        if (member->null_conditional) {
+                            if (!is_reference_type(field->type)) {
+                                diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                                 "Null-conditional access requires a reference result");
+                            }
+                            static_cast<BoundFieldExpression&>(*result.value).null_conditional = true;
+                        }
                         return result;
                     }
 
@@ -7226,7 +7292,11 @@ private:
                 if (field.field->is_static) {
                     return static_fields_[field.field];
                 }
-                auto receiver = std::get<std::shared_ptr<RuntimeObject>>(evaluate_expression(*field.receiver, frame).data);
+                Value receiver_value = evaluate_expression(*field.receiver, frame);
+                if (field.null_conditional && (std::holds_alternative<std::nullptr_t>(receiver_value.data) ||
+                    (std::holds_alternative<std::shared_ptr<RuntimeObject>>(receiver_value.data) &&
+                     !std::get<std::shared_ptr<RuntimeObject>>(receiver_value.data)))) return Value{nullptr};
+                auto receiver = std::get<std::shared_ptr<RuntimeObject>>(receiver_value.data);
                 return receiver->fields[field.field];
             }
             case BoundExpressionKind::ArrayLength: {
@@ -7241,6 +7311,9 @@ private:
             case BoundExpressionKind::ArrayIndex: {
                 const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
                 Value array_value = evaluate_expression(*access.array_expression, frame);
+                if (access.null_conditional && (std::holds_alternative<std::nullptr_t>(array_value.data) ||
+                    (std::holds_alternative<std::shared_ptr<RuntimeArray>>(array_value.data) &&
+                     !std::get<std::shared_ptr<RuntimeArray>>(array_value.data)))) return Value{nullptr};
                 Value index_value = evaluate_expression(*access.index_expression, frame);
                 if (!std::holds_alternative<std::shared_ptr<RuntimeArray>>(array_value.data)) {
                     return Value{nullptr};
@@ -7255,6 +7328,7 @@ private:
             case BoundExpressionKind::StringIndex: {
                 const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
                 Value string_value = evaluate_expression(*access.string_expression, frame);
+                if (access.null_conditional && std::holds_alternative<std::nullptr_t>(string_value.data)) return Value{nullptr};
                 Value index_value = evaluate_expression(*access.index_expression, frame);
                 if (!std::holds_alternative<string>(string_value.data)) {
                     return Value{nullptr};
@@ -7542,12 +7616,18 @@ private:
             }
             case BoundExpressionKind::Call: {
                 const auto& call = static_cast<const BoundCallExpression&>(expression);
+                std::shared_ptr<RuntimeObject> receiver;
+                if (call.null_conditional) {
+                    Value receiver_value = evaluate_expression(*call.receiver, frame);
+                    if (std::holds_alternative<std::nullptr_t>(receiver_value.data)) return Value{nullptr};
+                    receiver = std::get<std::shared_ptr<RuntimeObject>>(receiver_value.data);
+                    if (!receiver) return Value{nullptr};
+                }
                 vector<Value> arguments;
                 for (const auto& argument : call.arguments) {
                     arguments.push_back(evaluate_expression(*argument, frame));
                 }
-                std::shared_ptr<RuntimeObject> receiver;
-                if (call.receiver != nullptr) {
+                if (call.receiver != nullptr && !call.null_conditional) {
                     receiver = std::get<std::shared_ptr<RuntimeObject>>(evaluate_expression(*call.receiver, frame).data);
                 }
                 vector<const TypeSymbol*> argument_types;
@@ -8251,6 +8331,10 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
         out << "        }\n";
         out << "    }\n";
         out << "}\n\n";
+        out << "static void hy_gc_mark_coalesce_values(void) {\n";
+        out << "    for (hy_coalesce_frame* frame = hy_coalesce_top; frame != NULL; frame = frame->previous)\n";
+        out << "        hy_gc_try_mark(frame->value);\n";
+        out << "}\n\n";
 
         // --- trace object ---
         out << "static void hy_gc_trace_object(void* obj) {\n";
@@ -8305,6 +8389,7 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
         out << "    }\n";
         out << "    hy_gc_mark_statics();\n";
         out << "    hy_gc_mark_roots();\n";
+        out << "    hy_gc_mark_coalesce_values();\n";
         out << "    hy_gc_mark_compound_targets();\n";
         out << "    size_t live = 0;\n";
         out << "    size_t live_bytes = 0;\n";
@@ -9581,7 +9666,38 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
         return result;
     }
 
+    string emit_optional_expression(const BoundExpression& expression, const BoundExpression& receiver) {
+        const string source = emit_expression(receiver);
+        const BoundExpression* previous_receiver = optional_receiver_override_;
+        const BoundExpression* previous_root = optional_expression_root_;
+        optional_receiver_override_ = &receiver;
+        optional_expression_root_ = &expression;
+        const string body = emit_expression(expression);
+        optional_receiver_override_ = previous_receiver;
+        optional_expression_root_ = previous_root;
+        return "((" + c_type_name(expression.type) + ")(hy_coalesce_begin((void*)(" + source +
+               ")) ? hy_coalesce_finish((void*)(" + body + "), 1) : hy_coalesce_finish(NULL, 1)))";
+    }
+
     string emit_expression(const BoundExpression& expression) {
+        if (&expression == optional_receiver_override_) {
+            return "((" + c_type_name(expression.type) + ")hy_coalesce_top->value)";
+        }
+        if (&expression != optional_expression_root_) {
+            if (expression.kind == BoundExpressionKind::Field) {
+                const auto& field = static_cast<const BoundFieldExpression&>(expression);
+                if (field.null_conditional) return emit_optional_expression(expression, *field.receiver);
+            } else if (expression.kind == BoundExpressionKind::ArrayIndex) {
+                const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
+                if (access.null_conditional) return emit_optional_expression(expression, *access.array_expression);
+            } else if (expression.kind == BoundExpressionKind::StringIndex) {
+                const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
+                if (access.null_conditional) return emit_optional_expression(expression, *access.string_expression);
+            } else if (expression.kind == BoundExpressionKind::Call) {
+                const auto& call = static_cast<const BoundCallExpression&>(expression);
+                if (call.null_conditional) return emit_optional_expression(expression, *call.receiver);
+            }
+        }
         switch (expression.kind) {
             case BoundExpressionKind::Literal: {
                 const auto& literal = static_cast<const BoundLiteralExpression&>(expression);
@@ -10175,6 +10291,8 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
     const TypeSymbol* current_function_return_type_ = nullptr;
     fs::path current_function_source_file_;
     int next_exception_handler_id_ = 0;
+    const BoundExpression* optional_receiver_override_ = nullptr;
+    const BoundExpression* optional_expression_root_ = nullptr;
 };
 
 struct ProjectManifest {

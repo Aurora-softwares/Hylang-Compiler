@@ -24,10 +24,10 @@ The [security review](security.md) records confirmed issues and hardening work.
 
 The [Hydrogen Development project](https://github.com/orgs/Aurora-softwares/projects/4)
 tracks the 0.2.0 development target. Fixed-width bitwise operators, integral
-compound assignment, increment/decrement, conditional expressions, and null
-coalescing are implemented and verified across the SDK, Linux native, and
-Windows native paths under Wine. The next language target is
-[null-conditional access](https://github.com/Aurora-softwares/Hylang-Compiler/issues/157).
+compound assignment, increment/decrement, conditional expressions, null
+coalescing, and null-conditional access are implemented and verified across the
+SDK, Linux native, and Windows native paths under Wine. The next language target is
+[switch statements and expressions](https://github.com/Aurora-softwares/Hylang-Compiler/issues/158).
 The remaining language queue is tracked on that project; full-width unsigned
 hexadecimal literals and a real Windows-host validation remain open gates.
 
@@ -379,6 +379,11 @@ The conditional `condition ? whenTrue : whenFalse` expression requires a bool
 condition and compatible branch types; only the selected branch runs.
 Null coalescing with `left ?? fallback` accepts references, evaluates the left
 once, and evaluates the fallback only when the left is null.
+Null-conditional `receiver?.member`, `receiver?.Method(args)`, and
+`receiver?[index]` evaluate the receiver once. A null receiver produces null
+without evaluating call arguments or an index. The result must be a reference;
+primitive-valued access and assignment through a null-conditional access are
+rejected until nullable value types are supported.
 
 Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings or Windows `VirtualAlloc`/`VirtualFree`. Windows file paths are converted from Hydrogen UTF-8 strings to Win32 UTF-16. File reads require seekable files.
 

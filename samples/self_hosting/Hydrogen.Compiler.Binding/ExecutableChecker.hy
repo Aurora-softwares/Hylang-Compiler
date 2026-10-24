@@ -306,14 +306,23 @@ namespace Hydrogen.Compiler.Binding {
                 bool typeReceiver = TypeReceiver(e.Receiver()); string receiver = "";
                 if (typeReceiver) { receiver = module.ResolveType(Qualified(e.Receiver()), owner); e.Receiver().SetResultType(receiver); }
                 else { receiver = Expression(e.Receiver()); }
+                if (e.NullConditional() && (typeReceiver || !module.Reference(receiver))) {
+                    Error("null-conditional access requires an instance reference receiver");
+                }
                 e.SetResolvedOwner(receiver);
                 IrEnum en = module.FindEnum(receiver);
                 if (en != null && typeReceiver) { int i = 0; while (i < en.Members().Length) { if (en.Members()[i].Name() == e.MemberName()) { return receiver; } i = i + 1; } }
-                if ((receiver == "string" || module.IsArray(receiver)) && e.MemberName() == "Length") { return "int"; }
+                if ((receiver == "string" || module.IsArray(receiver)) && e.MemberName() == "Length") {
+                    if (e.NullConditional()) { Error("null-conditional access requires a reference result"); }
+                    return "int";
+                }
                 IrField field = Field(receiver, e.MemberName());
                 if (field != null) {
                     if (field.IsPrivate() && receiver != owner) { Error("private field is inaccessible: " + receiver + "." + field.Name()); }
                     if (field.IsStatic() != typeReceiver) { Error("field receiver does not match static or instance declaration"); }
+                    if (e.NullConditional() && !module.Reference(field.Type().DisplayName())) {
+                        Error("null-conditional access requires a reference result");
+                    }
                     return field.Type().DisplayName();
                 }
                 if (receiver != "<error>") { Error("undefined member '" + e.MemberName() + "' on " + receiver); } return "<error>";
@@ -340,7 +349,15 @@ namespace Hydrogen.Compiler.Binding {
             if (k == IrExpression.KindArrayCreation()) { DeclareType(e.Type(), false); string size = Expression(e.Size()); Require(size, "int", "array size must be int"); return e.Type().DisplayName() + "[]"; }
             if (k == IrExpression.KindIndex()) {
                 string type = Expression(e.Receiver()); string index = Expression(e.Index()); Require(index, "int", "index must be int");
-                if (type == "string") { return "string"; } if (module.IsArray(type)) { return module.Element(type); }
+                if (e.NullConditional() && !module.Reference(type)) { Error("null-conditional indexing requires a reference receiver"); }
+                if (type == "string") { return "string"; }
+                if (module.IsArray(type)) {
+                    string element = module.Element(type);
+                    if (e.NullConditional() && !module.Reference(element)) {
+                        Error("null-conditional access requires a reference result");
+                    }
+                    return element;
+                }
                 if (type != "<error>") { Error("indexing requires an array or string"); } return "<error>";
             }
             if (k == IrExpression.KindAssignment()) {
@@ -431,6 +448,7 @@ namespace Hydrogen.Compiler.Binding {
         }
         private bool Printable(string type) { return type == "string" || type == "bool" || Numeric(type) || type == "<error>"; }
         private bool Writable(IrExpression e) {
+            if (e.NullConditional()) { return false; }
             if (e.Kind() == IrExpression.KindName()) { return e.Name() != "this"; }
             if (e.Kind() == IrExpression.KindIndex()) { return module.IsArray(e.Receiver().ResultType()); }
             if (e.Kind() == IrExpression.KindMemberAccess()) { return Field(e.ResolvedOwner(), e.MemberName()) != null; }
@@ -839,6 +857,9 @@ namespace Hydrogen.Compiler.Binding {
                 explicitReceiver = true; typeReceiver = TypeReceiver(target.Receiver()); name = target.MemberName();
                 if (typeReceiver) { type = module.ResolveType(Qualified(target.Receiver()), owner); target.Receiver().SetResultType(type); }
                 else { type = Expression(target.Receiver()); }
+                if (target.NullConditional() && (typeReceiver || !module.Reference(type))) {
+                    Error("null-conditional invocation requires an instance reference receiver");
+                }
             } else { Error("invalid call target"); Arguments(e.Arguments()); return "<error>"; }
             string[] actualTypes = ArgumentTypes(e.Arguments());
             IrMethod callee = Method(type, name, actualTypes);
@@ -851,7 +872,10 @@ namespace Hydrogen.Compiler.Binding {
             }
             if (callee.IsPrivate() && type != owner) { Error("private method is inaccessible: " + type + "." + name); }
             if (explicitReceiver) { if (callee.IsStatic() != typeReceiver) { Error("method receiver does not match static or instance declaration"); } }
-            else if (!callee.IsStatic() && method.IsStatic()) { Error("instance method requires an object receiver"); }
+            if (target.NullConditional() && !module.Reference(callee.ReturnType().DisplayName())) {
+                Error("null-conditional access requires a reference result");
+            }
+            if (!explicitReceiver && !callee.IsStatic() && method.IsStatic()) { Error("instance method requires an object receiver"); }
             e.SetResolvedOwner(type); e.SetResolvedSignature(Signature(callee)); target.SetResolvedOwner(type); target.SetResultType(callee.ReturnType().DisplayName());
             return callee.ReturnType().DisplayName();
         }

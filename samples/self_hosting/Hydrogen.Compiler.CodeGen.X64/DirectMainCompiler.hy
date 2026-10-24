@@ -794,17 +794,33 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             if (kind == IrExpression.KindMemberAccess()) {
                 if (CompileEnum(expression)) { return true; }
-                if (!CompileFieldAddress(expression.Receiver(), expression.MemberName(), expression.ResolvedOwner())) { return false; }
+                int skip = -1;
+                if (expression.NullConditional()) {
+                    if (!CompileExpression(expression.Receiver())) { return false; }
+                    if (!Reference(valueType) || !Reference(expression.ResultType())) {
+                        failure = "native null-conditional field requires reference receiver and result"; return false;
+                    }
+                    skip = EmitJumpIfZero();
+                }
+                if (!CompileFieldAddressWithReceiver(expression.Receiver(), expression.MemberName(), expression.ResolvedOwner(), skip >= 0)) { return false; }
                 code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x00);
+                if (skip >= 0) { FinishOptional(skip); }
                 return true;
             }
             if (kind == IrExpression.KindIndex()) {
                 if (!CompileExpression(expression.Receiver())) { return false; }
                 string receiverType = valueType;
+                int skip = -1;
+                if (expression.NullConditional()) {
+                    if (!Reference(receiverType) || !Reference(expression.ResultType())) {
+                        failure = "native null-conditional index requires reference receiver and result"; return false;
+                    }
+                    skip = EmitJumpIfZero();
+                }
                 if (!CompileIndexOperands(expression.Index())) { return false; }
-                if (receiverType == "string") { EmitRuntime("rt_char"); valueType = "string"; return true; }
-                if (!IsArray(receiverType)) { failure = "native indexing requires array or string"; return false; }
-                if (!freestanding && receiverType == "byte[]") {
+                if (receiverType == "string") { EmitRuntime("rt_char"); valueType = "string"; }
+                else if (!IsArray(receiverType)) { failure = "native indexing requires array or string"; return false; }
+                else if (!freestanding && receiverType == "byte[]") {
                     EmitCheckedPackedIndex(1);
                     code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0x00); // movzx eax, byte [rax]
                 } else if (!freestanding && receiverType == "int[]") {
@@ -814,7 +830,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     EmitRuntime("rt_index");
                     code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x00);
                 }
-                valueType = ElementType(receiverType);
+                if (receiverType != "string") { valueType = ElementType(receiverType); }
+                if (skip >= 0) { FinishOptional(skip); }
                 return true;
             }
             if (kind == IrExpression.KindArrayCreation()) {
@@ -1364,7 +1381,15 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (RootName(intrinsic) == "System") {
                 failure = "unsupported native runtime intrinsic: " + intrinsic; return false;
             }
-            int target = ResolveFunction(expression);
+            int optionalPatch = -1;
+            if (expression.Target().Kind() == IrExpression.KindMemberAccess() && expression.Target().NullConditional()) {
+                if (!CompileExpression(expression.Target().Receiver())) { return false; }
+                if (!Reference(valueType) || !Reference(expression.ResultType())) {
+                    failure = "native null-conditional call requires reference receiver and result"; return false;
+                }
+                optionalPatch = EmitJumpIfZero();
+            }
+            int target = ResolveFunction(expression, optionalPatch >= 0);
             if (target < 0) { return false; }
             bool hasReceiver = receiverPushed;
             IrMethod method = functions[target].Declaration();
@@ -1388,10 +1413,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (hasReceiver) { slots = slots + 1; }
             DropSlots(slots);
             valueType = ResolveType(method.ReturnType().DisplayName(), functions[target].Owner());
+            if (optionalPatch >= 0) { FinishOptional(optionalPatch); }
             return true;
         }
 
-        private int ResolveFunction(IrExpression call) {
+        private int ResolveFunction(IrExpression call, bool receiverAlreadyLoaded) {
             receiverPushed = false;
             directBaseCall = false;
             IrExpression target = call.Target();
@@ -1408,7 +1434,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 int declared = FindFunction(owner, target.MemberName(), call.ResolvedSignature());
                 if (declared < 0) { return -1; }
                 if (!functions[declared].Declaration().IsStatic()) {
-                    if (!CompileExpression(receiver)) { return -1; }
+                    if (!receiverAlreadyLoaded && !CompileExpression(receiver)) { return -1; }
                     MoveRdiRax(); EmitRuntime("rt_check"); code.EmitByte(0x50);
                     explicitReceiver = true;
                 }
@@ -1821,6 +1847,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private bool CompileFieldAddress(IrExpression receiver, string name, string resolvedOwner) {
+            return CompileFieldAddressWithReceiver(receiver, name, resolvedOwner, false);
+        }
+        private bool CompileFieldAddressWithReceiver(IrExpression receiver, string name, string resolvedOwner, bool receiverAlreadyLoaded) {
             string owner = functions[currentFunction].Owner();
             if (currentStaticOwner != "") { owner = currentStaticOwner; }
             if (resolvedOwner != "") { owner = resolvedOwner; }
@@ -1841,7 +1870,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (slot < 0) { failure = "instance field requires an object receiver"; return false; }
                 EmitLoadLocal(slot);
             } else {
-                if (!CompileExpression(receiver)) { return false; }
+                if (!receiverAlreadyLoaded && !CompileExpression(receiver)) { return false; }
                 owner = valueType;
             }
             MoveRdiRax(); EmitRuntime("rt_check");
@@ -2049,6 +2078,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             int patch = code.Position();
             code.Emit32(0);
             return patch;
+        }
+
+        private void FinishOptional(int skipPatch) {
+            int endPatch = EmitJump();
+            PatchRelative(skipPatch, code.Position());
+            code.EmitByte(0x31); code.EmitByte(0xc0); // xor eax, eax
+            PatchRelative(endPatch, code.Position());
         }
 
         private int EmitJump() {

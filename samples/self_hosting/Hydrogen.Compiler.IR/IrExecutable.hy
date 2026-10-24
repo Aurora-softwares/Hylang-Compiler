@@ -417,6 +417,7 @@ namespace Hydrogen.Compiler.IR {
 		private string literalText;
 		private IrExpression receiver;
 		private string memberName;
+		private bool nullConditional;
 		private IrExpression target;
 		private IrExpression[] arguments;
 		private IrExpression value;
@@ -450,6 +451,8 @@ namespace Hydrogen.Compiler.IR {
 		public string LiteralText() { return literalText; }
 		public IrExpression Receiver() { return receiver; }
 		public string MemberName() { return memberName; }
+		public bool NullConditional() { return nullConditional; }
+		public void SetNullConditional(bool value) { nullConditional = value; }
 		public IrExpression Target() { return target; }
 		public IrExpression[] Arguments() { return arguments; }
 		public IrExpression Value() { return value; }
