@@ -144,6 +144,7 @@ enum class TokenKind {
     Identifier,
     Number,
     StringLiteral,
+    InterpolatedString,
     OpenParen,
     CloseParen,
     OpenBrace,
@@ -309,6 +310,10 @@ class Lexer {
 
 				if (current == '"') {
 					tokens.push_back(lex_string());
+					continue;
+				}
+				if (current == '$' && peek_next() == '"') {
+					tokens.push_back(lex_interpolated_string());
 					continue;
 				}
 
@@ -627,6 +632,48 @@ class Lexer {
 
 			advance();
 			return Token{TokenKind::StringLiteral, value, line, column};
+		}
+
+		Token lex_interpolated_string() {
+			const int line = line_;
+			const int column = column_;
+			advance(); // $
+			advance(); // opening quote
+			string raw;
+			int hole_depth = 0;
+			while (!is_at_end()) {
+				const char ch = advance();
+				if (hole_depth == 0) {
+					if (ch == '"') return Token{TokenKind::InterpolatedString, raw, line, column};
+					if (ch == '\\' && !is_at_end()) {
+						raw.push_back(ch);
+						raw.push_back(advance());
+						continue;
+					}
+					if ((ch == '{' || ch == '}') && !is_at_end() && peek() == ch) {
+						raw.push_back(ch);
+						raw.push_back(advance());
+						continue;
+					}
+					if (ch == '{') hole_depth = 1;
+				} else {
+					if (ch == '"') {
+						raw.push_back(ch);
+						while (!is_at_end()) {
+							const char quoted = advance();
+							raw.push_back(quoted);
+							if (quoted == '\\' && !is_at_end()) raw.push_back(advance());
+							else if (quoted == '"') break;
+						}
+						continue;
+					}
+					if (ch == '{') ++hole_depth;
+					else if (ch == '}') --hole_depth;
+				}
+				raw.push_back(ch);
+			}
+			diagnostics_.add(file_, line, column, "Unterminated interpolated string literal");
+			return Token{TokenKind::InterpolatedString, raw, line, column};
 		}
 
 		fs::path file_;
@@ -2023,6 +2070,118 @@ private:
         return assignment;
     }
 
+    unique_ptr<ExpressionSyntax> parse_interpolated_expression(const Token& token) {
+        auto literal = [&](const string& value) -> unique_ptr<ExpressionSyntax> {
+            auto result = std::make_unique<LiteralExpressionSyntax>();
+            result->line = token.line;
+            result->column = token.column;
+            result->value = value;
+            return result;
+        };
+        auto location = [&](std::size_t offset) {
+            int line = token.line;
+            int column = token.column + 2;
+            for (std::size_t index = 0; index < offset && index < token.text.size(); ++index) {
+                if (token.text[index] == '\n') { ++line; column = 1; }
+                else { ++column; }
+            }
+            return std::pair<int, int>{line, column};
+        };
+        unique_ptr<ExpressionSyntax> result = literal("");
+        auto append = [&](unique_ptr<ExpressionSyntax> part) {
+            auto joined = std::make_unique<BinaryExpressionSyntax>();
+            joined->line = part->line;
+            joined->column = part->column;
+            joined->left = std::move(result);
+            joined->op = TokenKind::Plus;
+            joined->right = std::move(part);
+            result = std::move(joined);
+        };
+        string segment;
+        std::size_t index = 0;
+        while (index < token.text.size()) {
+            const char ch = token.text[index];
+            if (ch == '\\') {
+                if (index + 1 >= token.text.size()) {
+                    diagnostics_.add(file_, location(index).first, location(index).second,
+                                     "Unterminated interpolation escape");
+                    break;
+                }
+                const char escaped = token.text[++index];
+                if (escaped == 'n') segment.push_back('\n');
+                else if (escaped == 'r') segment.push_back('\r');
+                else if (escaped == 't') segment.push_back('\t');
+                else if (escaped == '"') segment.push_back('"');
+                else if (escaped == '\\') segment.push_back('\\');
+                else {
+                    diagnostics_.add(file_, location(index).first, location(index).second,
+                                     "Unsupported interpolation escape sequence");
+                    segment.push_back(escaped);
+                }
+                ++index;
+                continue;
+            }
+            if ((ch == '{' || ch == '}') && index + 1 < token.text.size() && token.text[index + 1] == ch) {
+                segment.push_back(ch);
+                index += 2;
+                continue;
+            }
+            if (ch == '}') {
+                diagnostics_.add(file_, location(index).first, location(index).second,
+                                 "Unescaped '}' in interpolated string");
+                ++index;
+                continue;
+            }
+            if (ch != '{') { segment.push_back(ch); ++index; continue; }
+            if (!segment.empty()) { append(literal(segment)); segment.clear(); }
+            const std::size_t hole_start = ++index;
+            int depth = 1;
+            while (index < token.text.size() && depth > 0) {
+                const char inner = token.text[index++];
+                if (inner == '"') {
+                    while (index < token.text.size()) {
+                        const char quoted = token.text[index++];
+                        if (quoted == '\\' && index < token.text.size()) ++index;
+                        else if (quoted == '"') break;
+                    }
+                } else if (inner == '{') ++depth;
+                else if (inner == '}') --depth;
+            }
+            if (depth != 0) {
+                diagnostics_.add(file_, location(hole_start).first, location(hole_start).second,
+                                 "Unterminated interpolation expression");
+                break;
+            }
+            const string source = token.text.substr(hole_start, index - hole_start - 1);
+            if (trim(source).empty()) {
+                diagnostics_.add(file_, location(hole_start).first, location(hole_start).second,
+                                 "Interpolation expression cannot be empty");
+                continue;
+            }
+            DiagnosticBag hole_diagnostics;
+            Lexer hole_lexer(file_, source, hole_diagnostics);
+            Parser hole_parser(file_, hole_lexer.lex(), hole_diagnostics);
+            auto expression = hole_parser.parse_expression();
+            if (!hole_parser.check(TokenKind::EndOfFile)) {
+                const string reason = hole_parser.check(TokenKind::Colon)
+                                          ? "Interpolation format specifiers are not supported"
+                                          : "Unexpected token in interpolation expression";
+                hole_diagnostics.add(file_, hole_parser.current().line, hole_parser.current().column, reason);
+            }
+            const auto [base_line, base_column] = location(hole_start);
+            for (const auto& diagnostic : hole_diagnostics.items) {
+                diagnostics_.add(file_, base_line + diagnostic.line - 1,
+                                 diagnostic.line == 1 ? base_column + diagnostic.column - 1 : diagnostic.column,
+                                 diagnostic.message);
+            }
+            expression->line = base_line;
+            expression->column = base_column;
+            append(std::move(expression));
+        }
+        if (!segment.empty()) append(literal(segment));
+        return result;
+    }
+
     unique_ptr<ExpressionSyntax> parse_primary_expression() {
         const Token token = current();
         if (match(TokenKind::Number)) {
@@ -2043,6 +2202,7 @@ private:
             literal->value = token.text;
             return literal;
         }
+        if (match(TokenKind::InterpolatedString)) return parse_interpolated_expression(token);
         if (match(TokenKind::True)) {
             auto literal = std::make_unique<LiteralExpressionSyntax>();
             literal->line = token.line;
@@ -2220,6 +2380,7 @@ private:
         return kind == TokenKind::Identifier ||
                kind == TokenKind::Number ||
                kind == TokenKind::StringLiteral ||
+               kind == TokenKind::InterpolatedString ||
                kind == TokenKind::True ||
                kind == TokenKind::False ||
                kind == TokenKind::Null ||

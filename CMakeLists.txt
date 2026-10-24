@@ -97,6 +97,13 @@ add_test(NAME hy_sdk_foreach
         -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/foreach_sdk
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkForeach.cmake)
 set_tests_properties(hy_sdk_foreach PROPERTIES TIMEOUT 120)
+add_test(NAME hy_sdk_interpolation
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/interpolation_sdk
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkInterpolation.cmake)
+set_tests_properties(hy_sdk_interpolation PROPERTIES TIMEOUT 120)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -1592,6 +1599,27 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyForeachFailures.cmake)
     set_tests_properties(hy_stage1_foreach_failures PROPERTIES
         FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_interpolation
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/interpolated_strings.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/interpolated_strings
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_interpolation PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_interpolation_failures
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=${stage1_test_dir}/interpolation_failures
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyInterpolationFailures.cmake)
+    set_tests_properties(hy_stage1_interpolation_failures PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
     if(Python3_Interpreter_FOUND)
         add_test(NAME hy_stage1_progress_width
             COMMAND ${Python3_EXECUTABLE}
@@ -1753,6 +1781,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
                 -DEXPECTED_EXIT_CODE=42
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
         set_tests_properties(hy_stage1_windows_foreach PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
+        add_test(NAME hy_stage1_windows_interpolation
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/interpolated_strings.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/interpolated_strings.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_interpolation PROPERTIES
             FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
             LABELS "windows;crosscompile")
     else()

@@ -25,7 +25,7 @@ The [security review](security.md) records confirmed issues and hardening work.
 The [Hydrogen Development project](https://github.com/orgs/Aurora-softwares/projects/4)
 tracks the 0.2.0 development target. Fixed-width bitwise operators, integral
 compound assignment, increment/decrement, conditional expressions, null
-coalescing, null-conditional access, and `foreach` over arrays and strings are implemented and verified across the
+coalescing, null-conditional access, `foreach` over arrays and strings, and interpolated strings are implemented and verified across the
 SDK, Linux native, and Windows native paths under Wine. The next language target is
 [switch statements and expressions](https://github.com/Aurora-softwares/Hylang-Compiler/issues/158).
 The remaining language queue is tracked on that project; full-width unsigned
@@ -390,6 +390,12 @@ Arrays and strings work in both compilers; strings use the language's current
 byte-index semantics. The SDK also iterates `List<T>` through `Count()` and
 `Get(index)`. Its count is checked each iteration, so additions can extend the
 loop and `Set` changes are observed. No enumerator is created or disposed.
+Interpolated strings use `$"literal {expression}"`. Literal text accepts the
+ordinary `\\`, `\"`, `\n`, `\r`, and `\t` escapes; `{{` and `}}` write braces.
+Embedded expressions run once in left-to-right order and use the existing
+string-concatenation conversion for strings, numbers, and booleans. Formatting
+suffixes such as `{value:x}` are rejected. Literal UTF-8 bytes are preserved
+without normalization, and string length and indexing remain byte based.
 
 Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings or Windows `VirtualAlloc`/`VirtualFree`. Windows file paths are converted from Hydrogen UTF-8 strings to Win32 UTF-16. File reads require seekable files.
 

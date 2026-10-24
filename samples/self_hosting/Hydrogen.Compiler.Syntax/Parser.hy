@@ -535,6 +535,11 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private void ParsePrimaryExpression() {
+            if (Check(SyntaxKind.InterpolatedStringToken)) {
+                Emit("InterpolatedStringExpression");
+                Push(); EmitToken(Advance()); Pop();
+                return;
+            }
             if (Check(SyntaxKind.OpenParenToken) && LooksLikeCastExpression()) {
                 Emit("CastExpression");
                 Push();

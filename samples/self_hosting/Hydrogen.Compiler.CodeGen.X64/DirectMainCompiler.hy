@@ -185,11 +185,6 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 i = i + 1;
             }
             ElfImageBuilder imageBuilder = new ElfImageBuilder();
-            int pi = 0;
-            while (pi < payloads.Length) {
-                if (!imageBuilder.SupportsPayload(payloads[pi])) { return Failed("non-ASCII string literals are not supported by the native backend"); }
-                pi = pi + 1;
-            }
             if (windows) {
                 WindowsImageBuilder windowsImage = new WindowsImageBuilder();
                 byte[] executable = windowsImage.BuildCodeAndData(code.ToArray(), payloads,

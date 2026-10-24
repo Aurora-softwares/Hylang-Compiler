@@ -158,14 +158,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             i = 0;
             while (i < code.Length) { image[textRaw + i] = code[i]; i = i + 1; }
-            ElfImageBuilder ascii = new ElfImageBuilder();
             i = 0;
             while (i < payloads.Length) {
                 int at = dataRaw + payloadOffsets[i];
                 Write64(image, at, payloads[i].Length);
                 int ch = 0;
                 while (ch < payloads[i].Length) {
-                    image[at + 8 + ch] = (byte)ascii.AsciiCode(payloads[i][ch]);
+                    image[at + 8 + ch] = (byte)System.Console.Utf8ByteAt(payloads[i], ch);
                     ch = ch + 1;
                 }
                 i = i + 1;

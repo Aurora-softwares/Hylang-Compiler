@@ -61,6 +61,9 @@ namespace Hydrogen.Compiler.Syntax {
             if (current == "\"") {
                 return LexString(start, startLine, startColumn);
             }
+            if (current == "$" && Match("\"")) {
+                return LexInterpolatedString(start, startLine, startColumn);
+            }
 
             if (current == "(") { return Token(SyntaxKind.OpenParenToken, current, startLine, startColumn, start); }
             if (current == ")") { return Token(SyntaxKind.CloseParenToken, current, startLine, startColumn, start); }
@@ -176,6 +179,35 @@ namespace Hydrogen.Compiler.Syntax {
             }
             text = text + Advance();
             return Token(SyntaxKind.StringToken, text, startLine, startColumn, start);
+        }
+
+        private SyntaxToken LexInterpolatedString(int start, int startLine, int startColumn) {
+            string text = "$\"";
+            int depth = 0;
+            while (!IsAtEnd()) {
+                string ch = Advance();
+                text = text + ch;
+                if (depth == 0) {
+                    if (ch == "\"") { return Token(SyntaxKind.InterpolatedStringToken, text, startLine, startColumn, start); }
+                    if (ch == "\\" && !IsAtEnd()) { text = text + Advance(); continue; }
+                    if ((ch == "{" || ch == "}") && Peek() == ch) { text = text + Advance(); continue; }
+                    if (ch == "{") { depth = 1; }
+                } else {
+                    if (ch == "\"") {
+                        while (!IsAtEnd()) {
+                            string quoted = Advance();
+                            text = text + quoted;
+                            if (quoted == "\\" && !IsAtEnd()) { text = text + Advance(); }
+                            else if (quoted == "\"") { break; }
+                        }
+                        continue;
+                    }
+                    if (ch == "{") { depth = depth + 1; }
+                    else if (ch == "}") { depth = depth - 1; }
+                }
+            }
+            diagnostics.Report(startLine, startColumn, "Unterminated interpolated string literal");
+            return Token(SyntaxKind.InterpolatedStringToken, text, startLine, startColumn, start);
         }
 
         private void SkipWhitespaceAndComments() {

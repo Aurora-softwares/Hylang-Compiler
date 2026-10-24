@@ -160,7 +160,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 Write64(image, payloadOffsets[pi], payload.Length);
                 int k = 0;
                 while (k < payload.Length) {
-                    image[payloadOffsets[pi] + 8 + k] = (byte)AsciiCode(payload[k]);
+                    image[payloadOffsets[pi] + 8 + k] = (byte)System.Console.Utf8ByteAt(payload, k);
                     k = k + 1;
                 }
                 image[payloadOffsets[pi] + 8 + payload.Length] = 0;

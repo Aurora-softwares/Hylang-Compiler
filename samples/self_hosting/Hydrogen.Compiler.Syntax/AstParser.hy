@@ -1,4 +1,5 @@
 using Hydrogen.Compiler.Diagnostics;
+using Hydrogen.Compiler.Text;
 
 namespace Hydrogen.Compiler.Syntax {
     public class AstParser {
@@ -16,6 +17,18 @@ namespace Hydrogen.Compiler.Syntax {
             tokens = inputTokens;
             diagnostics = inputDiagnostics;
             index = 0;
+        }
+
+        public ExpressionSyntax ParseEmbeddedExpression() {
+            ExpressionSyntax result = ParseExpression();
+            if (!Check(SyntaxKind.EndOfFileToken)) {
+                if (Check(SyntaxKind.ColonToken)) {
+                    diagnostics.Report(Current().Line(), Current().Column(), "Interpolation format specifiers are not supported");
+                } else {
+                    diagnostics.Report(Current().Line(), Current().Column(), "Unexpected token in interpolation expression");
+                }
+            }
+            return result;
         }
 
         public CompilationUnitSyntax ParseCompilationUnit() {
@@ -752,6 +765,9 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private ExpressionSyntax ParsePrimary() {
+            if (Check(SyntaxKind.InterpolatedStringToken)) {
+                return ParseInterpolatedString(Advance());
+            }
             if (Check(SyntaxKind.OpenParenToken)) {
                 Advance();
                 ExpressionSyntax inner = ParseExpression();
@@ -851,6 +867,118 @@ namespace Hydrogen.Compiler.Syntax {
                    next == SyntaxKind.MinusToken ||
                    next == SyntaxKind.PlusToken ||
                    next == SyntaxKind.OpenParenToken;
+        }
+
+        private TextLocation InterpolationLocation(SyntaxToken token, string raw, int offset) {
+            int line = token.Line();
+            int column = token.Column();
+            int index = 0;
+            while (index < offset && index < raw.Length) {
+                if (raw[index] == "\n") { line = line + 1; column = 1; }
+                else { column = column + 1; }
+                index = index + 1;
+            }
+            return new TextLocation(line, column);
+        }
+
+        private ExpressionSyntax AppendInterpolated(ExpressionSyntax left, ExpressionSyntax right, SyntaxToken token) {
+            ExpressionSyntax joined = ExpressionSyntax.Binary(left, SyntaxKind.PlusToken, right);
+            joined.SetLocation(token.Line(), token.Column(), token.Position(), token.Text().Length);
+            return joined;
+        }
+
+        private ExpressionSyntax ParseInterpolatedString(SyntaxToken token) {
+            string raw = token.Text();
+            int end = raw.Length;
+            if (end > 2 && raw[end - 1] == "\"") { end = end - 1; }
+            ExpressionSyntax result = ExpressionSyntax.Literal("string", "");
+            result.SetLocation(token.Line(), token.Column(), token.Position(), token.Text().Length);
+            string segment = "";
+            int index = 2;
+            while (index < end) {
+                string ch = raw[index];
+                if (ch == "\\") {
+                    if (index + 1 >= end) {
+                        TextLocation at = InterpolationLocation(token, raw, index);
+                        diagnostics.Report(at.Line(), at.Column(), "Unterminated interpolation escape");
+                        break;
+                    }
+                    index = index + 1;
+                    string escaped = raw[index];
+                    if (escaped == "n") { segment = segment + "\n"; }
+                    else if (escaped == "r") { segment = segment + "\r"; }
+                    else if (escaped == "t") { segment = segment + "\t"; }
+                    else if (escaped == "\\") { segment = segment + "\\"; }
+                    else if (escaped == "\"") { segment = segment + "\""; }
+                    else {
+                        TextLocation at = InterpolationLocation(token, raw, index);
+                        diagnostics.Report(at.Line(), at.Column(), "Unsupported interpolation escape sequence");
+                        segment = segment + escaped;
+                    }
+                    index = index + 1;
+                    continue;
+                }
+                if ((ch == "{" || ch == "}") && index + 1 < end && raw[index + 1] == ch) {
+                    segment = segment + ch;
+                    index = index + 2;
+                    continue;
+                }
+                if (ch == "}") {
+                    TextLocation at = InterpolationLocation(token, raw, index);
+                    diagnostics.Report(at.Line(), at.Column(), "Unescaped '}' in interpolated string");
+                    index = index + 1;
+                    continue;
+                }
+                if (ch != "{") { segment = segment + ch; index = index + 1; continue; }
+                if (segment != "") {
+                    result = AppendInterpolated(result, ExpressionSyntax.Literal("string", segment), token);
+                    segment = "";
+                }
+                index = index + 1;
+                int holeStart = index;
+                int depth = 1;
+                while (index < end && depth > 0) {
+                    string inner = raw[index];
+                    index = index + 1;
+                    if (inner == "\"") {
+                        while (index < end) {
+                            string quoted = raw[index];
+                            index = index + 1;
+                            if (quoted == "\\" && index < end) { index = index + 1; }
+                            else if (quoted == "\"") { break; }
+                        }
+                    } else if (inner == "{") { depth = depth + 1; }
+                    else if (inner == "}") { depth = depth - 1; }
+                }
+                TextLocation holeLocation = InterpolationLocation(token, raw, holeStart);
+                if (depth != 0) {
+                    diagnostics.Report(holeLocation.Line(), holeLocation.Column(), "Unterminated interpolation expression");
+                    break;
+                }
+                string hole = Slice(raw, holeStart, index - holeStart - 1);
+                if (hole == "") {
+                    diagnostics.Report(holeLocation.Line(), holeLocation.Column(), "Interpolation expression cannot be empty");
+                    continue;
+                }
+                DiagnosticBag holeDiagnostics = new DiagnosticBag();
+                Lexer holeLexer = new Lexer(new SourceText(hole), holeDiagnostics);
+                SyntaxTokenList holeTokens = holeLexer.LexAll();
+                AstParser holeParser = new AstParser(holeTokens, holeDiagnostics);
+                ExpressionSyntax expression = holeParser.ParseEmbeddedExpression();
+                int diagnosticIndex = 0;
+                while (diagnosticIndex < holeDiagnostics.Count()) {
+                    Diagnostic diagnostic = holeDiagnostics.Get(diagnosticIndex);
+                    int line = holeLocation.Line() + diagnostic.Location().Line() - 1;
+                    int column = diagnostic.Location().Column();
+                    if (diagnostic.Location().Line() == 1) { column = holeLocation.Column() + column - 1; }
+                    diagnostics.Report(line, column, diagnostic.Message());
+                    diagnosticIndex = diagnosticIndex + 1;
+                }
+                expression.SetLocation(holeLocation.Line(), holeLocation.Column(), token.Position() + holeStart, hole.Length);
+                result = AppendInterpolated(result, expression, token);
+            }
+            if (segment != "") { result = AppendInterpolated(result, ExpressionSyntax.Literal("string", segment), token); }
+            return result;
         }
 
         private string UnquoteStringToken(string tokenText) {

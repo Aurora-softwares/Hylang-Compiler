@@ -6,6 +6,7 @@ namespace Hydrogen.Compiler.Syntax {
             if (kind == SyntaxKind.IdentifierToken) { return "Identifier"; }
             if (kind == SyntaxKind.NumberToken) { return "Number"; }
             if (kind == SyntaxKind.StringToken) { return "String"; }
+            if (kind == SyntaxKind.InterpolatedStringToken) { return "InterpolatedString"; }
             if (kind == SyntaxKind.OpenParenToken) { return "OpenParen"; }
             if (kind == SyntaxKind.CloseParenToken) { return "CloseParen"; }
             if (kind == SyntaxKind.OpenBraceToken) { return "OpenBrace"; }
