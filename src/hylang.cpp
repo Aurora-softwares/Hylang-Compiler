@@ -154,8 +154,10 @@ enum class TokenKind {
     Comma,
     Dot,
     Plus,
+    PlusPlus,
     PlusEquals,
     Minus,
+    MinusMinus,
     MinusEquals,
     Star,
     StarEquals,
@@ -341,11 +343,13 @@ class Lexer {
 						tokens.push_back(Token{TokenKind::Colon, ":", line, column});
 						break;
 					case '+':
-						if (match('=')) tokens.push_back(Token{TokenKind::PlusEquals, "+=", line, column});
+						if (match('+')) tokens.push_back(Token{TokenKind::PlusPlus, "++", line, column});
+						else if (match('=')) tokens.push_back(Token{TokenKind::PlusEquals, "+=", line, column});
 						else tokens.push_back(Token{TokenKind::Plus, "+", line, column});
 						break;
 					case '-':
-						if (match('=')) tokens.push_back(Token{TokenKind::MinusEquals, "-=", line, column});
+						if (match('-')) tokens.push_back(Token{TokenKind::MinusMinus, "--", line, column});
+						else if (match('=')) tokens.push_back(Token{TokenKind::MinusEquals, "-=", line, column});
 						else tokens.push_back(Token{TokenKind::Minus, "-", line, column});
 						break;
 					case '*':
@@ -673,6 +677,7 @@ struct AssignmentExpressionSyntax final : ExpressionSyntax {
     unique_ptr<ExpressionSyntax> target;
     unique_ptr<ExpressionSyntax> expression;
     TokenKind op = TokenKind::Equals;
+    bool returns_old = false;
 };
 
 struct UnaryExpressionSyntax final : ExpressionSyntax {
@@ -1776,6 +1781,10 @@ private:
     }
 
     unique_ptr<ExpressionSyntax> parse_unary_expression() {
+        if (match(TokenKind::PlusPlus) || match(TokenKind::MinusMinus)) {
+            const Token token = previous();
+            return make_update_expression(parse_unary_expression(), token, false);
+        }
         if (looks_like_type_cast()) {
             const Token open = consume(TokenKind::OpenParen, "Expected '(' to start cast");
             auto cast = std::make_unique<CastExpressionSyntax>();
@@ -1839,9 +1848,31 @@ private:
                 continue;
             }
 
+            if (match(TokenKind::PlusPlus) || match(TokenKind::MinusMinus)) {
+                const Token token = previous();
+                expression = make_update_expression(std::move(expression), token, true);
+                continue;
+            }
+
             break;
         }
         return expression;
+    }
+
+    unique_ptr<ExpressionSyntax> make_update_expression(unique_ptr<ExpressionSyntax> target,
+                                                        const Token& token, bool returns_old) {
+        auto one = std::make_unique<LiteralExpressionSyntax>();
+        one->line = token.line;
+        one->column = token.column;
+        one->value = int64_t{1};
+        auto assignment = std::make_unique<AssignmentExpressionSyntax>();
+        assignment->line = token.line;
+        assignment->column = token.column;
+        assignment->target = std::move(target);
+        assignment->expression = std::move(one);
+        assignment->op = token.kind == TokenKind::PlusPlus ? TokenKind::PlusEquals : TokenKind::MinusEquals;
+        assignment->returns_old = returns_old;
+        return assignment;
     }
 
     unique_ptr<ExpressionSyntax> parse_primary_expression() {
@@ -2310,6 +2341,7 @@ struct BoundAssignmentExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> target;
     std::unique_ptr<BoundExpression> expression;
     TokenKind compound_op = TokenKind::Equals;
+    bool returns_old = false;
 };
 
 struct BoundConversionExpression final : BoundExpression {
@@ -4927,6 +4959,7 @@ private:
                                          "Compound assignment to pointer targets is not supported");
                     }
                     bound->compound_op = compound_binary_operator(assignment->op);
+                    bound->returns_old = assignment->returns_old;
                 } else if (!is_expression_assignable_to_type(target->type, value.get())) {
                     diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                      "Cannot assign expression of type '" + value->type->display_name +
@@ -7164,6 +7197,7 @@ private:
                     Value stored{compound_integral_value(old_value, right_value, assignment.compound_op,
                                                          assignment.target->type)};
                     destination = stored;
+                    if (assignment.returns_old) return Value{old_value};
                     return stored;
                 }
                 Value value = evaluate_expression(*assignment.expression, frame);
@@ -7724,7 +7758,7 @@ static void hy_compound_unwind(hy_compound_frame* marker) {
         free(frame);
     }
 }
-static int64_t hy_compound_integer(int64_t rhs, int op, int bits, int is_signed) {
+static int64_t hy_compound_integer(int64_t rhs, int op, int bits, int is_signed, int return_old) {
     hy_compound_frame* frame = hy_compound_top;
     if (!frame) hy_runtime_fail("Compound assignment frame missing");
     hy_compound_top = frame->previous;
@@ -7763,7 +7797,9 @@ static int64_t hy_compound_integer(int64_t rhs, int op, int bits, int is_signed)
     else if (storage_bytes == 2) { uint16_t value = (uint16_t)stored; memcpy(location, &value, 2); }
     else if (storage_bytes == 4) { uint32_t value = (uint32_t)stored; memcpy(location, &value, 4); }
     else memcpy(location, &stored, 8);
-    return hy_wrap_i64(stored);
+    uint64_t previous = left;
+    if (is_signed && (previous & (UINT64_C(1) << (bits - 1)))) previous |= ~mask;
+    return hy_wrap_i64(return_old ? previous : stored);
 }
 
 )HY";
@@ -9484,7 +9520,8 @@ static int64_t hy_compound_integer(int64_t rhs, int op, int bits, int is_signed)
                            emit_expression(*assignment.expression) + "), " +
                            std::to_string(compound_operator_code(assignment.compound_op)) + ", " +
                            std::to_string(integral_type_size_bytes(assignment.type) * 8) + ", " +
-                           std::to_string(is_signed_integral_type(assignment.type) ? 1 : 0) + ")))";
+                           std::to_string(is_signed_integral_type(assignment.type) ? 1 : 0) + ", " +
+                           std::to_string(assignment.returns_old ? 1 : 0) + ")))";
                 }
                 // Array index assignment requires storing into int64_t element storage
                 if (assignment.target->kind == BoundExpressionKind::ArrayIndex) {

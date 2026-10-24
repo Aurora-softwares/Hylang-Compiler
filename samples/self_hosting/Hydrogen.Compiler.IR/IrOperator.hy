@@ -92,5 +92,7 @@ namespace Hydrogen.Compiler.IR {
         public static int CaretEqualsToken() { return 89; }
         public static int ShiftLeftEqualsToken() { return 90; }
         public static int ShiftRightEqualsToken() { return 91; }
+        public static int PlusPlusToken() { return 92; }
+        public static int MinusMinusToken() { return 93; }
     }
 }

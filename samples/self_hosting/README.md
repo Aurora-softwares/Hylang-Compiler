@@ -148,6 +148,8 @@ without changing the two `>` tokens used by nested generic type names.
 Compound assignment supports `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`,
 `<<=`, and `>>=` on integral lvalues. Field receivers and array indexes are
 evaluated once; the expression returns the stored value.
+Prefix and postfix `++` and `--` also work on integral lvalues. Prefix returns
+the new value; postfix returns the old value, with one target evaluation.
 
 Fatal freestanding CPU exceptions use an allocation-free IDT panic path. It
 captures the CPU exception frame, `CR2`, and all general registers, writes a

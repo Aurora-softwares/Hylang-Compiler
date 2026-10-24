@@ -402,6 +402,7 @@ using Hydrogen.Compiler.Text;
 		private ExpressionSyntax[] arguments;
 		private ExpressionSyntax value;
 		private SyntaxKind assignmentOp;
+		private bool returnsOld;
 		private ExpressionSyntax left;
 		private SyntaxKind op;
 		private ExpressionSyntax right;
@@ -431,6 +432,8 @@ using Hydrogen.Compiler.Text;
 		public ExpressionSyntax[] Arguments() { return arguments; }
 		public ExpressionSyntax Value() { return value; }
 		public SyntaxKind AssignmentOperatorKind() { return assignmentOp; }
+		public bool ReturnsOld() { return returnsOld; }
+		public void SetReturnsOld(bool inputReturnsOld) { returnsOld = inputReturnsOld; }
 		public ExpressionSyntax Left() { return left; }
 		public SyntaxKind OperatorKind() { return op; }
 		public ExpressionSyntax Right() { return right; }

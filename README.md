@@ -23,10 +23,10 @@ The [runtime comparison harness](benchmarks/runtime/README.md) times equivalent 
 The [security review](security.md) records confirmed issues and hardening work.
 
 The [Hydrogen Development project](https://github.com/orgs/Aurora-softwares/projects/4)
-tracks the 0.2.0 development target. Fixed-width bitwise operators and integral
-compound assignment are implemented and verified across the SDK, Linux native,
-and Windows native paths under Wine. The next language target is
-[increment and decrement](https://github.com/Aurora-softwares/Hylang-Compiler/issues/154).
+tracks the 0.2.0 development target. Fixed-width bitwise operators, integral
+compound assignment, and increment/decrement are implemented and verified
+across the SDK, Linux native, and Windows native paths under Wine. The next
+language target is the [conditional expression](https://github.com/Aurora-softwares/Hylang-Compiler/issues/155).
 The remaining language queue is tracked on that project; full-width unsigned
 hexadecimal literals and a real Windows-host validation remain open gates.
 
@@ -372,6 +372,8 @@ with zero.
 Integral lvalues also support `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`,
 `<<=`, and `>>=`. The assignment returns the stored value and evaluates an
 indexed or field target once. Compound shifts use the target's integer width.
+Prefix and postfix `++` and `--` work on integral lvalues. Prefix returns the
+new value; postfix returns the old value. Both evaluate the target once.
 
 Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings or Windows `VirtualAlloc`/`VirtualFree`. Windows file paths are converted from Hydrogen UTF-8 strings to Win32 UTF-16. File reads require seekable files.
 

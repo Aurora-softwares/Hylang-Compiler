@@ -616,6 +616,10 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private ExpressionSyntax ParseUnary() {
+            if (Check(SyntaxKind.PlusPlusToken) || Check(SyntaxKind.MinusMinusToken)) {
+                SyntaxKind op = Advance().Kind();
+                return MakeUpdate(ParseUnary(), op, false);
+            }
             if (Check(SyntaxKind.OpenParenToken) && LooksLikeCastExpression()) {
                 Advance();
                 TypeSyntax type = ParseType();
@@ -652,9 +656,22 @@ namespace Hydrogen.Compiler.Syntax {
                     expr = ExpressionSyntax.IndexExpr(expr, indexExpr);
                     continue;
                 }
+                if (Check(SyntaxKind.PlusPlusToken) || Check(SyntaxKind.MinusMinusToken)) {
+                    SyntaxKind op = Advance().Kind();
+                    expr = MakeUpdate(expr, op, true);
+                    continue;
+                }
                 break;
             }
             return expr;
+        }
+
+        private ExpressionSyntax MakeUpdate(ExpressionSyntax target, SyntaxKind op, bool returnsOld) {
+            SyntaxKind assignment = SyntaxKind.MinusEqualsToken;
+            if (op == SyntaxKind.PlusPlusToken) { assignment = SyntaxKind.PlusEqualsToken; }
+            ExpressionSyntax result = ExpressionSyntax.Assignment(target, assignment, ExpressionSyntax.Literal("number", "1"));
+            result.SetReturnsOld(returnsOld);
+            return result;
         }
 
         private ExpressionSyntax[] ParseArgumentList() {

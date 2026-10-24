@@ -477,6 +477,11 @@ namespace Hydrogen.Compiler.Syntax {
                     Pop();
                     continue;
                 }
+                if (Check(SyntaxKind.PlusPlusToken) || Check(SyntaxKind.MinusMinusToken)) {
+                    Emit("PostfixUpdateExpression");
+                    Push(); EmitToken(Advance()); Pop();
+                    continue;
+                }
                 return;
             }
         }
@@ -694,7 +699,8 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private int UnaryPrecedence(SyntaxKind kind) {
-            if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken || kind == SyntaxKind.BangToken ||
+            if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken ||
+                kind == SyntaxKind.PlusPlusToken || kind == SyntaxKind.MinusMinusToken || kind == SyntaxKind.BangToken ||
                 kind == SyntaxKind.TildeToken ||
                 kind == SyntaxKind.AmpersandToken || kind == SyntaxKind.StarToken) {
                 return 11;

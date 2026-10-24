@@ -144,7 +144,7 @@ namespace Hydrogen.Compiler.Binding {
             else if (k == ExpressionSyntax.KindLiteral()) { result = IrExpression.Literal(e.LiteralKind(), e.LiteralText()); }
             else if (k == ExpressionSyntax.KindMemberAccess()) { result = IrExpression.MemberAccess(Expression(e.Receiver()), e.MemberName()); }
             else if (k == ExpressionSyntax.KindInvocation()) { IrExpression target = Expression(e.Target()); IrExpression[] arguments = Arguments(e.Arguments()); result = IrExpression.Invocation(target, arguments); }
-            else if (k == ExpressionSyntax.KindAssignment()) { IrExpression target = Expression(e.Target()); IrExpression value = Expression(e.Value()); result = IrExpression.Assignment(target, (int)e.AssignmentOperatorKind(), value); }
+            else if (k == ExpressionSyntax.KindAssignment()) { IrExpression target = Expression(e.Target()); IrExpression value = Expression(e.Value()); result = IrExpression.Assignment(target, (int)e.AssignmentOperatorKind(), value); result.SetReturnsOld(e.ReturnsOld()); }
             else if (k == ExpressionSyntax.KindBinary()) { IrExpression left = Expression(e.Left()); IrExpression right = Expression(e.Right()); result = IrExpression.Binary(left, (int)e.OperatorKind(), right); }
             else if (k == ExpressionSyntax.KindIndex()) { IrExpression receiver = Expression(e.Receiver()); IrExpression index = Expression(e.Index()); result = IrExpression.IndexExpr(receiver, index); }
             else if (k == ExpressionSyntax.KindObjectCreation()) { IrType type = Type(e.Type()); IrExpression[] arguments = Arguments(e.Arguments()); result = IrExpression.ObjectCreation(type, arguments); }

@@ -420,6 +420,7 @@ namespace Hydrogen.Compiler.IR {
 		private IrExpression[] arguments;
 		private IrExpression value;
 		private int assignmentOp;
+		private bool returnsOld;
 		private IrExpression left;
 		private int op;
 		private IrExpression right;
@@ -449,6 +450,8 @@ namespace Hydrogen.Compiler.IR {
 		public IrExpression[] Arguments() { return arguments; }
 		public IrExpression Value() { return value; }
 		public int AssignmentOperatorKind() { return assignmentOp; }
+		public bool ReturnsOld() { return returnsOld; }
+		public void SetReturnsOld(bool inputReturnsOld) { returnsOld = inputReturnsOld; }
 		public IrExpression Left() { return left; }
 		public int OperatorKind() { return op; }
 		public IrExpression Right() { return right; }

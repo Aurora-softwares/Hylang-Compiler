@@ -18,6 +18,8 @@ namespace Hydrogen.Compiler.Syntax {
             if (kind == SyntaxKind.ColonToken) { return "Colon"; }
             if (kind == SyntaxKind.PlusToken) { return "Plus"; }
             if (kind == SyntaxKind.MinusToken) { return "Minus"; }
+            if (kind == SyntaxKind.PlusPlusToken) { return "PlusPlus"; }
+            if (kind == SyntaxKind.MinusMinusToken) { return "MinusMinus"; }
             if (kind == SyntaxKind.StarToken) { return "Star"; }
             if (kind == SyntaxKind.SlashToken) { return "Slash"; }
             if (kind == SyntaxKind.PercentToken) { return "Percent"; }

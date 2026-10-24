@@ -1828,6 +1828,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             IrExpression target = expression.Target();
             int assignmentOp = expression.AssignmentOperatorKind();
             bool compound = assignmentOp != IrOperator.EqualsToken();
+            bool returnsOld = expression.ReturnsOld();
             int slot = -1;
             string expected = "";
             bool packedByteTarget = false;
@@ -1867,6 +1868,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x00); // mov rax, [rax]
                     NormalizeRax(expected);
                 }
+                if (returnsOld) { code.EmitByte(0x50); } // result of postfix update
                 code.EmitByte(0x50); // preserve old value while evaluating RHS
             }
             if (!CompileExpression(expression.Value())) { return false; }
@@ -1913,12 +1915,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 NormalizeRax(expected);
             } else if (!Assignable(valueType, expected)) { failure = "native assignment type mismatch"; return false; }
             PrepareValue(expected);
-            if (slot >= 0) { EmitStoreLocal(slot); }
+            if (slot >= 0) {
+                EmitStoreLocal(slot);
+                if (returnsOld) { code.EmitByte(0x58); } // pop original value into rax
+            }
             else {
+                if (returnsOld) { code.EmitByte(0x5a); } // original value in rdx
                 code.EmitByte(0x59);
                 if (packedByteTarget) { code.EmitByte(0x88); code.EmitByte(0x01); }
                 else if (packedIntTarget) { code.EmitByte(0x89); code.EmitByte(0x01); }
                 else { code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0x01); }
+                if (returnsOld) { code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd0); } // mov rax, rdx
             }
             valueType = expected; return true;
         }
