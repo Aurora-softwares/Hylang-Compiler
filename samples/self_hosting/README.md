@@ -158,6 +158,11 @@ Null-conditional member, method, and index access uses `?.` and `?[index]`.
 The receiver evaluates once, and a null receiver produces null without running
 call arguments or index expressions. The result must be a reference value;
 primitive results and null-conditional assignment targets are rejected.
+`foreach (T value in collection)` supports arrays and strings in the native
+compiler. It captures the collection once, reads current element values, and
+preserves `break` and `continue` behavior. Strings follow byte-index semantics.
+The SDK also supports `List<T>`; its live `Count()` controls iteration, so
+adding items can extend the loop. No enumerator or disposal call is involved.
 
 Fatal freestanding CPU exceptions use an allocation-free IDT panic path. It
 captures the CPU exception frame, `CR2`, and all general registers, writes a

@@ -145,6 +145,9 @@ namespace Hydrogen.Compiler.Binding {
                     if (value == "" || value == "void" || value == "null") { Error("var requires a value with a concrete type"); type = "<error>"; } else { type = value; }
                     s.Type().SetName(type);
                 } else { DeclareType(s.Type(), false); type = s.Type().DisplayName(); if (value != "") { Require(value, type, "local initializer type mismatch"); } }
+                if (s.Name() == "__hy_foreach$collection" && type != "<error>" && type != "string" && !module.IsArray(type)) {
+                    Error("foreach requires an array or string collection");
+                }
                 Add(s.Name(), type); return;
             }
             if (k == IrStatement.KindReturnStatement()) {

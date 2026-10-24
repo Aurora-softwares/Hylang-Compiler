@@ -85,6 +85,8 @@ namespace Hydrogen.Compiler.Syntax {
             if (kind == SyntaxKind.ElseKeyword) { return "Else"; }
             if (kind == SyntaxKind.WhileKeyword) { return "While"; }
             if (kind == SyntaxKind.ForKeyword) { return "For"; }
+            if (kind == SyntaxKind.ForeachKeyword) { return "Foreach"; }
+            if (kind == SyntaxKind.InKeyword) { return "In"; }
             if (kind == SyntaxKind.BreakKeyword) { return "Break"; }
             if (kind == SyntaxKind.ContinueKeyword) { return "Continue"; }
             if (kind == SyntaxKind.ReturnKeyword) { return "Return"; }
@@ -135,6 +137,8 @@ namespace Hydrogen.Compiler.Syntax {
             if (text == "else") { return SyntaxKind.ElseKeyword; }
             if (text == "while") { return SyntaxKind.WhileKeyword; }
             if (text == "for") { return SyntaxKind.ForKeyword; }
+            if (text == "foreach") { return SyntaxKind.ForeachKeyword; }
+            if (text == "in") { return SyntaxKind.InKeyword; }
             if (text == "break") { return SyntaxKind.BreakKeyword; }
             if (text == "continue") { return SyntaxKind.ContinueKeyword; }
             if (text == "return") { return SyntaxKind.ReturnKeyword; }

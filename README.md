@@ -25,7 +25,7 @@ The [security review](security.md) records confirmed issues and hardening work.
 The [Hydrogen Development project](https://github.com/orgs/Aurora-softwares/projects/4)
 tracks the 0.2.0 development target. Fixed-width bitwise operators, integral
 compound assignment, increment/decrement, conditional expressions, null
-coalescing, and null-conditional access are implemented and verified across the
+coalescing, null-conditional access, and `foreach` over arrays and strings are implemented and verified across the
 SDK, Linux native, and Windows native paths under Wine. The next language target is
 [switch statements and expressions](https://github.com/Aurora-softwares/Hylang-Compiler/issues/158).
 The remaining language queue is tracked on that project; full-width unsigned
@@ -384,6 +384,12 @@ Null-conditional `receiver?.member`, `receiver?.Method(args)`, and
 without evaluating call arguments or an index. The result must be a reference;
 primitive-valued access and assignment through a null-conditional access are
 rejected until nullable value types are supported.
+`foreach (T value in collection)` captures the collection once and reads each
+element at its current index. `break` and `continue` use ordinary loop rules.
+Arrays and strings work in both compilers; strings use the language's current
+byte-index semantics. The SDK also iterates `List<T>` through `Count()` and
+`Get(index)`. Its count is checked each iteration, so additions can extend the
+loop and `Set` changes are observed. No enumerator is created or disposed.
 
 Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings or Windows `VirtualAlloc`/`VirtualFree`. Windows file paths are converted from Hydrogen UTF-8 strings to Win32 UTF-16. File reads require seekable files.
 

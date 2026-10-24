@@ -369,6 +369,9 @@ namespace Hydrogen.Compiler.Syntax {
             if (Check(SyntaxKind.ForKeyword)) {
                 return ParseFor();
             }
+            if (Check(SyntaxKind.ForeachKeyword)) {
+                return ParseForeach();
+            }
             if (Check(SyntaxKind.ReturnKeyword)) {
                 return ParseReturn();
             }
@@ -496,6 +499,37 @@ namespace Hydrogen.Compiler.Syntax {
             }
             Consume(SyntaxKind.CloseParenToken, "Expected ')' after for clauses");
             return StatementSyntax.For(initializer, condition, increment, ParseStatement());
+        }
+
+        private StatementSyntax ParseForeach() {
+            Consume(SyntaxKind.ForeachKeyword, "Expected foreach");
+            Consume(SyntaxKind.OpenParenToken, "Expected '(' after foreach");
+            TypeSyntax elementType = ParseType();
+            string elementName = ConsumeIdentifier("Expected foreach variable name");
+            Consume(SyntaxKind.InKeyword, "Expected 'in' after foreach variable");
+            ExpressionSyntax collection = ParseExpression();
+            Consume(SyntaxKind.CloseParenToken, "Expected ')' after foreach collection");
+            StatementSyntax body = ParseStatement();
+
+            string collectionName = "__hy_foreach$collection";
+            string indexName = "__hy_foreach$index";
+            StatementSyntax collectionVariable = StatementSyntax.VariableDeclaration(new TypeSyntax("var"), collectionName, collection);
+            StatementSyntax indexVariable = StatementSyntax.VariableDeclaration(new TypeSyntax("int"), indexName,
+                ExpressionSyntax.Literal("number", "0"));
+            ExpressionSyntax length = ExpressionSyntax.MemberAccess(ExpressionSyntax.NameExpr(collectionName), "Length");
+            ExpressionSyntax condition = ExpressionSyntax.Binary(ExpressionSyntax.NameExpr(indexName), SyntaxKind.LessToken, length);
+            ExpressionSyntax increment = ExpressionSyntax.Assignment(ExpressionSyntax.NameExpr(indexName), SyntaxKind.PlusEqualsToken,
+                ExpressionSyntax.Literal("number", "1"));
+            ExpressionSyntax item = ExpressionSyntax.IndexExpr(ExpressionSyntax.NameExpr(collectionName), ExpressionSyntax.NameExpr(indexName));
+            StatementSyntax iterationVariable = StatementSyntax.VariableDeclaration(elementType, elementName, item);
+            StatementSyntax[] bodyStatements = new StatementSyntax[2];
+            bodyStatements[0] = iterationVariable;
+            bodyStatements[1] = body;
+            StatementSyntax loop = StatementSyntax.For(indexVariable, condition, increment, StatementSyntax.Block(bodyStatements));
+            StatementSyntax[] outerStatements = new StatementSyntax[2];
+            outerStatements[0] = collectionVariable;
+            outerStatements[1] = loop;
+            return StatementSyntax.Block(outerStatements);
         }
 
         private StatementSyntax ParseReturn() {

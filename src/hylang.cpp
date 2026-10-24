@@ -222,6 +222,8 @@ enum class TokenKind {
     Else,
     While,
     For,
+    Foreach,
+    In,
     Break,
     Continue,
     Return,
@@ -538,6 +540,8 @@ class Lexer {
 				{"else", TokenKind::Else},
 				{"while", TokenKind::While},
 				{"for", TokenKind::For},
+				{"foreach", TokenKind::Foreach},
+				{"in", TokenKind::In},
 				{"break", TokenKind::Break},
 				{"continue", TokenKind::Continue},
 				{"return", TokenKind::Return},
@@ -1421,6 +1425,9 @@ private:
         if (match(TokenKind::For)) {
             return parse_for_statement(previous());
         }
+        if (match(TokenKind::Foreach)) {
+            return parse_foreach_statement(previous());
+        }
         if (match(TokenKind::Break)) {
             return parse_break_statement(previous());
         }
@@ -1494,6 +1501,100 @@ private:
         consume(TokenKind::CloseParen, "Expected ')' after for clauses");
         statement->body = parse_statement();
         return statement;
+    }
+
+    unique_ptr<StatementSyntax> parse_foreach_statement(const Token& token) {
+        consume(TokenKind::OpenParen, "Expected '(' after 'foreach'");
+        TypeSyntax element_type = parse_type_syntax();
+        const Token variable = consume(TokenKind::Identifier, "Expected foreach variable name");
+        consume(TokenKind::In, "Expected 'in' after foreach variable");
+        auto collection = parse_expression();
+        consume(TokenKind::CloseParen, "Expected ')' after foreach collection");
+        auto body = parse_statement();
+
+        const string suffix = std::to_string(token.line) + "_" + std::to_string(token.column);
+        const string collection_name = "__hy_foreach$collection_" + suffix;
+        const string index_name = "__hy_foreach$index_" + suffix;
+        auto name = [&](const string& value) -> unique_ptr<ExpressionSyntax> {
+            auto result = std::make_unique<NameExpressionSyntax>();
+            result->line = token.line;
+            result->column = token.column;
+            result->name = value;
+            return result;
+        };
+        auto number = [&](int64_t value) -> unique_ptr<ExpressionSyntax> {
+            auto result = std::make_unique<LiteralExpressionSyntax>();
+            result->line = token.line;
+            result->column = token.column;
+            result->value = value;
+            return result;
+        };
+
+        auto collection_variable = std::make_unique<VariableDeclarationStatementSyntax>();
+        collection_variable->line = token.line;
+        collection_variable->column = token.column;
+        collection_variable->type.is_var = true;
+        collection_variable->type.name_parts.push_back("var");
+        collection_variable->name = collection_name;
+        collection_variable->initializer = std::move(collection);
+
+        auto index_variable = std::make_unique<VariableDeclarationStatementSyntax>();
+        index_variable->line = token.line;
+        index_variable->column = token.column;
+        index_variable->type.name_parts.push_back("int");
+        index_variable->name = index_name;
+        index_variable->initializer = number(0);
+
+        auto length = std::make_unique<MemberAccessExpressionSyntax>();
+        length->line = token.line;
+        length->column = token.column;
+        length->target = name(collection_name);
+        length->member_name = "Length";
+        auto condition = std::make_unique<BinaryExpressionSyntax>();
+        condition->line = token.line;
+        condition->column = token.column;
+        condition->left = name(index_name);
+        condition->op = TokenKind::Less;
+        condition->right = std::move(length);
+
+        auto update = std::make_unique<AssignmentExpressionSyntax>();
+        update->line = token.line;
+        update->column = token.column;
+        update->target = name(index_name);
+        update->op = TokenKind::PlusEquals;
+        update->expression = number(1);
+
+        auto element = std::make_unique<ElementAccessExpressionSyntax>();
+        element->line = token.line;
+        element->column = token.column;
+        element->target = name(collection_name);
+        element->index = name(index_name);
+        auto iteration_variable = std::make_unique<VariableDeclarationStatementSyntax>();
+        iteration_variable->line = variable.line;
+        iteration_variable->column = variable.column;
+        iteration_variable->type = std::move(element_type);
+        iteration_variable->name = variable.text;
+        iteration_variable->initializer = std::move(element);
+
+        auto loop_body = std::make_unique<BlockStatementSyntax>();
+        loop_body->line = token.line;
+        loop_body->column = token.column;
+        loop_body->statements.push_back(std::move(iteration_variable));
+        loop_body->statements.push_back(std::move(body));
+        auto loop = std::make_unique<ForStatementSyntax>();
+        loop->line = token.line;
+        loop->column = token.column;
+        loop->initializer = std::move(index_variable);
+        loop->condition = std::move(condition);
+        loop->update = std::move(update);
+        loop->body = std::move(loop_body);
+
+        auto block = std::make_unique<BlockStatementSyntax>();
+        block->line = token.line;
+        block->column = token.column;
+        block->statements.push_back(std::move(collection_variable));
+        block->statements.push_back(std::move(loop));
+        return block;
     }
 
     unique_ptr<StatementSyntax> parse_break_statement(const Token& token) {
@@ -2141,6 +2242,7 @@ private:
                kind == TokenKind::If ||
                kind == TokenKind::While ||
                kind == TokenKind::For ||
+               kind == TokenKind::Foreach ||
                kind == TokenKind::Break ||
                kind == TokenKind::Continue ||
                kind == TokenKind::Return ||
@@ -4179,6 +4281,34 @@ private:
         }
 
     private:
+        bool is_list_type(const TypeSymbol* type) const {
+            if (type == nullptr || type->kind != TypeKind::Class || type->class_symbol == nullptr) return false;
+            const ClassSymbol* definition = type->class_symbol->generic_definition != nullptr
+                                                ? type->class_symbol->generic_definition
+                                                : type->class_symbol;
+            return definition->namespace_name == "System.Collections" && definition->name == "List";
+        }
+
+        std::unique_ptr<BoundCallExpression> bind_list_method(std::unique_ptr<BoundExpression> receiver,
+                                                               const string& name,
+                                                               std::unique_ptr<BoundExpression> argument,
+                                                               int line,
+                                                               int column) {
+            const TypeSymbol* receiver_type = receiver->type;
+            auto methods = select_methods(*receiver_type->class_symbol, name, false);
+            if (methods.empty()) return nullptr;
+            const MethodSymbol* method = specialize_method(*methods.front(), build_type_substitutions(receiver_type));
+            auto call = std::make_unique<BoundCallExpression>();
+            call->kind = BoundExpressionKind::Call;
+            call->line = line;
+            call->column = column;
+            call->type = method->return_type;
+            call->method = method;
+            call->receiver = convert_expression(make_named_type(*method->owner), std::move(receiver));
+            if (argument != nullptr) call->arguments.push_back(convert_expression(method->parameters[0].type, std::move(argument)));
+            return call;
+        }
+
         const TypeSymbol* make_named_type(const ClassSymbol& klass) {
             auto type_symbol = std::make_unique<TypeSymbol>();
             type_symbol->kind = klass.kind;
@@ -4699,6 +4829,14 @@ private:
                     }
                 } else {
                     type = resolve_type(variable->type);
+                }
+
+                if (variable->name.rfind("__hy_foreach$collection_", 0) == 0 &&
+                    type != &program_.semantic_model.error_type &&
+                    type != &program_.semantic_model.string_type &&
+                    (type == nullptr || type->kind != TypeKind::Array) && !is_list_type(type)) {
+                    diagnostics_.add(find_file_for_class(&current_class_), variable->line, variable->column,
+                                     "foreach requires an array, string, or List<T> collection");
                 }
 
                 bound->variable = declare_local(variable->name, type);
@@ -5328,6 +5466,18 @@ private:
             if (!is_integral_type(index_expression->type)) {
                 diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
                                  "Indices must be of type 'int'");
+            }
+
+            if (is_list_type(target_expression->type)) {
+                auto result = bind_list_method(std::move(target_expression), "Get", std::move(index_expression),
+                                               syntax.line, syntax.column);
+                if (result != nullptr) {
+                    if (syntax.null_conditional) {
+                        diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                         "Null-conditional List indexing is not supported");
+                    }
+                    return result;
+                }
             }
 
             if (target_expression->type == &program_.semantic_model.string_type) {
@@ -6011,6 +6161,17 @@ private:
                 }
 
                 if (base.kind == EntityResolution::Kind::Value) {
+                    if (is_list_type(base.value->type) && member->member_name == "Length") {
+                        if (member->null_conditional) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Null-conditional access requires a reference result");
+                        }
+                        EntityResolution result;
+                        result.kind = EntityResolution::Kind::Value;
+                        result.value = bind_list_method(std::move(base.value), "Count", nullptr,
+                                                        expression.line, expression.column);
+                        return result;
+                    }
                     if (base.value->type != nullptr && base.value->type->kind == TypeKind::Array && member->member_name == "Length") {
                         if (member->null_conditional) {
                             diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,

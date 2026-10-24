@@ -226,6 +226,10 @@ namespace Hydrogen.Compiler.Syntax {
                 ParseForStatement();
                 return;
             }
+            if (Check(SyntaxKind.ForeachKeyword)) {
+                ParseForeachStatement();
+                return;
+            }
             if (Check(SyntaxKind.BreakKeyword) || Check(SyntaxKind.ContinueKeyword)) {
                 Emit("JumpStatement");
                 Push();
@@ -302,6 +306,20 @@ namespace Hydrogen.Compiler.Syntax {
                 ParseExpression();
             }
             EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')' after for clauses"));
+            ParseStatement();
+            Pop();
+        }
+
+        private void ParseForeachStatement() {
+            Emit("ForeachStatement");
+            Push();
+            EmitToken(Consume(SyntaxKind.ForeachKeyword, "Expected foreach"));
+            EmitToken(Consume(SyntaxKind.OpenParenToken, "Expected '(' after foreach"));
+            ParseTypeSyntax();
+            EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected foreach variable name"));
+            EmitToken(Consume(SyntaxKind.InKeyword, "Expected 'in' after foreach variable"));
+            ParseExpression();
+            EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')' after foreach collection"));
             ParseStatement();
             Pop();
         }
