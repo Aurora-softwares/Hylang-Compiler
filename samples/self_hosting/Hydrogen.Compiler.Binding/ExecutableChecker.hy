@@ -374,6 +374,16 @@ namespace Hydrogen.Compiler.Binding {
                 }
                 if (!Numeric(actual) && actual != "<error>") { Error("unary arithmetic requires numeric operand"); } return actual;
             }
+            if (k == IrExpression.KindConditional()) {
+                string condition = Expression(e.ConditionalCondition());
+                Require(condition, "bool", "conditional expression requires a bool condition");
+                string whenTrue = Expression(e.TrueValue());
+                string whenFalse = Expression(e.FalseValue());
+                if (Assignable(whenFalse, whenTrue)) { return whenTrue; }
+                if (Assignable(whenTrue, whenFalse)) { return whenFalse; }
+                Error("conditional branches have incompatible types");
+                return "<error>";
+            }
             string left = Expression(e.Left()); string right = Expression(e.Right()); int op = e.OperatorKind();
             if (op == IrOperator.AmpersandToken() || op == IrOperator.PipeToken() || op == IrOperator.CaretToken()) {
                 if ((!module.Numeric(left) || left != right) && left != "<error>" && right != "<error>") {

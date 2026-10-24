@@ -547,7 +547,7 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private ExpressionSyntax ParseAssignment() {
-            ExpressionSyntax left = ParseBinaryExpression(0);
+            ExpressionSyntax left = ParseConditional();
             if (ShiftLeftAssignmentPair() || ShiftRightAssignmentPair()) {
                 bool leftShift = ShiftLeftAssignmentPair();
                 Advance(); Advance();
@@ -561,6 +561,16 @@ namespace Hydrogen.Compiler.Syntax {
                 return ExpressionSyntax.Assignment(left, op, right);
             }
             return left;
+        }
+
+        private ExpressionSyntax ParseConditional() {
+            ExpressionSyntax condition = ParseBinaryExpression(0);
+            if (!Check(SyntaxKind.QuestionToken)) { return condition; }
+            Advance();
+            ExpressionSyntax whenTrue = ParseExpression();
+            Consume(SyntaxKind.ColonToken, "Expected ':' in conditional expression");
+            ExpressionSyntax whenFalse = ParseConditional();
+            return ExpressionSyntax.Conditional(condition, whenTrue, whenFalse);
         }
 
         private bool ShiftLeftAssignmentPair() {

@@ -16,6 +16,7 @@ namespace Hydrogen.Compiler.Syntax {
             if (kind == SyntaxKind.CommaToken) { return "Comma"; }
             if (kind == SyntaxKind.DotToken) { return "Dot"; }
             if (kind == SyntaxKind.ColonToken) { return "Colon"; }
+            if (kind == SyntaxKind.QuestionToken) { return "Question"; }
             if (kind == SyntaxKind.PlusToken) { return "Plus"; }
             if (kind == SyntaxKind.MinusToken) { return "Minus"; }
             if (kind == SyntaxKind.PlusPlusToken) { return "PlusPlus"; }

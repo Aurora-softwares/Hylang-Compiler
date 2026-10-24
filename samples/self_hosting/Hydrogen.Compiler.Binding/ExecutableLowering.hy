@@ -151,6 +151,7 @@ namespace Hydrogen.Compiler.Binding {
             else if (k == ExpressionSyntax.KindArrayCreation()) { IrType type = Type(e.Type()); IrExpression size = Expression(e.Size()); result = IrExpression.ArrayCreation(type, size); }
             else if (k == ExpressionSyntax.KindCast()) { IrType type = Type(e.CastType()); IrExpression value = Expression(e.CastExpression()); result = IrExpression.Cast(type, value); }
             else if (k == ExpressionSyntax.KindUnary()) { result = IrExpression.Unary((int)e.UnaryOperatorKind(), Expression(e.UnaryOperand())); }
+            else if (k == ExpressionSyntax.KindConditional()) { result = IrExpression.Conditional(Expression(e.ConditionalCondition()), Expression(e.TrueValue()), Expression(e.FalseValue())); }
             else { result = IrExpression.SizeOf(Type(e.SizeOfType())); }
             if (e.Span() != null) { result.SetLocation(e.Line(), e.Column(), e.Span().Start(), e.Span().Length()); }
             return result;

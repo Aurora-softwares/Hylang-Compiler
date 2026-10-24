@@ -409,6 +409,7 @@ namespace Hydrogen.Compiler.IR {
 		public static int KindCast() { return 10; }
 		public static int KindUnary() { return 11; }
 		public static int KindSizeOf() { return 12; }
+		public static int KindConditional() { return 13; }
 
 		private int kind;
 		private string name;
@@ -424,6 +425,9 @@ namespace Hydrogen.Compiler.IR {
 		private IrExpression left;
 		private int op;
 		private IrExpression right;
+		private IrExpression conditionalCondition;
+		private IrExpression trueValue;
+		private IrExpression falseValue;
 		private IrExpression index;
 		private IrType type;
 		private IrExpression size;
@@ -455,6 +459,9 @@ namespace Hydrogen.Compiler.IR {
 		public IrExpression Left() { return left; }
 		public int OperatorKind() { return op; }
 		public IrExpression Right() { return right; }
+		public IrExpression ConditionalCondition() { return conditionalCondition; }
+		public IrExpression TrueValue() { return trueValue; }
+		public IrExpression FalseValue() { return falseValue; }
 		public IrExpression Index() { return index; }
 		public IrType Type() { return type; }
 		public IrExpression Size() { return size; }
@@ -510,6 +517,14 @@ namespace Hydrogen.Compiler.IR {
 			node.left = inputLeft;
 			node.op = inputOp;
 			node.right = inputRight;
+			return node;
+		}
+
+		public static IrExpression Conditional(IrExpression inputCondition, IrExpression inputTrue, IrExpression inputFalse) {
+			IrExpression node = new IrExpression(KindConditional());
+			node.conditionalCondition = inputCondition;
+			node.trueValue = inputTrue;
+			node.falseValue = inputFalse;
 			return node;
 		}
 

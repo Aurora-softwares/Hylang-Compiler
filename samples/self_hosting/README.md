@@ -150,6 +150,8 @@ Compound assignment supports `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`,
 evaluated once; the expression returns the stored value.
 Prefix and postfix `++` and `--` also work on integral lvalues. Prefix returns
 the new value; postfix returns the old value, with one target evaluation.
+Conditional expressions use `condition ? whenTrue : whenFalse`; only the
+selected branch executes, and both branches must have compatible types.
 
 Fatal freestanding CPU exceptions use an allocation-free IDT panic path. It
 captures the CPU exception frame, `CR2`, and all general registers, writes a

@@ -391,6 +391,7 @@ using Hydrogen.Compiler.Text;
 		public static int KindCast() { return 10; }
 		public static int KindUnary() { return 11; }
 		public static int KindSizeOf() { return 12; }
+		public static int KindConditional() { return 13; }
 
 		private int kind;
 		private string name;
@@ -406,6 +407,9 @@ using Hydrogen.Compiler.Text;
 		private ExpressionSyntax left;
 		private SyntaxKind op;
 		private ExpressionSyntax right;
+		private ExpressionSyntax conditionalCondition;
+		private ExpressionSyntax trueValue;
+		private ExpressionSyntax falseValue;
 		private ExpressionSyntax index;
 		private TypeSyntax type;
 		private ExpressionSyntax size;
@@ -437,6 +441,9 @@ using Hydrogen.Compiler.Text;
 		public ExpressionSyntax Left() { return left; }
 		public SyntaxKind OperatorKind() { return op; }
 		public ExpressionSyntax Right() { return right; }
+		public ExpressionSyntax ConditionalCondition() { return conditionalCondition; }
+		public ExpressionSyntax TrueValue() { return trueValue; }
+		public ExpressionSyntax FalseValue() { return falseValue; }
 		public ExpressionSyntax Index() { return index; }
 		public TypeSyntax Type() { return type; }
 		public ExpressionSyntax Size() { return size; }
@@ -492,6 +499,14 @@ using Hydrogen.Compiler.Text;
 			node.left = inputLeft;
 			node.op = inputOp;
 			node.right = inputRight;
+			return node;
+		}
+
+		public static ExpressionSyntax Conditional(ExpressionSyntax inputCondition, ExpressionSyntax inputTrue, ExpressionSyntax inputFalse) {
+			ExpressionSyntax node = new ExpressionSyntax(KindConditional());
+			node.conditionalCondition = inputCondition;
+			node.trueValue = inputTrue;
+			node.falseValue = inputFalse;
 			return node;
 		}
 

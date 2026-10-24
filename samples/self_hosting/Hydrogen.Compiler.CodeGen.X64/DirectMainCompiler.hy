@@ -870,6 +870,23 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 failure = "unsupported unary operator";
                 return false;
             }
+            if (kind == IrExpression.KindConditional()) {
+                string expected = expression.ResultType();
+                if (!CompileExpression(expression.ConditionalCondition())) { return false; }
+                if (valueType != "bool") { failure = "native conditional expression requires bool"; return false; }
+                int elsePatch = EmitJumpIfZero();
+                if (!CompileExpression(expression.TrueValue())) { return false; }
+                if (!Assignable(valueType, expected)) { failure = "native conditional branch type mismatch"; return false; }
+                PrepareValue(expected);
+                int endPatch = EmitJump();
+                PatchRelative(elsePatch, code.Position());
+                if (!CompileExpression(expression.FalseValue())) { return false; }
+                if (!Assignable(valueType, expected)) { failure = "native conditional branch type mismatch"; return false; }
+                PrepareValue(expected);
+                PatchRelative(endPatch, code.Position());
+                valueType = expected;
+                return true;
+            }
             if (kind == IrExpression.KindBinary()) {
                 return CompileBinary(expression);
             }

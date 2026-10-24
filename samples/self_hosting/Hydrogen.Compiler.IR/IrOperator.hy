@@ -94,5 +94,6 @@ namespace Hydrogen.Compiler.IR {
         public static int ShiftRightEqualsToken() { return 91; }
         public static int PlusPlusToken() { return 92; }
         public static int MinusMinusToken() { return 93; }
+        public static int QuestionToken() { return 94; }
     }
 }

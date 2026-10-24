@@ -153,6 +153,7 @@ enum class TokenKind {
     Semicolon,
     Comma,
     Dot,
+    Question,
     Plus,
     PlusPlus,
     PlusEquals,
@@ -341,6 +342,9 @@ class Lexer {
 						break;
 					case ':':
 						tokens.push_back(Token{TokenKind::Colon, ":", line, column});
+						break;
+					case '?':
+						tokens.push_back(Token{TokenKind::Question, "?", line, column});
 						break;
 					case '+':
 						if (match('+')) tokens.push_back(Token{TokenKind::PlusPlus, "++", line, column});
@@ -678,6 +682,12 @@ struct AssignmentExpressionSyntax final : ExpressionSyntax {
     unique_ptr<ExpressionSyntax> expression;
     TokenKind op = TokenKind::Equals;
     bool returns_old = false;
+};
+
+struct ConditionalExpressionSyntax final : ExpressionSyntax {
+    unique_ptr<ExpressionSyntax> condition;
+    unique_ptr<ExpressionSyntax> when_true;
+    unique_ptr<ExpressionSyntax> when_false;
 };
 
 struct UnaryExpressionSyntax final : ExpressionSyntax {
@@ -1590,7 +1600,7 @@ private:
     }
 
     unique_ptr<ExpressionSyntax> parse_assignment_expression() {
-        auto left = parse_logical_or_expression();
+        auto left = parse_conditional_expression();
         if (shift_assignment_ahead(TokenKind::Less) || shift_assignment_ahead(TokenKind::Greater)) {
             const Token first = advance();
             advance();
@@ -1615,6 +1625,20 @@ private:
             return assignment;
         }
         return left;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_conditional_expression() {
+        auto condition = parse_logical_or_expression();
+        if (!match(TokenKind::Question)) return condition;
+        const Token question = previous();
+        auto result = std::make_unique<ConditionalExpressionSyntax>();
+        result->line = question.line;
+        result->column = question.column;
+        result->condition = std::move(condition);
+        result->when_true = parse_expression();
+        consume(TokenKind::Colon, "Expected ':' in conditional expression");
+        result->when_false = parse_conditional_expression();
+        return result;
     }
 
     bool shift_assignment_ahead(TokenKind bracket) const {
@@ -2267,6 +2291,7 @@ enum class BoundExpressionKind {
     Conversion,
     Unary,
     Binary,
+    Conditional,
     Call,
     NewObject,
     NewArray,
@@ -2357,6 +2382,12 @@ struct BoundBinaryExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> left;
     TokenKind op = TokenKind::Plus;
     std::unique_ptr<BoundExpression> right;
+};
+
+struct BoundConditionalExpression final : BoundExpression {
+    std::unique_ptr<BoundExpression> condition;
+    std::unique_ptr<BoundExpression> when_true;
+    std::unique_ptr<BoundExpression> when_false;
 };
 
 struct BoundCallExpression final : BoundExpression {
@@ -5055,6 +5086,32 @@ private:
                 return bound;
             }
 
+            if (const auto* conditional = dynamic_cast<const ConditionalExpressionSyntax*>(&expression)) {
+                auto bound = std::make_unique<BoundConditionalExpression>();
+                bound->kind = BoundExpressionKind::Conditional;
+                bound->line = expression.line;
+                bound->column = expression.column;
+                bound->condition = bind_expression(*conditional->condition);
+                bound->when_true = bind_expression(*conditional->when_true);
+                bound->when_false = bind_expression(*conditional->when_false);
+                if (bound->condition->type != &program_.semantic_model.bool_type) {
+                    diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                     "Conditional expression requires a bool condition");
+                }
+                if (is_expression_assignable_to_type(bound->when_true->type, bound->when_false.get())) {
+                    bound->type = bound->when_true->type;
+                    bound->when_false = convert_expression(bound->type, std::move(bound->when_false));
+                } else if (is_expression_assignable_to_type(bound->when_false->type, bound->when_true.get())) {
+                    bound->type = bound->when_false->type;
+                    bound->when_true = convert_expression(bound->type, std::move(bound->when_true));
+                } else {
+                    diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                     "Conditional branches have incompatible types");
+                    bound->type = &program_.semantic_model.error_type;
+                }
+                return bound;
+            }
+
             if (const auto* binary = dynamic_cast<const BinaryExpressionSyntax*>(&expression)) {
                 auto left = bind_expression(*binary->left);
                 auto right = bind_expression(*binary->right);
@@ -7296,6 +7353,13 @@ private:
                     default:
                         return Value{nullptr};
                 }
+            }
+            case BoundExpressionKind::Conditional: {
+                const auto& conditional = static_cast<const BoundConditionalExpression&>(expression);
+                if (std::get<bool>(evaluate_expression(*conditional.condition, frame).data)) {
+                    return evaluate_expression(*conditional.when_true, frame);
+                }
+                return evaluate_expression(*conditional.when_false, frame);
             }
             case BoundExpressionKind::Binary: {
                 const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
@@ -9638,6 +9702,12 @@ static int64_t hy_compound_integer(int64_t rhs, int op, int bits, int is_signed,
                 }
                 return "(" + token_text(unary.op) + emit_expression(*unary.operand) + ")";
             }
+            case BoundExpressionKind::Conditional: {
+                const auto& conditional = static_cast<const BoundConditionalExpression&>(expression);
+                return "((" + emit_expression(*conditional.condition) + ") ? (" +
+                       emit_expression(*conditional.when_true) + ") : (" +
+                       emit_expression(*conditional.when_false) + "))";
+            }
             case BoundExpressionKind::Binary: {
                 const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
                 if (binary.op == TokenKind::Plus && binary.type == &program_.semantic_model.string_type) {
@@ -11304,6 +11374,13 @@ void collect_symbol_usage(const BoundExpression& expression,
             collect_symbol_usage(*binary.right, used_locals, used_parameters);
             return;
         }
+        case BoundExpressionKind::Conditional: {
+            const auto& conditional = static_cast<const BoundConditionalExpression&>(expression);
+            collect_symbol_usage(*conditional.condition, used_locals, used_parameters);
+            collect_symbol_usage(*conditional.when_true, used_locals, used_parameters);
+            collect_symbol_usage(*conditional.when_false, used_locals, used_parameters);
+            return;
+        }
         case BoundExpressionKind::Call: {
             const auto& call = static_cast<const BoundCallExpression&>(expression);
             if (call.receiver != nullptr) {
@@ -11566,6 +11643,13 @@ void collect_member_usage(const BoundExpression& expression,
             collect_member_usage(*binary.right, used_fields, used_methods);
             return;
         }
+        case BoundExpressionKind::Conditional: {
+            const auto& conditional = static_cast<const BoundConditionalExpression&>(expression);
+            collect_member_usage(*conditional.condition, used_fields, used_methods);
+            collect_member_usage(*conditional.when_true, used_fields, used_methods);
+            collect_member_usage(*conditional.when_false, used_fields, used_methods);
+            return;
+        }
         case BoundExpressionKind::NewObject: {
             const auto& creation = static_cast<const BoundNewExpression&>(expression);
             for (const auto& argument : creation.arguments) {
@@ -11684,6 +11768,13 @@ void lint_expression(const BoundExpression& expression,
             const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
             lint_expression(*binary.left, freed_buffers, diagnostics, file);
             lint_expression(*binary.right, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::Conditional: {
+            const auto& conditional = static_cast<const BoundConditionalExpression&>(expression);
+            lint_expression(*conditional.condition, freed_buffers, diagnostics, file);
+            lint_expression(*conditional.when_true, freed_buffers, diagnostics, file);
+            lint_expression(*conditional.when_false, freed_buffers, diagnostics, file);
             return;
         }
         case BoundExpressionKind::Call: {
