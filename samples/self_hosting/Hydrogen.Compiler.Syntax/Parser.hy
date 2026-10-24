@@ -230,6 +230,10 @@ namespace Hydrogen.Compiler.Syntax {
                 ParseForeachStatement();
                 return;
             }
+            if (Check(SyntaxKind.SwitchKeyword)) {
+                ParseSwitchStatement();
+                return;
+            }
             if (Check(SyntaxKind.BreakKeyword) || Check(SyntaxKind.ContinueKeyword)) {
                 Emit("JumpStatement");
                 Push();
@@ -321,6 +325,65 @@ namespace Hydrogen.Compiler.Syntax {
             ParseExpression();
             EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')' after foreach collection"));
             ParseStatement();
+            Pop();
+        }
+
+        private void ParseSwitchLabel() {
+            if (Check(SyntaxKind.MinusToken)) { EmitToken(Advance()); }
+            if (Check(SyntaxKind.NumberToken) || Check(SyntaxKind.StringToken) ||
+                Check(SyntaxKind.TrueKeyword) || Check(SyntaxKind.FalseKeyword)) {
+                EmitToken(Advance());
+            } else {
+                EmitToken(Consume(SyntaxKind.NumberToken, "Expected constant switch case"));
+            }
+        }
+
+        private void ParseSwitchStatement() {
+            Emit("SwitchStatement"); Push();
+            EmitToken(Consume(SyntaxKind.SwitchKeyword, "Expected switch"));
+            ParseParenthesizedExpression();
+            EmitToken(Consume(SyntaxKind.OpenBraceToken, "Expected '{' after switch value"));
+            while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                int before = index;
+                if (Check(SyntaxKind.CaseKeyword)) {
+                    EmitToken(Advance()); ParseSwitchLabel();
+                } else if (Check(SyntaxKind.DefaultKeyword)) {
+                    EmitToken(Advance());
+                } else {
+                    diagnostics.Report(Current().Line(), Current().Column(), "Expected case or default in switch");
+                    Advance(); continue;
+                }
+                EmitToken(Consume(SyntaxKind.ColonToken, "Expected ':' after switch arm"));
+                while (!Check(SyntaxKind.CaseKeyword) && !Check(SyntaxKind.DefaultKeyword) &&
+                       !Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                    ParseStatement(); EnsureProgress(before); before = index;
+                }
+            }
+            EmitToken(Consume(SyntaxKind.CloseBraceToken, "Expected '}' after switch"));
+            Pop();
+        }
+
+        private void ParseSwitchExpression() {
+            Emit("SwitchExpression"); Push();
+            EmitToken(Consume(SyntaxKind.SwitchKeyword, "Expected switch"));
+            ParseParenthesizedExpression();
+            EmitToken(Consume(SyntaxKind.OpenBraceToken, "Expected '{' after switch value"));
+            while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                int before = index;
+                if (Check(SyntaxKind.CaseKeyword)) {
+                    EmitToken(Advance()); ParseSwitchLabel();
+                } else if (Check(SyntaxKind.DefaultKeyword)) {
+                    EmitToken(Advance());
+                } else {
+                    diagnostics.Report(Current().Line(), Current().Column(), "Expected case or default in switch expression");
+                    Advance(); continue;
+                }
+                EmitToken(Consume(SyntaxKind.FatArrowToken, "Expected '=>' after switch arm"));
+                ParseExpression();
+                if (Check(SyntaxKind.CommaToken)) { EmitToken(Advance()); }
+                EnsureProgress(before);
+            }
+            EmitToken(Consume(SyntaxKind.CloseBraceToken, "Expected '}' after switch expression"));
             Pop();
         }
 
@@ -535,6 +598,10 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private void ParsePrimaryExpression() {
+            if (Check(SyntaxKind.SwitchKeyword)) {
+                ParseSwitchExpression();
+                return;
+            }
             if (Check(SyntaxKind.InterpolatedStringToken)) {
                 Emit("InterpolatedStringExpression");
                 Push(); EmitToken(Advance()); Pop();

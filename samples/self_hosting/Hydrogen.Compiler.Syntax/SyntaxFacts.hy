@@ -7,6 +7,10 @@ namespace Hydrogen.Compiler.Syntax {
             if (kind == SyntaxKind.NumberToken) { return "Number"; }
             if (kind == SyntaxKind.StringToken) { return "String"; }
             if (kind == SyntaxKind.InterpolatedStringToken) { return "InterpolatedString"; }
+            if (kind == SyntaxKind.FatArrowToken) { return "FatArrow"; }
+            if (kind == SyntaxKind.SwitchKeyword) { return "Switch"; }
+            if (kind == SyntaxKind.CaseKeyword) { return "Case"; }
+            if (kind == SyntaxKind.DefaultKeyword) { return "Default"; }
             if (kind == SyntaxKind.OpenParenToken) { return "OpenParen"; }
             if (kind == SyntaxKind.CloseParenToken) { return "CloseParen"; }
             if (kind == SyntaxKind.OpenBraceToken) { return "OpenBrace"; }
@@ -139,6 +143,9 @@ namespace Hydrogen.Compiler.Syntax {
             if (text == "while") { return SyntaxKind.WhileKeyword; }
             if (text == "for") { return SyntaxKind.ForKeyword; }
             if (text == "foreach") { return SyntaxKind.ForeachKeyword; }
+            if (text == "switch") { return SyntaxKind.SwitchKeyword; }
+            if (text == "case") { return SyntaxKind.CaseKeyword; }
+            if (text == "default") { return SyntaxKind.DefaultKeyword; }
             if (text == "in") { return SyntaxKind.InKeyword; }
             if (text == "break") { return SyntaxKind.BreakKeyword; }
             if (text == "continue") { return SyntaxKind.ContinueKeyword; }

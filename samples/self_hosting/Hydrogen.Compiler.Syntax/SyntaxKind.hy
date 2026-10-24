@@ -98,6 +98,10 @@ namespace Hydrogen.Compiler.Syntax {
         QuestionQuestionToken,
         ForeachKeyword,
         InKeyword,
-        InterpolatedStringToken
+        InterpolatedStringToken,
+        FatArrowToken,
+        SwitchKeyword,
+        CaseKeyword,
+        DefaultKeyword
     }
 }

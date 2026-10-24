@@ -107,6 +107,7 @@ namespace Hydrogen.Compiler.Syntax {
             }
             if (current == "=") {
                 if (Match("=")) { return Token(SyntaxKind.EqualsEqualsToken, "==", startLine, startColumn, start); }
+                if (Match(">")) { return Token(SyntaxKind.FatArrowToken, "=>", startLine, startColumn, start); }
                 return Token(SyntaxKind.EqualsToken, current, startLine, startColumn, start);
             }
             if (current == "<") {

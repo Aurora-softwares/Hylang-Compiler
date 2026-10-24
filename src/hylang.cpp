@@ -181,6 +181,7 @@ enum class TokenKind {
     ShiftLeftEquals,
     ShiftRightEquals,
     Equals,
+    FatArrow,
     EqualsEquals,
     BangEquals,
     Less,
@@ -224,6 +225,9 @@ enum class TokenKind {
     While,
     For,
     Foreach,
+    Switch,
+    Case,
+    Default,
     In,
     Break,
     Continue,
@@ -387,6 +391,8 @@ class Lexer {
 					case '=':
 						if (match('=')) {
 							tokens.push_back(Token{TokenKind::EqualsEquals, "==", line, column});
+						} else if (match('>')) {
+							tokens.push_back(Token{TokenKind::FatArrow, "=>", line, column});
 						} else {
 							tokens.push_back(Token{TokenKind::Equals, "=", line, column});
 						}
@@ -546,6 +552,9 @@ class Lexer {
 				{"while", TokenKind::While},
 				{"for", TokenKind::For},
 				{"foreach", TokenKind::Foreach},
+				{"switch", TokenKind::Switch},
+				{"case", TokenKind::Case},
+				{"default", TokenKind::Default},
 				{"in", TokenKind::In},
 				{"break", TokenKind::Break},
 				{"continue", TokenKind::Continue},
@@ -1399,9 +1408,11 @@ private:
         auto block = std::make_unique<BlockStatementSyntax>();
         block->line = brace.line;
         block->column = brace.column;
+        block_stack_.push_back(block.get());
         while (!check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile)) {
             block->statements.push_back(parse_statement());
         }
+        block_stack_.pop_back();
         consume(TokenKind::CloseBrace, "Expected '}' after block");
         return block;
     }
@@ -1475,6 +1486,9 @@ private:
         if (match(TokenKind::Foreach)) {
             return parse_foreach_statement(previous());
         }
+        if (match(TokenKind::Switch)) {
+            return parse_switch_statement(previous());
+        }
         if (match(TokenKind::Break)) {
             return parse_break_statement(previous());
         }
@@ -1521,7 +1535,9 @@ private:
         statement->column = token.column;
         statement->condition = parse_expression();
         consume(TokenKind::CloseParen, "Expected ')' after while condition");
+        ++loop_depth_;
         statement->body = parse_statement();
+        --loop_depth_;
         return statement;
     }
 
@@ -1546,7 +1562,9 @@ private:
             statement->update = parse_expression();
         }
         consume(TokenKind::CloseParen, "Expected ')' after for clauses");
+        ++loop_depth_;
         statement->body = parse_statement();
+        --loop_depth_;
         return statement;
     }
 
@@ -1557,7 +1575,9 @@ private:
         consume(TokenKind::In, "Expected 'in' after foreach variable");
         auto collection = parse_expression();
         consume(TokenKind::CloseParen, "Expected ')' after foreach collection");
+        ++loop_depth_;
         auto body = parse_statement();
+        --loop_depth_;
 
         const string suffix = std::to_string(token.line) + "_" + std::to_string(token.column);
         const string collection_name = "__hy_foreach$collection_" + suffix;
@@ -1644,6 +1664,149 @@ private:
         return block;
     }
 
+    struct SwitchCaseLabel {
+        unique_ptr<ExpressionSyntax> value;
+        string key;
+        string category;
+    };
+
+    SwitchCaseLabel parse_switch_case_label() {
+        const bool negative = match(TokenKind::Minus);
+        const Token token = current();
+        if (match(TokenKind::Number)) {
+            int64_t number = 0;
+            if (!try_parse_integer_text(token.text, &number))
+                diagnostics_.add(file_, token.line, token.column, "Invalid switch case integer literal");
+            auto literal = std::make_unique<LiteralExpressionSyntax>();
+            literal->line = token.line;
+            literal->column = token.column;
+            literal->value = number;
+            if (negative) {
+                auto unary = std::make_unique<UnaryExpressionSyntax>();
+                unary->line = token.line;
+                unary->column = token.column;
+                unary->op = TokenKind::Minus;
+                unary->operand = std::move(literal);
+                return {std::move(unary), "n:" + std::to_string(-number), "long"};
+            }
+            return {std::move(literal), "n:" + std::to_string(number), "long"};
+        }
+        if (!negative && (match(TokenKind::StringLiteral) || match(TokenKind::True) || match(TokenKind::False))) {
+            auto literal = std::make_unique<LiteralExpressionSyntax>();
+            literal->line = token.line;
+            literal->column = token.column;
+            if (token.kind == TokenKind::StringLiteral) {
+                literal->value = token.text;
+                return {std::move(literal), "s:" + token.text, "string"};
+            }
+            const bool value = token.kind == TokenKind::True;
+            literal->value = value;
+            return {std::move(literal), value ? "b:true" : "b:false", "bool"};
+        }
+        diagnostics_.add(file_, token.line, token.column, "Switch case must be a constant number, string, or bool");
+        if (!check(TokenKind::EndOfFile) && !check(TokenKind::Colon) && !check(TokenKind::FatArrow)) advance();
+        auto fallback = std::make_unique<LiteralExpressionSyntax>();
+        fallback->value = int64_t{0};
+        return {std::move(fallback), "invalid", "long"};
+    }
+
+    void validate_switch_case(const SwitchCaseLabel& label, std::unordered_set<string>& seen,
+                              string& category, bool default_seen, const Token& at) {
+        if (default_seen)
+            diagnostics_.add(file_, at.line, at.column, "Unreachable switch case after default");
+        if (!seen.insert(label.key).second)
+            diagnostics_.add(file_, at.line, at.column, "Duplicate switch case constant");
+        if (category.empty()) category = label.category;
+        else if (category != label.category)
+            diagnostics_.add(file_, at.line, at.column, "Switch cases must use one constant type");
+    }
+
+    unique_ptr<StatementSyntax> parse_switch_statement(const Token& token) {
+        consume(TokenKind::OpenParen, "Expected '(' after switch");
+        auto scrutinee = parse_expression();
+        consume(TokenKind::CloseParen, "Expected ')' after switch value");
+        consume(TokenKind::OpenBrace, "Expected '{' after switch value");
+        switch_loop_baselines_.push_back(loop_depth_);
+        struct Arm { SwitchCaseLabel label; unique_ptr<StatementSyntax> body; };
+        vector<Arm> arms;
+        unique_ptr<StatementSyntax> default_body;
+        std::unordered_set<string> seen;
+        string category;
+        bool default_seen = false;
+        while (!check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile)) {
+            if (match(TokenKind::Case)) {
+                const Token at = previous();
+                auto label = parse_switch_case_label();
+                validate_switch_case(label, seen, category, default_seen, at);
+                consume(TokenKind::Colon, "Expected ':' after switch case");
+                auto body = std::make_unique<BlockStatementSyntax>();
+                while (!check(TokenKind::Case) && !check(TokenKind::Default) &&
+                       !check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile))
+                    body->statements.push_back(parse_statement());
+                if (body->statements.empty() ||
+                    (!dynamic_cast<BreakStatementSyntax*>(body->statements.back().get()) &&
+                     !dynamic_cast<ReturnStatementSyntax*>(body->statements.back().get()) &&
+                     !dynamic_cast<ThrowStatementSyntax*>(body->statements.back().get())))
+                    body->statements.push_back(std::make_unique<BreakStatementSyntax>());
+                arms.push_back(Arm{std::move(label), std::move(body)});
+                continue;
+            }
+            if (match(TokenKind::Default)) {
+                const Token at = previous();
+                if (default_seen) diagnostics_.add(file_, at.line, at.column, "Duplicate switch default");
+                default_seen = true;
+                consume(TokenKind::Colon, "Expected ':' after switch default");
+                auto body = std::make_unique<BlockStatementSyntax>();
+                while (!check(TokenKind::Case) && !check(TokenKind::Default) &&
+                       !check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile))
+                    body->statements.push_back(parse_statement());
+                if (body->statements.empty() ||
+                    (!dynamic_cast<BreakStatementSyntax*>(body->statements.back().get()) &&
+                     !dynamic_cast<ReturnStatementSyntax*>(body->statements.back().get()) &&
+                     !dynamic_cast<ThrowStatementSyntax*>(body->statements.back().get())))
+                    body->statements.push_back(std::make_unique<BreakStatementSyntax>());
+                default_body = std::move(body);
+                continue;
+            }
+            diagnostics_.add(file_, current().line, current().column, "Expected case or default in switch");
+            advance();
+        }
+        consume(TokenKind::CloseBrace, "Expected '}' after switch");
+        switch_loop_baselines_.pop_back();
+        const string temp_name = "__hy_switch$value_" + std::to_string(token.line) + "_" + std::to_string(token.column);
+        auto name = [&]() -> unique_ptr<ExpressionSyntax> {
+            auto value = std::make_unique<NameExpressionSyntax>(); value->name = temp_name;
+            value->line = token.line; value->column = token.column; return value;
+        };
+        unique_ptr<StatementSyntax> chain = std::move(default_body);
+        for (auto it = arms.rbegin(); it != arms.rend(); ++it) {
+            auto test = std::make_unique<BinaryExpressionSyntax>();
+            test->line = token.line; test->column = token.column;
+            test->left = name(); test->op = TokenKind::EqualsEquals; test->right = std::move(it->label.value);
+            auto branch = std::make_unique<IfStatementSyntax>();
+            branch->line = token.line; branch->column = token.column;
+            branch->condition = std::move(test);
+            branch->then_statement = std::move(it->body);
+            branch->else_statement = std::move(chain);
+            chain = std::move(branch);
+        }
+        auto loop_body = std::make_unique<BlockStatementSyntax>();
+        if (chain) loop_body->statements.push_back(std::move(chain));
+        if (!default_seen) loop_body->statements.push_back(std::make_unique<BreakStatementSyntax>());
+        auto loop = std::make_unique<WhileStatementSyntax>();
+        loop->line = token.line; loop->column = token.column;
+        auto always = std::make_unique<LiteralExpressionSyntax>(); always->value = true;
+        loop->condition = std::move(always); loop->body = std::move(loop_body);
+        auto temp = std::make_unique<VariableDeclarationStatementSyntax>();
+        temp->line = token.line; temp->column = token.column;
+        temp->type.is_var = true; temp->type.name_parts.push_back("var");
+        temp->name = temp_name; temp->initializer = std::move(scrutinee);
+        auto result = std::make_unique<BlockStatementSyntax>();
+        result->statements.push_back(std::move(temp));
+        result->statements.push_back(std::move(loop));
+        return result;
+    }
+
     unique_ptr<StatementSyntax> parse_break_statement(const Token& token) {
         auto statement = std::make_unique<BreakStatementSyntax>();
         statement->line = token.line;
@@ -1653,6 +1816,8 @@ private:
     }
 
     unique_ptr<StatementSyntax> parse_continue_statement(const Token& token) {
+        if (!switch_loop_baselines_.empty() && loop_depth_ <= switch_loop_baselines_.back())
+            diagnostics_.add(file_, token.line, token.column, "continue cannot target an outer loop across switch");
         auto statement = std::make_unique<ContinueStatementSyntax>();
         statement->line = token.line;
         statement->column = token.column;
@@ -2182,8 +2347,97 @@ private:
         return result;
     }
 
+    unique_ptr<ExpressionSyntax> parse_switch_expression(const Token& token) {
+        consume(TokenKind::OpenParen, "Expected '(' after switch");
+        auto scrutinee = parse_expression();
+        consume(TokenKind::CloseParen, "Expected ')' after switch value");
+        consume(TokenKind::OpenBrace, "Expected '{' after switch value");
+        struct Arm { SwitchCaseLabel label; unique_ptr<ExpressionSyntax> value; };
+        vector<Arm> arms;
+        unique_ptr<ExpressionSyntax> fallback;
+        std::unordered_set<string> seen;
+        string category;
+        bool default_seen = false;
+        while (!check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile)) {
+            if (match(TokenKind::Case)) {
+                const Token at = previous();
+                auto label = parse_switch_case_label();
+                validate_switch_case(label, seen, category, default_seen, at);
+                consume(TokenKind::FatArrow, "Expected '=>' after switch case");
+                arms.push_back(Arm{std::move(label), parse_expression()});
+            } else if (match(TokenKind::Default)) {
+                const Token at = previous();
+                if (default_seen) diagnostics_.add(file_, at.line, at.column, "Duplicate switch default");
+                default_seen = true;
+                if (category == "bool" && seen.contains("b:true") && seen.contains("b:false"))
+                    diagnostics_.add(file_, at.line, at.column, "Unreachable switch default");
+                consume(TokenKind::FatArrow, "Expected '=>' after switch default");
+                fallback = parse_expression();
+            } else {
+                diagnostics_.add(file_, current().line, current().column, "Expected case or default in switch expression");
+                advance();
+            }
+            if (!match(TokenKind::Comma) && !check(TokenKind::CloseBrace))
+                consume(TokenKind::Comma, "Expected ',' after switch arm");
+        }
+        consume(TokenKind::CloseBrace, "Expected '}' after switch expression");
+        const bool bool_exhaustive = category == "bool" && seen.contains("b:true") && seen.contains("b:false");
+        if (arms.empty()) diagnostics_.add(file_, token.line, token.column, "Switch expression requires a case");
+        if (!fallback && !bool_exhaustive)
+            diagnostics_.add(file_, token.line, token.column, "Non-exhaustive switch expression requires default");
+        if (block_stack_.empty())
+            diagnostics_.add(file_, token.line, token.column, "Switch expression requires a method block");
+
+        const string temp_name = "__hy_switch$value_" + std::to_string(token.line) + "_" + std::to_string(token.column);
+        auto name = [&]() -> unique_ptr<ExpressionSyntax> {
+            auto value = std::make_unique<NameExpressionSyntax>(); value->name = temp_name;
+            value->line = token.line; value->column = token.column; return value;
+        };
+        if (!block_stack_.empty()) {
+            auto temp = std::make_unique<VariableDeclarationStatementSyntax>();
+            temp->line = token.line; temp->column = token.column;
+            temp->type.name_parts.push_back(category.empty() ? "long" : category);
+            temp->name = temp_name;
+            auto initial = std::make_unique<LiteralExpressionSyntax>();
+            if (category == "string") initial->value = string{};
+            else if (category == "bool") initial->value = false;
+            else initial->value = int64_t{0};
+            temp->initializer = std::move(initial);
+            block_stack_.back()->statements.insert(block_stack_.back()->statements.begin(), std::move(temp));
+        }
+        std::size_t test_count = arms.size();
+        if (!fallback && bool_exhaustive && test_count > 0) {
+            fallback = std::move(arms.back().value);
+            --test_count;
+        }
+        if (!fallback) { auto empty = std::make_unique<LiteralExpressionSyntax>(); empty->value = int64_t{0}; fallback = std::move(empty); }
+        unique_ptr<ExpressionSyntax> result = std::move(fallback);
+        for (std::size_t reverse = test_count; reverse > 0; --reverse) {
+            auto& arm = arms[reverse - 1];
+            auto test = std::make_unique<BinaryExpressionSyntax>();
+            test->line = token.line; test->column = token.column;
+            if (reverse == 1) {
+                auto assign = std::make_unique<AssignmentExpressionSyntax>();
+                assign->line = token.line; assign->column = token.column;
+                assign->target = name(); assign->op = TokenKind::Equals;
+                assign->expression = std::move(scrutinee);
+                test->left = std::move(assign);
+            } else test->left = name();
+            test->op = TokenKind::EqualsEquals;
+            test->right = std::move(arm.label.value);
+            auto choice = std::make_unique<ConditionalExpressionSyntax>();
+            choice->line = token.line; choice->column = token.column;
+            choice->condition = std::move(test);
+            choice->when_true = std::move(arm.value);
+            choice->when_false = std::move(result);
+            result = std::move(choice);
+        }
+        return result;
+    }
+
     unique_ptr<ExpressionSyntax> parse_primary_expression() {
         const Token token = current();
+        if (match(TokenKind::Switch)) return parse_switch_expression(token);
         if (match(TokenKind::Number)) {
             auto literal = std::make_unique<LiteralExpressionSyntax>();
             literal->line = token.line;
@@ -2378,6 +2632,7 @@ private:
 
     static bool is_expression_start_token(TokenKind kind) {
         return kind == TokenKind::Identifier ||
+               kind == TokenKind::Switch ||
                kind == TokenKind::Number ||
                kind == TokenKind::StringLiteral ||
                kind == TokenKind::InterpolatedString ||
@@ -2404,6 +2659,7 @@ private:
                kind == TokenKind::While ||
                kind == TokenKind::For ||
                kind == TokenKind::Foreach ||
+               kind == TokenKind::Switch ||
                kind == TokenKind::Break ||
                kind == TokenKind::Continue ||
                kind == TokenKind::Return ||
@@ -2419,6 +2675,9 @@ private:
     vector<Token> tokens_;
     DiagnosticBag& diagnostics_;
     std::function<void(std::size_t, std::size_t)> progress_;
+    vector<BlockStatementSyntax*> block_stack_;
+    int loop_depth_ = 0;
+    vector<int> switch_loop_baselines_;
     std::size_t index_ = 0;
 };
 

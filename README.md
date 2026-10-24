@@ -25,9 +25,10 @@ The [security review](security.md) records confirmed issues and hardening work.
 The [Hydrogen Development project](https://github.com/orgs/Aurora-softwares/projects/4)
 tracks the 0.2.0 development target. Fixed-width bitwise operators, integral
 compound assignment, increment/decrement, conditional expressions, null
-coalescing, null-conditional access, `foreach` over arrays and strings, and interpolated strings are implemented and verified across the
+coalescing, null-conditional access, `foreach` over arrays and strings, interpolated strings,
+and switch statements and expressions are implemented and verified across the
 SDK, Linux native, and Windows native paths under Wine. The next language target is
-[switch statements and expressions](https://github.com/Aurora-softwares/Hylang-Compiler/issues/158).
+[range and slicing syntax](https://github.com/Aurora-softwares/Hylang-Compiler/issues/161).
 The remaining language queue is tracked on that project; full-width unsigned
 hexadecimal literals and a real Windows-host validation remain open gates.
 
@@ -396,6 +397,14 @@ Embedded expressions run once in left-to-right order and use the existing
 string-concatenation conversion for strings, numbers, and booleans. Formatting
 suffixes such as `{value:x}` are rejected. Literal UTF-8 bytes are preserved
 without normalization, and string length and indexing remain byte based.
+`switch (value) { case constant: statements; default: statements; }` selects one
+branch without fallthrough. A branch can use `break` to leave the switch.
+`switch (value) { case constant => expression, default => expression }` yields a
+value; a bool switch may omit `default` when it covers both `true` and `false`.
+Cases accept constant numbers, strings, and booleans, and duplicate cases and
+branches after `default` are errors. The switch value is evaluated once.
+`continue` cannot target an outer loop across a switch; put the continuation
+in a loop nested inside the selected branch.
 
 Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings or Windows `VirtualAlloc`/`VirtualFree`. Windows file paths are converted from Hydrogen UTF-8 strings to Win32 UTF-16. File reads require seekable files.
 
