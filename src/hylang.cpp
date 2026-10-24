@@ -154,6 +154,7 @@ enum class TokenKind {
     Comma,
     Dot,
     Question,
+    QuestionQuestion,
     Plus,
     PlusPlus,
     PlusEquals,
@@ -344,7 +345,8 @@ class Lexer {
 						tokens.push_back(Token{TokenKind::Colon, ":", line, column});
 						break;
 					case '?':
-						tokens.push_back(Token{TokenKind::Question, "?", line, column});
+						if (match('?')) tokens.push_back(Token{TokenKind::QuestionQuestion, "??", line, column});
+						else tokens.push_back(Token{TokenKind::Question, "?", line, column});
 						break;
 					case '+':
 						if (match('+')) tokens.push_back(Token{TokenKind::PlusPlus, "++", line, column});
@@ -1628,7 +1630,7 @@ private:
     }
 
     unique_ptr<ExpressionSyntax> parse_conditional_expression() {
-        auto condition = parse_logical_or_expression();
+        auto condition = parse_coalescing_expression();
         if (!match(TokenKind::Question)) return condition;
         const Token question = previous();
         auto result = std::make_unique<ConditionalExpressionSyntax>();
@@ -1639,6 +1641,19 @@ private:
         consume(TokenKind::Colon, "Expected ':' in conditional expression");
         result->when_false = parse_conditional_expression();
         return result;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_coalescing_expression() {
+        auto left = parse_logical_or_expression();
+        if (!match(TokenKind::QuestionQuestion)) return left;
+        const Token token = previous();
+        auto binary = std::make_unique<BinaryExpressionSyntax>();
+        binary->line = token.line;
+        binary->column = token.column;
+        binary->left = std::move(left);
+        binary->op = token.kind;
+        binary->right = parse_coalescing_expression();
+        return binary;
     }
 
     bool shift_assignment_ahead(TokenKind bracket) const {
@@ -5126,6 +5141,25 @@ private:
                 bound->right = std::move(right);
                 bound->op = binary->op;
                 switch (binary->op) {
+                    case TokenKind::QuestionQuestion:
+                        if (bound->left->type == &program_.semantic_model.null_type) {
+                            if (!is_reference_type(bound->right->type)) {
+                                diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                                 "Null coalescing requires a reference operand and compatible fallback");
+                                bound->type = &program_.semantic_model.error_type;
+                            } else {
+                                bound->type = bound->right->type;
+                            }
+                        } else if (!is_reference_type(bound->left->type) ||
+                                   !is_expression_assignable_to_type(bound->left->type, bound->right.get())) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Null coalescing requires a reference operand and compatible fallback");
+                            bound->type = &program_.semantic_model.error_type;
+                        } else {
+                            bound->type = bound->left->type;
+                            bound->right = convert_expression(bound->type, std::move(bound->right));
+                        }
+                        break;
                     case TokenKind::Plus:
                         if (is_pointer_type(bound->left->type) && is_integral_type(bound->right->type)) {
                             bound->type = bound->left->type;
@@ -7364,6 +7398,16 @@ private:
             case BoundExpressionKind::Binary: {
                 const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
                 Value left = evaluate_expression(*binary.left, frame);
+                if (binary.op == TokenKind::QuestionQuestion) {
+                    bool missing = std::holds_alternative<std::nullptr_t>(left.data);
+                    if (std::holds_alternative<std::shared_ptr<RuntimeObject>>(left.data)) {
+                        missing = !std::get<std::shared_ptr<RuntimeObject>>(left.data);
+                    } else if (std::holds_alternative<std::shared_ptr<RuntimeArray>>(left.data)) {
+                        missing = !std::get<std::shared_ptr<RuntimeArray>>(left.data);
+                    }
+                    if (!missing) return left;
+                    return evaluate_expression(*binary.right, frame);
+                }
                 if (binary.op == TokenKind::AmpAmp && !std::get<bool>(left.data)) {
                     return Value{false};
                 }
@@ -7864,6 +7908,40 @@ static int64_t hy_compound_integer(int64_t rhs, int op, int bits, int is_signed,
     uint64_t previous = left;
     if (is_signed && (previous & (UINT64_C(1) << (bits - 1)))) previous |= ~mask;
     return hy_wrap_i64(return_old ? previous : stored);
+}
+
+typedef struct hy_coalesce_frame {
+    void* value;
+    struct hy_coalesce_frame* previous;
+} hy_coalesce_frame;
+#if defined(_MSC_VER)
+static __declspec(thread) hy_coalesce_frame* hy_coalesce_top;
+#else
+static _Thread_local hy_coalesce_frame* hy_coalesce_top;
+#endif
+static int hy_coalesce_begin(void* value) {
+    hy_coalesce_frame* frame = (hy_coalesce_frame*)malloc(sizeof(hy_coalesce_frame));
+    if (!frame) hy_runtime_fail("Null coalescing allocation failed");
+    frame->value = value;
+    frame->previous = hy_coalesce_top;
+    hy_coalesce_top = frame;
+    return value != NULL;
+}
+static void* hy_coalesce_finish(void* fallback, int use_fallback) {
+    hy_coalesce_frame* frame = hy_coalesce_top;
+    if (!frame) hy_runtime_fail("Null coalescing frame missing");
+    hy_coalesce_top = frame->previous;
+    void* value = use_fallback ? fallback : frame->value;
+    free(frame);
+    return value;
+}
+static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
+    while (hy_coalesce_top != marker) {
+        if (!hy_coalesce_top) hy_runtime_fail("Null coalescing frame mismatch");
+        hy_coalesce_frame* frame = hy_coalesce_top;
+        hy_coalesce_top = frame->previous;
+        free(frame);
+    }
 }
 
 )HY";
@@ -9326,6 +9404,8 @@ static int64_t hy_compound_integer(int64_t rhs, int op, int bits, int is_signed,
                 indent(out, level + 1);
                 out << "hy_compound_frame* hy__prev_compound_" << id << " = hy_compound_top;\n";
                 indent(out, level + 1);
+                out << "hy_coalesce_frame* hy__prev_coalesce_" << id << " = hy_coalesce_top;\n";
+                indent(out, level + 1);
                 out << "hy_exception_target = &hy__catch_" << id << ";\n";
                 indent(out, level + 1);
                 out << "if (setjmp(hy__catch_" << id << ") == 0) {\n";
@@ -9338,6 +9418,8 @@ static int64_t hy_compound_integer(int64_t rhs, int op, int bits, int is_signed,
                 out << "hy_exception_target = hy__prev_catch_" << id << ";\n";
                 indent(out, level + 2);
                 out << "hy_compound_unwind(hy__prev_compound_" << id << ");\n";
+                indent(out, level + 2);
+                out << "hy_coalesce_unwind(hy__prev_coalesce_" << id << ");\n";
                 if (try_statement.catch_variable != nullptr) {
                     indent(out, level + 2);
                     out << local_name(*try_statement.catch_variable)
@@ -9710,6 +9792,11 @@ static int64_t hy_compound_integer(int64_t rhs, int op, int bits, int is_signed,
             }
             case BoundExpressionKind::Binary: {
                 const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
+                if (binary.op == TokenKind::QuestionQuestion) {
+                    return "((" + c_type_name(binary.type) + ")(hy_coalesce_begin((void*)(" +
+                           emit_expression(*binary.left) + ")) ? hy_coalesce_finish(NULL, 0) : " +
+                           "hy_coalesce_finish((void*)(" + emit_expression(*binary.right) + "), 1)))";
+                }
                 if (binary.op == TokenKind::Plus && binary.type == &program_.semantic_model.string_type) {
                     return "hy_string_concat(" + emit_string_operand(*binary.left) + ", " + emit_string_operand(*binary.right) + ")";
                 }

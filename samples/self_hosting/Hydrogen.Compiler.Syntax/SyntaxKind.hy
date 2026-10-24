@@ -94,6 +94,7 @@ namespace Hydrogen.Compiler.Syntax {
         ShiftRightEqualsToken,
         PlusPlusToken,
         MinusMinusToken,
-        QuestionToken
+        QuestionToken,
+        QuestionQuestionToken
     }
 }

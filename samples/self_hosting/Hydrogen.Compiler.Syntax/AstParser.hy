@@ -564,13 +564,20 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private ExpressionSyntax ParseConditional() {
-            ExpressionSyntax condition = ParseBinaryExpression(0);
+            ExpressionSyntax condition = ParseCoalesce();
             if (!Check(SyntaxKind.QuestionToken)) { return condition; }
             Advance();
             ExpressionSyntax whenTrue = ParseExpression();
             Consume(SyntaxKind.ColonToken, "Expected ':' in conditional expression");
             ExpressionSyntax whenFalse = ParseConditional();
             return ExpressionSyntax.Conditional(condition, whenTrue, whenFalse);
+        }
+
+        private ExpressionSyntax ParseCoalesce() {
+            ExpressionSyntax left = ParseBinaryExpression(0);
+            if (!Check(SyntaxKind.QuestionQuestionToken)) { return left; }
+            SyntaxKind op = Advance().Kind();
+            return ExpressionSyntax.Binary(left, op, ParseCoalesce());
         }
 
         private bool ShiftLeftAssignmentPair() {

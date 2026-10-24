@@ -899,6 +899,24 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
         private bool CompileBinary(IrExpression expression) {
             int op = expression.OperatorKind();
+            if (op == IrOperator.QuestionQuestionToken()) {
+                string expected = expression.ResultType();
+                if (!CompileExpression(expression.Left())) { return false; }
+                if (valueType != "null" && !Reference(valueType)) {
+                    failure = "native null coalescing requires a reference operand"; return false;
+                }
+                if (!Assignable(valueType, expected)) { failure = "native null coalescing left type mismatch"; return false; }
+                int rightPatch = EmitJumpIfZero();
+                PrepareValue(expected);
+                int endPatch = EmitJump();
+                PatchRelative(rightPatch, code.Position());
+                if (!CompileExpression(expression.Right())) { return false; }
+                if (!Assignable(valueType, expected)) { failure = "native null coalescing fallback type mismatch"; return false; }
+                PrepareValue(expected);
+                PatchRelative(endPatch, code.Position());
+                valueType = expected;
+                return true;
+            }
             if (op == IrOperator.AmpersandAmpersandToken() || op == IrOperator.PipePipeToken()) {
                 return CompileLogical(expression);
             }

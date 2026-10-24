@@ -152,6 +152,8 @@ Prefix and postfix `++` and `--` also work on integral lvalues. Prefix returns
 the new value; postfix returns the old value, with one target evaluation.
 Conditional expressions use `condition ? whenTrue : whenFalse`; only the
 selected branch executes, and both branches must have compatible types.
+Null coalescing uses `left ?? fallback` for references. The left expression
+evaluates once; the fallback runs only when the left is null.
 
 Fatal freestanding CPU exceptions use an allocation-free IDT panic path. It
 captures the CPU exception frame, `CR2`, and all general registers, writes a

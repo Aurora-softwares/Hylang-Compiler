@@ -385,6 +385,14 @@ namespace Hydrogen.Compiler.Binding {
                 return "<error>";
             }
             string left = Expression(e.Left()); string right = Expression(e.Right()); int op = e.OperatorKind();
+            if (op == IrOperator.QuestionQuestionToken()) {
+                if (left == "null" && module.Reference(right)) { return right; }
+                if (module.Reference(left) && Assignable(right, left)) { return left; }
+                if (left != "<error>" && right != "<error>") {
+                    Error("null coalescing requires a reference operand and compatible fallback");
+                }
+                return "<error>";
+            }
             if (op == IrOperator.AmpersandToken() || op == IrOperator.PipeToken() || op == IrOperator.CaretToken()) {
                 if ((!module.Numeric(left) || left != right) && left != "<error>" && right != "<error>") {
                     Error("bitwise operators require matching integral operands");

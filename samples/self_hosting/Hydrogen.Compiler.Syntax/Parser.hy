@@ -395,7 +395,7 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private void ParseConditionalExpression() {
-            ParseBinaryExpression(0);
+            ParseCoalesceExpression();
             if (!Check(SyntaxKind.QuestionToken)) { return; }
             Emit("ConditionalExpression");
             Push();
@@ -403,6 +403,16 @@ namespace Hydrogen.Compiler.Syntax {
             ParseAssignmentExpression();
             EmitToken(Consume(SyntaxKind.ColonToken, "Expected ':' in conditional expression"));
             ParseConditionalExpression();
+            Pop();
+        }
+
+        private void ParseCoalesceExpression() {
+            ParseBinaryExpression(0);
+            if (!Check(SyntaxKind.QuestionQuestionToken)) { return; }
+            Emit("BinaryOperator QuestionQuestion");
+            Push();
+            EmitToken(Advance());
+            ParseCoalesceExpression();
             Pop();
         }
 
