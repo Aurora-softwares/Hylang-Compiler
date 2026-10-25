@@ -77,6 +77,20 @@ collection cost, but the native node case is still well above the C++ result;
 [#130](https://github.com/Aurora-softwares/Hylang-Compiler/issues/130) remains
 in progress while root scans and span sweeping are investigated.
 
+For [#127](https://github.com/Aurora-softwares/Hylang-Compiler/issues/127),
+commutative integer operations now load a right-hand local directly into
+`rcx`, avoiding a register move, and multiplication writes its result directly
+to `rax`. Assignment also omits a second sign or zero extension when the
+arithmetic expression already normalized to its target type. A targeted
+five-operation loop binary shrank by 42 bytes; the standard runtime workload
+shrank by 66. Disassembly of the targeted function shows seven fewer
+`mov rcx,rax` instructions and six fewer duplicate `movsxd rax,eax`
+instructions. In 30 paired runs, the targeted loop fell from 9.60 to 8.74 ms
+median (9.0%), the standard loop from 86.27 to 82.67 ms (4.2%), and the array
+case from 134.25 to 129.00 ms (3.9%). The
+[source and raw samples](benchmarks/runtime/results-2026-10-25-local-ops.json)
+are retained. Further spill and load profiling is needed before #127 closes.
+
 The Development project tracks further code-generation and string-index work
 in [#127](https://github.com/Aurora-softwares/Hylang-Compiler/issues/127)
 and [#128](https://github.com/Aurora-softwares/Hylang-Compiler/issues/128),

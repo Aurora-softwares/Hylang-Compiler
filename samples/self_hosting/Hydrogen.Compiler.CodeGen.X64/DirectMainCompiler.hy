@@ -964,10 +964,19 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             int rightSlot = -1;
             if (right.Kind() == IrExpression.KindName()) { rightSlot = FindLocal(right.Name()); }
             if (rightSlot >= 0) {
-                // A local read cannot call into the runtime, so keep the left
-                // value in rcx without a push/pop around the right operand.
-                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // mov rcx, rax
-                EmitLoadLocal(rightSlot);
+                // Commutative integer operators can read the right local
+                // directly into rcx, leaving the left value in rax.
+                bool commutativeInteger =
+                    (op == IrOperator.PlusToken() && leftType != "string" && localTypes[rightSlot] != "string") ||
+                    op == IrOperator.StarToken() || op == IrOperator.AmpersandToken() ||
+                    op == IrOperator.PipeToken() || op == IrOperator.CaretToken();
+                if (commutativeInteger) { EmitLoadLocalRcx(rightSlot); }
+                else {
+                    // A local read cannot call into the runtime, so keep the
+                    // left value in rcx without a push/pop.
+                    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // mov rcx, rax
+                    EmitLoadLocal(rightSlot);
+                }
                 valueType = localTypes[rightSlot];
             } else {
                 code.EmitByte(0x50); // push rax
@@ -1050,8 +1059,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return true;
             }
             if (op == IrOperator.StarToken()) {
-                code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xaf); code.EmitByte(0xc8); // imul rcx, rax
-                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
+                code.EmitByte(0x48); code.EmitByte(0x0f); code.EmitByte(0xaf); code.EmitByte(0xc1); // imul rax, rcx
                 NormalizeRax(resultType); valueType = resultType;
                 return true;
             }
@@ -1996,9 +2004,21 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     else if (Unsigned(expected)) { code.EmitByte(0xe8); }
                     else { code.EmitByte(0xf8); }
                 } else { failure = "unsupported native compound assignment operator"; return false; }
-                NormalizeRax(expected);
             } else if (!Assignable(valueType, expected)) { failure = "native assignment type mismatch"; return false; }
-            PrepareValue(expected);
+            // Numeric binary expressions already normalize their result to
+            // their declared type. Avoid emitting the same extension twice
+            // when storing that result to a matching target.
+            bool normalizedBinary = false;
+            if (!compound && PrimitiveNumeric(expected) && valueType == expected &&
+                expression.Value().Kind() == IrExpression.KindBinary()) {
+                int rhsOp = expression.Value().OperatorKind();
+                normalizedBinary = rhsOp == IrOperator.PlusToken() || rhsOp == IrOperator.MinusToken() ||
+                    rhsOp == IrOperator.StarToken() || rhsOp == IrOperator.SlashToken() ||
+                    rhsOp == IrOperator.PercentToken() || rhsOp == IrOperator.AmpersandToken() ||
+                    rhsOp == IrOperator.PipeToken() || rhsOp == IrOperator.CaretToken() ||
+                    rhsOp == IrOperator.ShiftLeftToken() || rhsOp == IrOperator.ShiftRightToken();
+            }
+            if (!normalizedBinary) { PrepareValue(expected); }
             if (slot >= 0) {
                 EmitStoreLocal(slot);
                 if (returnsOld) { code.EmitByte(0x58); } // pop original value into rax
@@ -2090,6 +2110,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
         private void EmitLoadLocal(int slot) {
             code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x85); code.Emit32(-8 * (slot + 1)); // mov rax, [rbp-offsetof]
+        }
+
+        private void EmitLoadLocalRcx(int slot) {
+            code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x8d); code.Emit32(-8 * (slot + 1)); // mov rcx, [rbp-offsetof]
         }
 
         private int EmitJumpIfZero() {
