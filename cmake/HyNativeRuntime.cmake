@@ -63,6 +63,12 @@ set(RUN_ARGS)
 set(EXPECTED_OUTPUT "numeric immediates ok\n")
 include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
 
+set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_condition_branches.hy")
+set(OUTPUT_FILE "${TEMP_DIR}/condition_branches")
+set(RUN_ARGS)
+set(EXPECTED_OUTPUT "condition branches ok\n")
+include("${SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake")
+
 set(INPUT_FILE "${SOURCE_DIR}/tests/phase6/native_runtime_small_spans.hy")
 set(OUTPUT_FILE "${TEMP_DIR}/small_spans")
 set(RUN_ARGS)

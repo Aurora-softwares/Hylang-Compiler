@@ -118,6 +118,32 @@ case from 134.25 to 129.00 ms (3.9%). The
 [source and raw samples](benchmarks/runtime/results-2026-10-25-local-ops.json)
 are retained. Further spill and load profiling is needed before #127 closes.
 
+On 25 October, the loop, integer-array, and byte-file workloads were probed
+separately. In exploratory variants, removing constant remainder arithmetic
+reduced the 10-million-iteration loop from about 82 to 49 ms and the 1.6 MB
+byte workload from about 17 to 9 ms. Reading the byte file without its scan
+took about 1.8 ms. Allocating the 10-million-element integer array without
+scanning took about 17 ms. These variants change the computation, so their
+times identify likely costs rather than represent equivalent benchmark wins.
+Disassembly confirmed repeated reciprocal remainder sequences, boolean
+materialisation before loop branches, and null/bounds checks on every packed
+array access.
+
+The compiler now branches around sign correction for nonnegative signed
+constant division and remainder, retaining truncation-toward-zero behavior
+for negative inputs including `int.MinValue`. Numeric ordering conditions in
+`if`, `while`, and `for` branch directly on comparison flags. Thirty paired
+whole-process runs, with output and exit status checked on every run, measured
+the standard loop at 82.22 to 68.82 ms (16.3% faster), array fill/scan at
+128.75 to 120.27 ms (6.6%), and the binary checksum at 16.86 to 14.44 ms
+(14.3%). The [raw samples](benchmarks/runtime/results-2026-10-25-loop-array-byte-codegen.json)
+include source, compiler, executable, and byte-input hashes. Native runtime
+and Windows parity tests cover signed/unsigned branch conditions and constant
+division edge cases. Array accesses still need safe bounds-check elimination
+in loops where the index range can be proven; this is tracked in
+[#167](https://github.com/Aurora-softwares/Hylang-Compiler/issues/167) as
+remaining 0.8.0 performance work.
+
 For [#129](https://github.com/Aurora-softwares/Hylang-Compiler/issues/129),
 the [native text builder](samples/native_text_builder/README.md) appends UTF-8
 bytes to a geometric `byte[]` and creates one immutable string at the end.

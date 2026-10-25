@@ -108,3 +108,9 @@ These ratios depend on CPU, OS, input size, compiler versions, and load. In
 particular, process startup dominates tiny runs; use the reference sizes or
 larger when assessing steady execution. The six cases do not establish an
 overall language speed ranking.
+
+The later [25 October loop/array/byte code-generation comparison](results-2026-10-25-loop-array-byte-codegen.json)
+records 30 paired before/after runs after constant-remainder and conditional
+branch improvements. Its matching checksums and compiler/executable hashes
+are retained alongside the raw timings. See [optimisations.md](../../optimisations.md)
+for the diagnosis and remaining bounds-check work.

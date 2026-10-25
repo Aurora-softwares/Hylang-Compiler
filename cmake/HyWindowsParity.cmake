@@ -99,7 +99,8 @@ endforeach()
 foreach(name native_runtime_gc native_inheritance native_interfaces
              native_static_fields native_integral_widths
              native_runtime_packed_bytes native_runtime_packed_ints
-             native_runtime_literals native_runtime_small_spans native_overloads)
+             native_runtime_literals native_runtime_small_spans native_overloads
+             native_condition_branches)
     set(image "${TEMP_DIR}/${name}.exe")
     execute_process(COMMAND "${NATIVE_BINARY}" compile
         "${SOURCE_DIR}/tests/phase6/${name}.hy" --target windows-x64 -o "${image}"

@@ -655,9 +655,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return true;
             }
             if (kind == IrStatement.KindIfStatement()) {
-                if (!CompileExpression(statement.Condition())) { return false; }
-                if (valueType != "bool") { failure = "native condition must be bool"; return false; }
-                int elsePatch = EmitJumpIfZero();
+                int elsePatch = CompileConditionJumpFalse(statement.Condition());
+                if (elsePatch < 0) { return false; }
                 if (!CompileStatement(statement.ThenStatement())) { return false; }
                 int endPatch = EmitJump();
                 PatchRelative(elsePatch, code.Position());
@@ -670,9 +669,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 int savedBreaks = breakCount;
                 int conditionPosition = code.Position();
                 loopStart = conditionPosition;
-                if (!CompileExpression(statement.Condition())) { return false; }
-                if (valueType != "bool") { failure = "native condition must be bool"; return false; }
-                int exitPatch = EmitJumpIfZero();
+                int exitPatch = CompileConditionJumpFalse(statement.Condition());
+                if (exitPatch < 0) { return false; }
                 if (!CompileStatement(statement.Body())) { return false; }
                 int backPatch = EmitJump();
                 PatchRelative(backPatch, conditionPosition);
@@ -694,9 +692,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 int savedContinues = continueCount;
                 int conditionPosition = code.Position();
                 loopStart = -2;
-                if (!CompileExpression(statement.Condition())) { return false; }
-                if (valueType != "bool") { failure = "native condition must be bool"; return false; }
-                int exitPatch = EmitJumpIfZero();
+                int exitPatch = CompileConditionJumpFalse(statement.Condition());
+                if (exitPatch < 0) { return false; }
                 if (!CompileStatement(statement.Body())) { return false; }
 
                 int incrementPosition = code.Position();
@@ -732,6 +729,51 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             failure = "unsupported statement in direct native backend";
             return false;
+        }
+
+        // A branch can consume comparison flags directly. Materialising a
+        // boolean with setcc/movzx and then testing it costs three extra
+        // instructions in every loop iteration.
+        private int CompileConditionJumpFalse(IrExpression condition) {
+            if (condition.Kind() == IrExpression.KindBinary() &&
+                Numeric(condition.Left().ResultType()) && Numeric(condition.Right().ResultType())) {
+                int op = condition.OperatorKind();
+                if (op == IrOperator.LessToken() || op == IrOperator.LessEqualsToken() ||
+                    op == IrOperator.GreaterToken() || op == IrOperator.GreaterEqualsToken()) {
+                    if (!CompileExpression(condition.Left())) { return -1; }
+                    string leftType = valueType;
+                    IrExpression right = condition.Right();
+                    int rightSlot = -1;
+                    if (right.Kind() == IrExpression.KindName()) { rightSlot = FindLocal(right.Name()); }
+                    if (rightSlot >= 0) {
+                        code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // mov rcx, rax
+                        EmitLoadLocal(rightSlot);
+                        valueType = localTypes[rightSlot];
+                    } else {
+                        code.EmitByte(0x50); // preserve left while evaluating right
+                        if (!CompileExpression(right)) { return -1; }
+                        code.EmitByte(0x59); // left in rcx, right in rax
+                    }
+                    string rightType = valueType;
+                    if (!Numeric(leftType) || !Numeric(rightType) ||
+                        (!Assignable(leftType, rightType) && !Assignable(rightType, leftType))) {
+                        failure = "native binary operand type mismatch"; return -1;
+                    }
+                    code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xc1); // cmp rcx, rax
+                    bool unsignedComparison = UnsignedOperation(leftType, rightType);
+                    code.EmitByte(0x0f);
+                    if (op == IrOperator.LessToken()) { if (unsignedComparison) { code.EmitByte(0x83); } else { code.EmitByte(0x8d); } }
+                    if (op == IrOperator.LessEqualsToken()) { if (unsignedComparison) { code.EmitByte(0x87); } else { code.EmitByte(0x8f); } }
+                    if (op == IrOperator.GreaterToken()) { if (unsignedComparison) { code.EmitByte(0x86); } else { code.EmitByte(0x8e); } }
+                    if (op == IrOperator.GreaterEqualsToken()) { if (unsignedComparison) { code.EmitByte(0x82); } else { code.EmitByte(0x8c); } }
+                    int patch = code.Position(); code.Emit32(0);
+                    valueType = "bool";
+                    return patch;
+                }
+            }
+            if (!CompileExpression(condition)) { return -1; }
+            if (valueType != "bool") { failure = "native condition must be bool"; return -1; }
+            return EmitJumpIfZero();
         }
 
         private bool CompileExpression(IrExpression expression) {
@@ -1167,26 +1209,37 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         // For |x| <= 2^31 and 3 <= divisor <= 2^31-1, the high half of
-        // |x| * ceil(2^64/divisor) is exactly floor(|x|/divisor). The
-        // reciprocal's rounding error is smaller than the minimum nonzero
-        // fractional step (1/divisor). Restore truncation-toward-zero sign.
+        // |x| * ceil(2^64/divisor) is exactly floor(|x|/divisor). Most
+        // array and byte loop values are nonnegative: keep their path free
+        // of the absolute-value and quotient sign-restoration instructions.
+        // Negating the sign-extended dividend is safe even for int.MinValue.
         private void EmitIntConstantDivision(int divisor, bool remainder) {
             ulong magic = ((ulong)(-1) / (ulong)divisor) + (ulong)1;
-            code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc8); // mov r8, rcx (dividend sign)
-            code.EmitByte(0x49); code.EmitByte(0xc1); code.EmitByte(0xf8); code.EmitByte(63); // sar r8, 63
+            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc9); // test rcx, rcx
+            code.EmitByte(0x0f); code.EmitByte(0x88); int negativePatch = code.Position(); code.Emit32(0); // js negative
             code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
-            code.EmitByte(0x4c); code.EmitByte(0x31); code.EmitByte(0xc0); // xor rax, r8
-            code.EmitByte(0x4c); code.EmitByte(0x29); code.EmitByte(0xc0); // sub rax, r8
             code.EmitByte(0x49); code.EmitByte(0xb9); code.Emit64((long)magic); // mov r9, reciprocal
             code.EmitByte(0x49); code.EmitByte(0xf7); code.EmitByte(0xe1); // mul r9; quotient in rdx
             code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd0); // mov rax, rdx
-            code.EmitByte(0x4c); code.EmitByte(0x31); code.EmitByte(0xc0); // xor rax, r8
-            code.EmitByte(0x4c); code.EmitByte(0x29); code.EmitByte(0xc0); // sub rax, r8
             if (remainder) {
                 code.EmitByte(0x48); code.EmitByte(0x69); code.EmitByte(0xc0); code.Emit32(divisor); // quotient * divisor
                 code.EmitByte(0x48); code.EmitByte(0x29); code.EmitByte(0xc1); // sub rcx, rax
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
             }
+            code.EmitByte(0xe9); int donePatch = code.Position(); code.Emit32(0);
+            PatchRelative(negativePatch, code.Position());
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
+            code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xd8); // neg rax
+            code.EmitByte(0x49); code.EmitByte(0xb9); code.Emit64((long)magic);
+            code.EmitByte(0x49); code.EmitByte(0xf7); code.EmitByte(0xe1); // mul r9
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd0); // mov rax, rdx
+            if (remainder) {
+                code.EmitByte(0x48); code.EmitByte(0x69); code.EmitByte(0xc0); code.Emit32(divisor);
+                code.EmitByte(0x48); code.EmitByte(0x01); code.EmitByte(0xc8); // negative dividend + quotient * divisor
+            } else {
+                code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xd8); // neg quotient
+            }
+            PatchRelative(donePatch, code.Position());
             NormalizeRax("int");
         }
 
