@@ -144,6 +144,8 @@ namespace Hydrogen.Compiler.IR {
             else if (k == IrExpression.KindIndex()) { string leftText = Expression(e.Receiver());
                 string rightText = Expression(e.Index());
                 text = "index(" + leftText + ", " + rightText + ")"; }
+            else if (k == IrExpression.KindSlice()) { text = "slice(" + Expression(e.Receiver()) + ", " +
+                Expression(e.Index()) + ", " + Expression(e.SliceEnd()) + ")"; }
             else if (k == IrExpression.KindAssignment()) { string leftText = Expression(e.Target());
                 string rightText = Expression(e.Value());
                 text = "store(" + leftText + ", " + rightText + ")"; }
@@ -151,6 +153,9 @@ namespace Hydrogen.Compiler.IR {
                 string rightText = Expression(e.Right());
                 text = "binary(" + (int)e.OperatorKind() + ", " + leftText + ", " + rightText + ")"; }
             else if (k == IrExpression.KindUnary()) { string operandText = Expression(e.UnaryOperand()); text = "unary(" + (int)e.UnaryOperatorKind() + ", " + operandText + ")"; }
+            else if (k == IrExpression.KindConditional()) { string conditionText = Expression(e.ConditionalCondition());
+                string trueText = Expression(e.TrueValue()); string falseText = Expression(e.FalseValue());
+                text = "conditional(" + conditionText + ", " + trueText + ", " + falseText + ")"; }
             else if (k == IrExpression.KindArrayCreation()) { string sizeText = Expression(e.Size()); text = "newarray(" + e.Type().DisplayName() + ", " + sizeText + ")"; }
             else if (k == IrExpression.KindCast()) { string valueText = Expression(e.CastExpression()); text = "cast(" + e.CastType().DisplayName() + ", " + valueText + ")"; }
             else if (k == IrExpression.KindSizeOf()) { text = "sizeof(" + e.SizeOfType().DisplayName() + ")"; }

@@ -226,6 +226,14 @@ namespace Hydrogen.Compiler.Syntax {
                 ParseForStatement();
                 return;
             }
+            if (Check(SyntaxKind.ForeachKeyword)) {
+                ParseForeachStatement();
+                return;
+            }
+            if (Check(SyntaxKind.SwitchKeyword)) {
+                ParseSwitchStatement();
+                return;
+            }
             if (Check(SyntaxKind.BreakKeyword) || Check(SyntaxKind.ContinueKeyword)) {
                 Emit("JumpStatement");
                 Push();
@@ -306,6 +314,79 @@ namespace Hydrogen.Compiler.Syntax {
             Pop();
         }
 
+        private void ParseForeachStatement() {
+            Emit("ForeachStatement");
+            Push();
+            EmitToken(Consume(SyntaxKind.ForeachKeyword, "Expected foreach"));
+            EmitToken(Consume(SyntaxKind.OpenParenToken, "Expected '(' after foreach"));
+            ParseTypeSyntax();
+            EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected foreach variable name"));
+            EmitToken(Consume(SyntaxKind.InKeyword, "Expected 'in' after foreach variable"));
+            ParseExpression();
+            EmitToken(Consume(SyntaxKind.CloseParenToken, "Expected ')' after foreach collection"));
+            ParseStatement();
+            Pop();
+        }
+
+        private void ParseSwitchLabel() {
+            if (Check(SyntaxKind.MinusToken)) { EmitToken(Advance()); }
+            if (Check(SyntaxKind.NumberToken) || Check(SyntaxKind.StringToken) ||
+                Check(SyntaxKind.TrueKeyword) || Check(SyntaxKind.FalseKeyword)) {
+                EmitToken(Advance());
+            } else {
+                EmitToken(Consume(SyntaxKind.NumberToken, "Expected constant switch case"));
+            }
+        }
+
+        private void ParseSwitchStatement() {
+            Emit("SwitchStatement"); Push();
+            EmitToken(Consume(SyntaxKind.SwitchKeyword, "Expected switch"));
+            ParseParenthesizedExpression();
+            EmitToken(Consume(SyntaxKind.OpenBraceToken, "Expected '{' after switch value"));
+            while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                int before = index;
+                if (Check(SyntaxKind.CaseKeyword)) {
+                    EmitToken(Advance()); ParseSwitchLabel();
+                } else if (Check(SyntaxKind.DefaultKeyword)) {
+                    EmitToken(Advance());
+                } else {
+                    diagnostics.Report(Current().Line(), Current().Column(), "Expected case or default in switch");
+                    Advance(); continue;
+                }
+                EmitToken(Consume(SyntaxKind.ColonToken, "Expected ':' after switch arm"));
+                while (!Check(SyntaxKind.CaseKeyword) && !Check(SyntaxKind.DefaultKeyword) &&
+                       !Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                    ParseStatement(); EnsureProgress(before); before = index;
+                }
+            }
+            EmitToken(Consume(SyntaxKind.CloseBraceToken, "Expected '}' after switch"));
+            Pop();
+        }
+
+        private void ParseSwitchExpression() {
+            Emit("SwitchExpression"); Push();
+            EmitToken(Consume(SyntaxKind.SwitchKeyword, "Expected switch"));
+            ParseParenthesizedExpression();
+            EmitToken(Consume(SyntaxKind.OpenBraceToken, "Expected '{' after switch value"));
+            while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                int before = index;
+                if (Check(SyntaxKind.CaseKeyword)) {
+                    EmitToken(Advance()); ParseSwitchLabel();
+                } else if (Check(SyntaxKind.DefaultKeyword)) {
+                    EmitToken(Advance());
+                } else {
+                    diagnostics.Report(Current().Line(), Current().Column(), "Expected case or default in switch expression");
+                    Advance(); continue;
+                }
+                EmitToken(Consume(SyntaxKind.FatArrowToken, "Expected '=>' after switch arm"));
+                ParseExpression();
+                if (Check(SyntaxKind.CommaToken)) { EmitToken(Advance()); }
+                EnsureProgress(before);
+            }
+            EmitToken(Consume(SyntaxKind.CloseBraceToken, "Expected '}' after switch expression"));
+            Pop();
+        }
+
         private void ParseReturnStatement() {
             Emit("ReturnStatement");
             Push();
@@ -379,14 +460,59 @@ namespace Hydrogen.Compiler.Syntax {
         private void ParseAssignmentExpression() {
             Emit("Expression");
             Push();
-            ParseBinaryExpression(0);
-            if (Match(SyntaxKind.EqualsToken)) {
+            ParseConditionalExpression();
+            if (ShiftLeftAssignmentPair() || ShiftRightAssignmentPair()) {
+                EmitToken(Advance()); EmitToken(Advance());
+                Emit("AssignmentTail");
+                Push(); ParseAssignmentExpression(); Pop();
+            } else if (IsAssignmentToken(Current().Kind())) {
+                EmitToken(Advance());
                 Emit("AssignmentTail");
                 Push();
                 ParseAssignmentExpression();
                 Pop();
             }
             Pop();
+        }
+
+        private void ParseConditionalExpression() {
+            ParseCoalesceExpression();
+            if (!Check(SyntaxKind.QuestionToken)) { return; }
+            Emit("ConditionalExpression");
+            Push();
+            EmitToken(Advance());
+            ParseAssignmentExpression();
+            EmitToken(Consume(SyntaxKind.ColonToken, "Expected ':' in conditional expression"));
+            ParseConditionalExpression();
+            Pop();
+        }
+
+        private void ParseCoalesceExpression() {
+            ParseBinaryExpression(0);
+            if (!Check(SyntaxKind.QuestionQuestionToken)) { return; }
+            Emit("BinaryOperator QuestionQuestion");
+            Push();
+            EmitToken(Advance());
+            ParseCoalesceExpression();
+            Pop();
+        }
+
+        private bool ShiftLeftAssignmentPair() {
+            return Current().Kind() == SyntaxKind.LessToken && Peek(1).Kind() == SyntaxKind.LessEqualsToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
+        private bool ShiftRightAssignmentPair() {
+            return Current().Kind() == SyntaxKind.GreaterToken && Peek(1).Kind() == SyntaxKind.GreaterEqualsToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
+        private bool IsAssignmentToken(SyntaxKind kind) {
+            return kind == SyntaxKind.EqualsToken || kind == SyntaxKind.PlusEqualsToken ||
+                kind == SyntaxKind.MinusEqualsToken || kind == SyntaxKind.StarEqualsToken ||
+                kind == SyntaxKind.SlashEqualsToken || kind == SyntaxKind.PercentEqualsToken ||
+                kind == SyntaxKind.AmpersandEqualsToken || kind == SyntaxKind.PipeEqualsToken ||
+                kind == SyntaxKind.CaretEqualsToken;
         }
 
         private void ParseBinaryExpression(int parentPrecedence) {
@@ -402,23 +528,45 @@ namespace Hydrogen.Compiler.Syntax {
             }
 
             while (true) {
+                if (ShiftLeftAssignmentPair() || ShiftRightAssignmentPair()) { return; }
+                bool shiftLeft = ShiftLeftPair();
+                bool shiftRight = ShiftRightPair();
                 int precedence = BinaryPrecedence(Current().Kind());
+                if (shiftLeft || shiftRight) { precedence = 9; }
                 if (precedence == 0 || precedence <= parentPrecedence) {
                     return;
                 }
-                Emit("BinaryOperator " + SyntaxFacts.KindName(Current().Kind()));
+                string name = SyntaxFacts.KindName(Current().Kind());
+                if (shiftLeft) { name = "ShiftLeft"; }
+                if (shiftRight) { name = "ShiftRight"; }
+                Emit("BinaryOperator " + name);
                 Push();
                 EmitToken(Advance());
+                if (shiftLeft || shiftRight) { EmitToken(Advance()); }
                 ParseBinaryExpression(precedence);
                 Pop();
             }
         }
 
+        private bool ShiftLeftPair() {
+            return Current().Kind() == SyntaxKind.LessToken && Peek(1).Kind() == SyntaxKind.LessToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
+        private bool ShiftRightPair() {
+            return Current().Kind() == SyntaxKind.GreaterToken && Peek(1).Kind() == SyntaxKind.GreaterToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
         private void ParsePostfixExpression() {
             ParsePrimaryExpression();
             while (true) {
-                if (Match(SyntaxKind.DotToken)) {
-                    Emit("MemberAccessExpression");
+                if (Check(SyntaxKind.DotToken) || (Check(SyntaxKind.QuestionToken) && Peek(1).Kind() == SyntaxKind.DotToken)) {
+                    bool conditional = Check(SyntaxKind.QuestionToken);
+                    if (conditional) { EmitToken(Advance()); }
+                    EmitToken(Advance());
+                    if (conditional) { Emit("NullConditionalMemberAccessExpression"); }
+                    else { Emit("MemberAccessExpression"); }
                     Push();
                     EmitToken(Consume(SyntaxKind.IdentifierToken, "Expected member name"));
                     Pop();
@@ -428,12 +576,28 @@ namespace Hydrogen.Compiler.Syntax {
                     ParseArgumentList();
                     continue;
                 }
-                if (Match(SyntaxKind.OpenBracketToken)) {
-                    Emit("ElementAccessExpression");
+                if (Check(SyntaxKind.OpenBracketToken) || (Check(SyntaxKind.QuestionToken) && Peek(1).Kind() == SyntaxKind.OpenBracketToken)) {
+                    bool conditional = Check(SyntaxKind.QuestionToken);
+                    if (conditional) { EmitToken(Advance()); }
+                    EmitToken(Advance());
+                    if (conditional) { Emit("NullConditionalElementAccessExpression"); }
+                    else { Emit("ElementAccessExpression"); }
                     Push();
                     ParseExpression();
+                    if (Check(SyntaxKind.DotDotToken)) {
+                        Emit("SliceBounds");
+                        Push();
+                        EmitToken(Advance());
+                        ParseExpression();
+                        Pop();
+                    }
                     EmitToken(Consume(SyntaxKind.CloseBracketToken, "Expected ']'"));
                     Pop();
+                    continue;
+                }
+                if (Check(SyntaxKind.PlusPlusToken) || Check(SyntaxKind.MinusMinusToken)) {
+                    Emit("PostfixUpdateExpression");
+                    Push(); EmitToken(Advance()); Pop();
                     continue;
                 }
                 return;
@@ -441,6 +605,15 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private void ParsePrimaryExpression() {
+            if (Check(SyntaxKind.SwitchKeyword)) {
+                ParseSwitchExpression();
+                return;
+            }
+            if (Check(SyntaxKind.InterpolatedStringToken)) {
+                Emit("InterpolatedStringExpression");
+                Push(); EmitToken(Advance()); Pop();
+                return;
+            }
             if (Check(SyntaxKind.OpenParenToken) && LooksLikeCastExpression()) {
                 Emit("CastExpression");
                 Push();
@@ -653,21 +826,26 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private int UnaryPrecedence(SyntaxKind kind) {
-            if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken || kind == SyntaxKind.BangToken ||
+            if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken ||
+                kind == SyntaxKind.PlusPlusToken || kind == SyntaxKind.MinusMinusToken || kind == SyntaxKind.BangToken ||
+                kind == SyntaxKind.TildeToken ||
                 kind == SyntaxKind.AmpersandToken || kind == SyntaxKind.StarToken) {
-                return 7;
+                return 11;
             }
             return 0;
         }
 
         private int BinaryPrecedence(SyntaxKind kind) {
-            if (kind == SyntaxKind.StarToken || kind == SyntaxKind.SlashToken || kind == SyntaxKind.PercentToken) { return 6; }
-            if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken) { return 5; }
+            if (kind == SyntaxKind.StarToken || kind == SyntaxKind.SlashToken || kind == SyntaxKind.PercentToken) { return 10; }
+            if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken) { return 9; }
             if (kind == SyntaxKind.LessToken || kind == SyntaxKind.LessEqualsToken ||
-                kind == SyntaxKind.GreaterToken || kind == SyntaxKind.GreaterEqualsToken) { return 4; }
-            if (kind == SyntaxKind.EqualsEqualsToken || kind == SyntaxKind.BangEqualsToken) { return 3; }
-            if (kind == SyntaxKind.AmpersandAmpersandToken) { return 2; }
-            if (kind == SyntaxKind.PipePipeToken) { return 1; }
+                kind == SyntaxKind.GreaterToken || kind == SyntaxKind.GreaterEqualsToken) { return 8; }
+            if (kind == SyntaxKind.EqualsEqualsToken || kind == SyntaxKind.BangEqualsToken) { return 7; }
+            if (kind == SyntaxKind.AmpersandToken) { return 6; }
+            if (kind == SyntaxKind.CaretToken) { return 5; }
+            if (kind == SyntaxKind.PipeToken) { return 4; }
+            if (kind == SyntaxKind.AmpersandAmpersandToken) { return 3; }
+            if (kind == SyntaxKind.PipePipeToken) { return 2; }
             return 0;
         }
 

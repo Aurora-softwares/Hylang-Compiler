@@ -43,7 +43,7 @@ set(reason_unknown_name "undefined name 'absent'")
 set(source_scope "public class Program { public static int Main() { { int value = 1; } return value; } }")
 set(reason_scope "undefined name 'value'")
 set(source_argument "public class Program { public static int Main() { int value = 2; return Id(value); } public static int Id(bool flag) { return 0; } }")
-set(reason_argument "argument type mismatch calling 'Id'")
+set(reason_argument "no overload of 'Id' matches the provided arguments")
 set(source_unreachable "public class Program { public static int Main() { return 0; } public static int Broken() { return Missing(); } }")
 set(reason_unreachable "undefined method: Program.Missing")
 set(source_private_field "public class Program { public static int Main() { return new State().value; } } public class State { private int value; }")
@@ -113,8 +113,10 @@ endforeach()
 # Construct and mutate IR without a syntax tree. The emitted executables must change.
 if(COMPILE_CLI)
     find_program(PRLIMIT_EXECUTABLE prlimit REQUIRED)
+    # The full compiler closure peaks near 310 MiB with the default collector.
+    # Keep an address-space limit while allowing its live working set.
     execute_process(
-        COMMAND "${PRLIMIT_EXECUTABLE}" --as=134217728 ${compiler_command} check "${PROJECT_TARGET}" --emit-ir
+        COMMAND "${PRLIMIT_EXECUTABLE}" --as=536870912 ${compiler_command} check "${PROJECT_TARGET}" --emit-ir
         RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 60
     )
     string(FIND "${stdout}" "func Hydrogen.Compiler.CodeGen.X64.NativeCompiler.BuildProject(string, string)" found)

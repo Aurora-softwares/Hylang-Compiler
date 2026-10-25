@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Hydrogen's Linux release launcher; the native compiler remains libexec/hy-core.
+set -euo pipefail
+entry=${BASH_SOURCE[0]}
+if [[ $entry != */* ]]; then entry=$(command -v -- "$entry"); fi
+resolved=$(readlink -f -- "$entry")
+root=$(dirname -- "$(dirname -- "$resolved")")
+case ${1-} in
+    update-check|update|uninstall|remove)
+        export HYDROGEN_ENTRY_PATH="$entry"
+        exec "$root/libexec/hy-maintenance" "$@" ;;
+    --version)
+        if [[ -f "$root/BUILD-INFO.txt" ]]; then
+            sed -n 's/^Hydrogen release: /Hydrogen /p' "$root/BUILD-INFO.txt"
+        else printf 'Hydrogen (unversioned)\n'; fi ;;
+    *) exec "$root/libexec/hy-core" "$@" ;;
+esac

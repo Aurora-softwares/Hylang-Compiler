@@ -15,6 +15,7 @@ The Hydrogen-written compiler emits Linux x86-64 ELF directly, binds executable 
 - Retain clean failure for unsupported programs and add cross-backend semantic regressions.
 - Preserve node spans through AST/binding/IR for precise diagnostics.
 - Improve collector allocation density, compiler memory use, and generated-code performance.
+  The measured self-hosted native runtime priorities are in [optimisations.md](optimisations.md).
 - Port or replace SDK scaffolding, run/test/fmt/check tooling, workspace/package resolution, and LSP services.
 - Migrate build/tests to retained verified native seeds before deciding whether to retire C++ bootstrap sources.
 
@@ -26,7 +27,12 @@ Expand compiler/runtime builtins into reusable Hydrogen-written libraries: colle
 
 Direct Linux x64 code generation is implemented. Additional work includes object files, linker/external ABI integration, debug information, cross-compilation, and additional platform runtime/startup implementations. Keep the C backend useful as a portability route while parity develops.
 
-UEFI, freestanding execution, Australis userland, and kernel-adjacent use require explicit target contracts, memory ownership, layout/ABI support, and suitable runtime profiles. See [OS_ROADMAP.md](OS_ROADMAP.md); Linux executables do not establish support for those targets.
+The development compiler already emits the Australis bootloader, raw kernel,
+and checked AUEX programs. The OS can load small AUN1 ring-3 machine-code
+programs, but Hydrogen does not yet emit AUN1. General native Australis source
+compilation requires explicit target contracts, memory ownership, layout/ABI
+support, and a suitable runtime profile. See [OS_ROADMAP.md](OS_ROADMAP.md);
+Linux executables do not establish support for these targets.
 
 ## Tooling and packages
 

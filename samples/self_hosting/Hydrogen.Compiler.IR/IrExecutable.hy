@@ -409,6 +409,8 @@ namespace Hydrogen.Compiler.IR {
 		public static int KindCast() { return 10; }
 		public static int KindUnary() { return 11; }
 		public static int KindSizeOf() { return 12; }
+		public static int KindConditional() { return 13; }
+		public static int KindSlice() { return 14; }
 
 		private int kind;
 		private string name;
@@ -416,13 +418,20 @@ namespace Hydrogen.Compiler.IR {
 		private string literalText;
 		private IrExpression receiver;
 		private string memberName;
+		private bool nullConditional;
 		private IrExpression target;
 		private IrExpression[] arguments;
 		private IrExpression value;
+		private int assignmentOp;
+		private bool returnsOld;
 		private IrExpression left;
 		private int op;
 		private IrExpression right;
+		private IrExpression conditionalCondition;
+		private IrExpression trueValue;
+		private IrExpression falseValue;
 		private IrExpression index;
+		private IrExpression sliceEnd;
 		private IrType type;
 		private IrExpression size;
 		private IrType castType;
@@ -444,13 +453,22 @@ namespace Hydrogen.Compiler.IR {
 		public string LiteralText() { return literalText; }
 		public IrExpression Receiver() { return receiver; }
 		public string MemberName() { return memberName; }
+		public bool NullConditional() { return nullConditional; }
+		public void SetNullConditional(bool value) { nullConditional = value; }
 		public IrExpression Target() { return target; }
 		public IrExpression[] Arguments() { return arguments; }
 		public IrExpression Value() { return value; }
+		public int AssignmentOperatorKind() { return assignmentOp; }
+		public bool ReturnsOld() { return returnsOld; }
+		public void SetReturnsOld(bool inputReturnsOld) { returnsOld = inputReturnsOld; }
 		public IrExpression Left() { return left; }
 		public int OperatorKind() { return op; }
 		public IrExpression Right() { return right; }
+		public IrExpression ConditionalCondition() { return conditionalCondition; }
+		public IrExpression TrueValue() { return trueValue; }
+		public IrExpression FalseValue() { return falseValue; }
 		public IrExpression Index() { return index; }
+		public IrExpression SliceEnd() { return sliceEnd; }
 		public IrType Type() { return type; }
 		public IrExpression Size() { return size; }
 		public IrType CastType() { return castType; }
@@ -492,9 +510,10 @@ namespace Hydrogen.Compiler.IR {
 			return node;
 		}
 
-		public static IrExpression Assignment(IrExpression inputTarget, IrExpression inputValue) {
+		public static IrExpression Assignment(IrExpression inputTarget, int inputOp, IrExpression inputValue) {
 			IrExpression node = new IrExpression(KindAssignment());
 			node.target = inputTarget;
+			node.assignmentOp = inputOp;
 			node.value = inputValue;
 			return node;
 		}
@@ -507,10 +526,26 @@ namespace Hydrogen.Compiler.IR {
 			return node;
 		}
 
+		public static IrExpression Conditional(IrExpression inputCondition, IrExpression inputTrue, IrExpression inputFalse) {
+			IrExpression node = new IrExpression(KindConditional());
+			node.conditionalCondition = inputCondition;
+			node.trueValue = inputTrue;
+			node.falseValue = inputFalse;
+			return node;
+		}
+
 		public static IrExpression IndexExpr(IrExpression inputReceiver, IrExpression inputIndex) {
 			IrExpression node = new IrExpression(KindIndex());
 			node.receiver = inputReceiver;
 			node.index = inputIndex;
+			return node;
+		}
+
+		public static IrExpression SliceExpr(IrExpression inputReceiver, IrExpression inputStart, IrExpression inputEnd) {
+			IrExpression node = new IrExpression(KindSlice());
+			node.receiver = inputReceiver;
+			node.index = inputStart;
+			node.sliceEnd = inputEnd;
 			return node;
 		}
 

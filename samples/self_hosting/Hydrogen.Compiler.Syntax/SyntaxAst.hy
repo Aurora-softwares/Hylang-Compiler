@@ -391,6 +391,8 @@ using Hydrogen.Compiler.Text;
 		public static int KindCast() { return 10; }
 		public static int KindUnary() { return 11; }
 		public static int KindSizeOf() { return 12; }
+		public static int KindConditional() { return 13; }
+		public static int KindSlice() { return 14; }
 
 		private int kind;
 		private string name;
@@ -398,13 +400,20 @@ using Hydrogen.Compiler.Text;
 		private string literalText;
 		private ExpressionSyntax receiver;
 		private string memberName;
+		private bool nullConditional;
 		private ExpressionSyntax target;
 		private ExpressionSyntax[] arguments;
 		private ExpressionSyntax value;
+		private SyntaxKind assignmentOp;
+		private bool returnsOld;
 		private ExpressionSyntax left;
 		private SyntaxKind op;
 		private ExpressionSyntax right;
+		private ExpressionSyntax conditionalCondition;
+		private ExpressionSyntax trueValue;
+		private ExpressionSyntax falseValue;
 		private ExpressionSyntax index;
+		private ExpressionSyntax sliceEnd;
 		private TypeSyntax type;
 		private ExpressionSyntax size;
 		private TypeSyntax castType;
@@ -426,13 +435,22 @@ using Hydrogen.Compiler.Text;
 		public string LiteralText() { return literalText; }
 		public ExpressionSyntax Receiver() { return receiver; }
 		public string MemberName() { return memberName; }
+		public bool NullConditional() { return nullConditional; }
+		public void SetNullConditional(bool value) { nullConditional = value; }
 		public ExpressionSyntax Target() { return target; }
 		public ExpressionSyntax[] Arguments() { return arguments; }
 		public ExpressionSyntax Value() { return value; }
+		public SyntaxKind AssignmentOperatorKind() { return assignmentOp; }
+		public bool ReturnsOld() { return returnsOld; }
+		public void SetReturnsOld(bool inputReturnsOld) { returnsOld = inputReturnsOld; }
 		public ExpressionSyntax Left() { return left; }
 		public SyntaxKind OperatorKind() { return op; }
 		public ExpressionSyntax Right() { return right; }
+		public ExpressionSyntax ConditionalCondition() { return conditionalCondition; }
+		public ExpressionSyntax TrueValue() { return trueValue; }
+		public ExpressionSyntax FalseValue() { return falseValue; }
 		public ExpressionSyntax Index() { return index; }
+		public ExpressionSyntax SliceEnd() { return sliceEnd; }
 		public TypeSyntax Type() { return type; }
 		public ExpressionSyntax Size() { return size; }
 		public TypeSyntax CastType() { return castType; }
@@ -474,9 +492,10 @@ using Hydrogen.Compiler.Text;
 			return node;
 		}
 
-		public static ExpressionSyntax Assignment(ExpressionSyntax inputTarget, ExpressionSyntax inputValue) {
+		public static ExpressionSyntax Assignment(ExpressionSyntax inputTarget, SyntaxKind inputOp, ExpressionSyntax inputValue) {
 			ExpressionSyntax node = new ExpressionSyntax(KindAssignment());
 			node.target = inputTarget;
+			node.assignmentOp = inputOp;
 			node.value = inputValue;
 			return node;
 		}
@@ -489,10 +508,26 @@ using Hydrogen.Compiler.Text;
 			return node;
 		}
 
+		public static ExpressionSyntax Conditional(ExpressionSyntax inputCondition, ExpressionSyntax inputTrue, ExpressionSyntax inputFalse) {
+			ExpressionSyntax node = new ExpressionSyntax(KindConditional());
+			node.conditionalCondition = inputCondition;
+			node.trueValue = inputTrue;
+			node.falseValue = inputFalse;
+			return node;
+		}
+
 		public static ExpressionSyntax IndexExpr(ExpressionSyntax inputReceiver, ExpressionSyntax inputIndex) {
 			ExpressionSyntax node = new ExpressionSyntax(KindIndex());
 			node.receiver = inputReceiver;
 			node.index = inputIndex;
+			return node;
+		}
+
+		public static ExpressionSyntax SliceExpr(ExpressionSyntax inputReceiver, ExpressionSyntax inputStart, ExpressionSyntax inputEnd) {
+			ExpressionSyntax node = new ExpressionSyntax(KindSlice());
+			node.receiver = inputReceiver;
+			node.index = inputStart;
+			node.sliceEnd = inputEnd;
 			return node;
 		}
 

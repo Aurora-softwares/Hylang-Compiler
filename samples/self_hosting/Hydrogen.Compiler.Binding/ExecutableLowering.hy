@@ -142,15 +142,17 @@ namespace Hydrogen.Compiler.Binding {
             IrExpression result;
             if (k == ExpressionSyntax.KindName()) { result = IrExpression.NameExpr(e.Name()); }
             else if (k == ExpressionSyntax.KindLiteral()) { result = IrExpression.Literal(e.LiteralKind(), e.LiteralText()); }
-            else if (k == ExpressionSyntax.KindMemberAccess()) { result = IrExpression.MemberAccess(Expression(e.Receiver()), e.MemberName()); }
+            else if (k == ExpressionSyntax.KindMemberAccess()) { result = IrExpression.MemberAccess(Expression(e.Receiver()), e.MemberName()); result.SetNullConditional(e.NullConditional()); }
             else if (k == ExpressionSyntax.KindInvocation()) { IrExpression target = Expression(e.Target()); IrExpression[] arguments = Arguments(e.Arguments()); result = IrExpression.Invocation(target, arguments); }
-            else if (k == ExpressionSyntax.KindAssignment()) { IrExpression target = Expression(e.Target()); IrExpression value = Expression(e.Value()); result = IrExpression.Assignment(target, value); }
+            else if (k == ExpressionSyntax.KindAssignment()) { IrExpression target = Expression(e.Target()); IrExpression value = Expression(e.Value()); result = IrExpression.Assignment(target, (int)e.AssignmentOperatorKind(), value); result.SetReturnsOld(e.ReturnsOld()); }
             else if (k == ExpressionSyntax.KindBinary()) { IrExpression left = Expression(e.Left()); IrExpression right = Expression(e.Right()); result = IrExpression.Binary(left, (int)e.OperatorKind(), right); }
-            else if (k == ExpressionSyntax.KindIndex()) { IrExpression receiver = Expression(e.Receiver()); IrExpression index = Expression(e.Index()); result = IrExpression.IndexExpr(receiver, index); }
+            else if (k == ExpressionSyntax.KindIndex()) { IrExpression receiver = Expression(e.Receiver()); IrExpression index = Expression(e.Index()); result = IrExpression.IndexExpr(receiver, index); result.SetNullConditional(e.NullConditional()); }
+            else if (k == ExpressionSyntax.KindSlice()) { result = IrExpression.SliceExpr(Expression(e.Receiver()), Expression(e.Index()), Expression(e.SliceEnd())); }
             else if (k == ExpressionSyntax.KindObjectCreation()) { IrType type = Type(e.Type()); IrExpression[] arguments = Arguments(e.Arguments()); result = IrExpression.ObjectCreation(type, arguments); }
             else if (k == ExpressionSyntax.KindArrayCreation()) { IrType type = Type(e.Type()); IrExpression size = Expression(e.Size()); result = IrExpression.ArrayCreation(type, size); }
             else if (k == ExpressionSyntax.KindCast()) { IrType type = Type(e.CastType()); IrExpression value = Expression(e.CastExpression()); result = IrExpression.Cast(type, value); }
             else if (k == ExpressionSyntax.KindUnary()) { result = IrExpression.Unary((int)e.UnaryOperatorKind(), Expression(e.UnaryOperand())); }
+            else if (k == ExpressionSyntax.KindConditional()) { result = IrExpression.Conditional(Expression(e.ConditionalCondition()), Expression(e.TrueValue()), Expression(e.FalseValue())); }
             else { result = IrExpression.SizeOf(Type(e.SizeOfType())); }
             if (e.Span() != null) { result.SetLocation(e.Line(), e.Column(), e.Span().Start(), e.Span().Length()); }
             return result;

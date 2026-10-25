@@ -1,15 +1,52 @@
 using Hydrogen.Compiler.Diagnostics;
+using Hydrogen.Compiler.Text;
 
 namespace Hydrogen.Compiler.Syntax {
+    public class SwitchCaseLabel {
+        private ExpressionSyntax value;
+        private string key;
+        private string category;
+
+        public SwitchCaseLabel(ExpressionSyntax inputValue, string inputKey, string inputCategory) {
+            value = inputValue; key = inputKey; category = inputCategory;
+        }
+        public ExpressionSyntax Value() { return value; }
+        public string Key() { return key; }
+        public string Category() { return category; }
+    }
+
     public class AstParser {
+        private Hydrogen.Compiler.Core.BuildProgress buildProgress;
+
+        public void SetBuildProgress(Hydrogen.Compiler.Core.BuildProgress value) {
+            buildProgress = value;
+        }
+
         private SyntaxTokenList tokens;
         private DiagnosticBag diagnostics;
         private int index;
+        private StatementSyntax[] switchTemps;
+        private int switchTempCount;
+        private int loopDepth;
+        private int[] switchLoopBaselines;
+        private int switchDepth;
 
         public AstParser(SyntaxTokenList inputTokens, DiagnosticBag inputDiagnostics) {
             tokens = inputTokens;
             diagnostics = inputDiagnostics;
             index = 0;
+        }
+
+        public ExpressionSyntax ParseEmbeddedExpression() {
+            ExpressionSyntax result = ParseExpression();
+            if (!Check(SyntaxKind.EndOfFileToken)) {
+                if (Check(SyntaxKind.ColonToken)) {
+                    diagnostics.Report(Current().Line(), Current().Column(), "Interpolation format specifiers are not supported");
+                } else {
+                    diagnostics.Report(Current().Line(), Current().Column(), "Unexpected token in interpolation expression");
+                }
+            }
+            return result;
         }
 
         public CompilationUnitSyntax ParseCompilationUnit() {
@@ -141,11 +178,25 @@ namespace Hydrogen.Compiler.Syntax {
             int fieldCount = 0;
             MethodDeclarationSyntax[] methods = new MethodDeclarationSyntax[0];
             int methodCount = 0;
+            int previousIndex = -1;
             while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
                 bool isStatic = false;
                 bool isPrivate = false;
 				bool isVirtual = false;
 				bool isOverride = false;
+
+                if (index == previousIndex) {
+                    diagnostics.Report(
+                        Current().Line(),
+                        Current().Column(),
+                        "parser made no progress in class members");
+
+                    Advance();
+                    continue;
+                }
+
+                previousIndex = index;
+
 				while (SyntaxFacts.IsModifier(Current().Kind())) {
                     if (Current().Kind() == SyntaxKind.PrivateKeyword) { isPrivate = true; }
 					if (Current().Kind() == SyntaxKind.StaticKeyword) {
@@ -317,6 +368,10 @@ namespace Hydrogen.Compiler.Syntax {
 
         private StatementSyntax ParseBlock() {
             Consume(SyntaxKind.OpenBraceToken, "Expected '{'");
+            StatementSyntax[] outerTemps = switchTemps;
+            int outerCount = switchTempCount;
+            switchTemps = new StatementSyntax[0];
+            switchTempCount = 0;
             StatementSyntax[] items = new StatementSyntax[0];
             int count = 0;
             while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
@@ -325,7 +380,14 @@ namespace Hydrogen.Compiler.Syntax {
                 count = count + 1;
             }
             Consume(SyntaxKind.CloseBraceToken, "Expected '}'");
-            return StatementSyntax.Block(items);
+            StatementSyntax[] result = new StatementSyntax[switchTempCount + count];
+            int i = 0;
+            while (i < switchTempCount) { result[i] = switchTemps[i]; i = i + 1; }
+            int j = 0;
+            while (j < count) { result[i + j] = items[j]; j = j + 1; }
+            switchTemps = outerTemps;
+            switchTempCount = outerCount;
+            return StatementSyntax.Block(result);
         }
 
         private StatementSyntax ParseStatement() {
@@ -349,6 +411,12 @@ namespace Hydrogen.Compiler.Syntax {
             if (Check(SyntaxKind.ForKeyword)) {
                 return ParseFor();
             }
+            if (Check(SyntaxKind.ForeachKeyword)) {
+                return ParseForeach();
+            }
+            if (Check(SyntaxKind.SwitchKeyword)) {
+                return ParseSwitchStatement();
+            }
             if (Check(SyntaxKind.ReturnKeyword)) {
                 return ParseReturn();
             }
@@ -364,6 +432,9 @@ namespace Hydrogen.Compiler.Syntax {
 				return StatementSyntax.Break();
 			}
 			if (Check(SyntaxKind.ContinueKeyword)) {
+				if (switchDepth > 0 && loopDepth <= switchLoopBaselines[switchDepth - 1]) {
+					diagnostics.Report(Current().Line(), Current().Column(), "continue cannot target an outer loop across switch");
+				}
 				Advance();
 				Consume(SyntaxKind.SemicolonToken, "Expected ';' after continue");
 				return StatementSyntax.Continue();
@@ -438,7 +509,9 @@ namespace Hydrogen.Compiler.Syntax {
             Consume(SyntaxKind.OpenParenToken, "Expected '(' after while");
             ExpressionSyntax condition = ParseExpression();
             Consume(SyntaxKind.CloseParenToken, "Expected ')' after while condition");
+            loopDepth = loopDepth + 1;
             StatementSyntax body = ParseStatement();
+            loopDepth = loopDepth - 1;
             return StatementSyntax.While(condition, body);
         }
 
@@ -475,7 +548,196 @@ namespace Hydrogen.Compiler.Syntax {
                 increment = ParseExpression();
             }
             Consume(SyntaxKind.CloseParenToken, "Expected ')' after for clauses");
-            return StatementSyntax.For(initializer, condition, increment, ParseStatement());
+            loopDepth = loopDepth + 1;
+            StatementSyntax body = ParseStatement();
+            loopDepth = loopDepth - 1;
+            return StatementSyntax.For(initializer, condition, increment, body);
+        }
+
+        private StatementSyntax ParseForeach() {
+            Consume(SyntaxKind.ForeachKeyword, "Expected foreach");
+            Consume(SyntaxKind.OpenParenToken, "Expected '(' after foreach");
+            TypeSyntax elementType = ParseType();
+            string elementName = ConsumeIdentifier("Expected foreach variable name");
+            Consume(SyntaxKind.InKeyword, "Expected 'in' after foreach variable");
+            ExpressionSyntax collection = ParseExpression();
+            Consume(SyntaxKind.CloseParenToken, "Expected ')' after foreach collection");
+            loopDepth = loopDepth + 1;
+            StatementSyntax body = ParseStatement();
+            loopDepth = loopDepth - 1;
+
+            string collectionName = "__hy_foreach$collection";
+            string indexName = "__hy_foreach$index";
+            StatementSyntax collectionVariable = StatementSyntax.VariableDeclaration(new TypeSyntax("var"), collectionName, collection);
+            StatementSyntax indexVariable = StatementSyntax.VariableDeclaration(new TypeSyntax("int"), indexName,
+                ExpressionSyntax.Literal("number", "0"));
+            ExpressionSyntax length = ExpressionSyntax.MemberAccess(ExpressionSyntax.NameExpr(collectionName), "Length");
+            ExpressionSyntax condition = ExpressionSyntax.Binary(ExpressionSyntax.NameExpr(indexName), SyntaxKind.LessToken, length);
+            ExpressionSyntax increment = ExpressionSyntax.Assignment(ExpressionSyntax.NameExpr(indexName), SyntaxKind.PlusEqualsToken,
+                ExpressionSyntax.Literal("number", "1"));
+            ExpressionSyntax item = ExpressionSyntax.IndexExpr(ExpressionSyntax.NameExpr(collectionName), ExpressionSyntax.NameExpr(indexName));
+            StatementSyntax iterationVariable = StatementSyntax.VariableDeclaration(elementType, elementName, item);
+            StatementSyntax[] bodyStatements = new StatementSyntax[2];
+            bodyStatements[0] = iterationVariable;
+            bodyStatements[1] = body;
+            StatementSyntax loop = StatementSyntax.For(indexVariable, condition, increment, StatementSyntax.Block(bodyStatements));
+            StatementSyntax[] outerStatements = new StatementSyntax[2];
+            outerStatements[0] = collectionVariable;
+            outerStatements[1] = loop;
+            return StatementSyntax.Block(outerStatements);
+        }
+
+        private SwitchCaseLabel ParseSwitchCaseLabel() {
+            bool negative = false;
+            if (Check(SyntaxKind.MinusToken)) { negative = true; Advance(); }
+            SyntaxToken token = Current();
+            if (Check(SyntaxKind.NumberToken)) {
+                Advance();
+                string literalText = token.Text();
+                ExpressionSyntax value = ExpressionSyntax.Literal("number", literalText);
+                string key = NormalizeSwitchNumber(token, negative);
+                if (negative) { value = ExpressionSyntax.Unary(SyntaxKind.MinusToken, value); }
+                return new SwitchCaseLabel(value, "n:" + key, "long");
+            }
+            if (!negative && Check(SyntaxKind.StringToken)) {
+                Advance();
+                string value = UnquoteStringToken(token.Text());
+                return new SwitchCaseLabel(ExpressionSyntax.Literal("string", value), "s:" + value, "string");
+            }
+            if (!negative && (Check(SyntaxKind.TrueKeyword) || Check(SyntaxKind.FalseKeyword))) {
+                Advance();
+                string value = "false";
+                if (token.Kind() == SyntaxKind.TrueKeyword) { value = "true"; }
+                return new SwitchCaseLabel(ExpressionSyntax.Literal("bool", value), "b:" + value, "bool");
+            }
+            diagnostics.Report(token.Line(), token.Column(), "Switch case must be a constant number, string, or bool");
+            if (!Check(SyntaxKind.ColonToken) && !Check(SyntaxKind.FatArrowToken) && !Check(SyntaxKind.EndOfFileToken)) { Advance(); }
+            return new SwitchCaseLabel(ExpressionSyntax.Literal("number", "0"), "invalid", "long");
+        }
+
+        private string NormalizeSwitchNumber(SyntaxToken token, bool negative) {
+            string text = token.Text();
+            int radix = 10;
+            int index = 0;
+            if (text.Length > 1 && text[0] == "0" && (text[1] == "x" || text[1] == "X")) {
+                radix = 16;
+                index = 2;
+            }
+            long value = 0;
+            while (index < text.Length) {
+                string ch = text[index];
+                int digit = -1;
+                if (ch == "0") { digit = 0; } else if (ch == "1") { digit = 1; }
+                else if (ch == "2") { digit = 2; } else if (ch == "3") { digit = 3; }
+                else if (ch == "4") { digit = 4; } else if (ch == "5") { digit = 5; }
+                else if (ch == "6") { digit = 6; } else if (ch == "7") { digit = 7; }
+                else if (ch == "8") { digit = 8; } else if (ch == "9") { digit = 9; }
+                else if (ch == "a" || ch == "A") { digit = 10; }
+                else if (ch == "b" || ch == "B") { digit = 11; }
+                else if (ch == "c" || ch == "C") { digit = 12; }
+                else if (ch == "d" || ch == "D") { digit = 13; }
+                else if (ch == "e" || ch == "E") { digit = 14; }
+                else if (ch == "f" || ch == "F") { digit = 15; }
+                if (digit < 0 || digit >= radix) {
+                    diagnostics.Report(token.Line(), token.Column(), "Invalid switch case integer literal");
+                    return "invalid";
+                }
+                value = value * radix + digit;
+                index = index + 1;
+            }
+            if (negative) { value = 0 - value; }
+            return "" + value;
+        }
+
+        private string ValidateSwitchCase(SwitchCaseLabel label, string[] keys, int count,
+                                          string category, bool defaultSeen, SyntaxToken at) {
+            if (defaultSeen) { diagnostics.Report(at.Line(), at.Column(), "Unreachable switch case after default"); }
+            int i = 0;
+            while (i < count) {
+                if (keys[i] == label.Key()) { diagnostics.Report(at.Line(), at.Column(), "Duplicate switch case constant"); break; }
+                i = i + 1;
+            }
+            if (category == "") { return label.Category(); }
+            if (category != label.Category()) { diagnostics.Report(at.Line(), at.Column(), "Switch cases must use one constant type"); }
+            return category;
+        }
+
+        private StatementSyntax ParseSwitchCaseBody() {
+            StatementSyntax[] items = new StatementSyntax[0];
+            int count = 0;
+            while (!Check(SyntaxKind.CaseKeyword) && !Check(SyntaxKind.DefaultKeyword) &&
+                   !Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                items = AppendStatement(items, count, ParseStatement());
+                count = count + 1;
+            }
+            if (count == 0 || (items[count - 1].Kind() != StatementSyntax.KindBreakStatement() &&
+                items[count - 1].Kind() != StatementSyntax.KindReturnStatement() &&
+                items[count - 1].Kind() != StatementSyntax.KindThrowStatement())) {
+                items = AppendStatement(items, count, StatementSyntax.Break());
+            }
+            return StatementSyntax.Block(items);
+        }
+
+        private StatementSyntax ParseSwitchStatement() {
+            SyntaxToken token = Consume(SyntaxKind.SwitchKeyword, "Expected switch");
+            Consume(SyntaxKind.OpenParenToken, "Expected '(' after switch");
+            ExpressionSyntax scrutinee = ParseExpression();
+            Consume(SyntaxKind.CloseParenToken, "Expected ')' after switch value");
+            Consume(SyntaxKind.OpenBraceToken, "Expected '{' after switch value");
+            if (switchLoopBaselines == null) { switchLoopBaselines = new int[0]; }
+            switchLoopBaselines = AppendInt(switchLoopBaselines, switchDepth, loopDepth);
+            switchDepth = switchDepth + 1;
+            ExpressionSyntax[] labels = new ExpressionSyntax[0];
+            StatementSyntax[] bodies = new StatementSyntax[0];
+            string[] keys = new string[0];
+            int count = 0;
+            StatementSyntax defaultBody = null;
+            bool defaultSeen = false;
+            string category = "";
+            while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                if (Check(SyntaxKind.CaseKeyword)) {
+                    SyntaxToken at = Advance();
+                    SwitchCaseLabel label = ParseSwitchCaseLabel();
+                    category = ValidateSwitchCase(label, keys, count, category, defaultSeen, at);
+                    Consume(SyntaxKind.ColonToken, "Expected ':' after switch case");
+                    labels = AppendExpression(labels, count, label.Value());
+                    keys = AppendString(keys, count, label.Key());
+                    bodies = AppendStatement(bodies, count, ParseSwitchCaseBody());
+                    count = count + 1;
+                } else if (Check(SyntaxKind.DefaultKeyword)) {
+                    SyntaxToken at = Advance();
+                    if (defaultSeen) { diagnostics.Report(at.Line(), at.Column(), "Duplicate switch default"); }
+                    defaultSeen = true;
+                    Consume(SyntaxKind.ColonToken, "Expected ':' after switch default");
+                    defaultBody = ParseSwitchCaseBody();
+                } else {
+                    diagnostics.Report(Current().Line(), Current().Column(), "Expected case or default in switch");
+                    Advance();
+                }
+            }
+            Consume(SyntaxKind.CloseBraceToken, "Expected '}' after switch");
+            switchDepth = switchDepth - 1;
+            string tempName = "__hy_switch$value_" + token.Position();
+            StatementSyntax chain = defaultBody;
+            int i = count - 1;
+            while (i >= 0) {
+                ExpressionSyntax test = ExpressionSyntax.Binary(ExpressionSyntax.NameExpr(tempName),
+                    SyntaxKind.EqualsEqualsToken, labels[i]);
+                chain = StatementSyntax.If(test, bodies[i], chain);
+                i = i - 1;
+            }
+            StatementSyntax[] loopStatements = new StatementSyntax[2];
+            if (defaultSeen) {
+                loopStatements = new StatementSyntax[1];
+                loopStatements[0] = chain;
+            } else if (chain == null) {
+                loopStatements = new StatementSyntax[1]; loopStatements[0] = StatementSyntax.Break();
+            } else { loopStatements[0] = chain; loopStatements[1] = StatementSyntax.Break(); }
+            StatementSyntax loop = StatementSyntax.While(ExpressionSyntax.Literal("bool", "true"), StatementSyntax.Block(loopStatements));
+            StatementSyntax[] outer = new StatementSyntax[2];
+            outer[0] = StatementSyntax.VariableDeclaration(new TypeSyntax("var"), tempName, scrutinee);
+            outer[1] = loop;
+            return StatementSyntax.Block(outer);
         }
 
         private StatementSyntax ParseReturn() {
@@ -527,37 +789,104 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private ExpressionSyntax ParseAssignment() {
-            ExpressionSyntax left = ParseBinaryExpression(0);
-            if (Check(SyntaxKind.EqualsToken)) {
-                Advance();
+            ExpressionSyntax left = ParseConditional();
+            if (ShiftLeftAssignmentPair() || ShiftRightAssignmentPair()) {
+                bool leftShift = ShiftLeftAssignmentPair();
+                Advance(); Advance();
+                SyntaxKind op = SyntaxKind.ShiftRightEqualsToken;
+                if (leftShift) { op = SyntaxKind.ShiftLeftEqualsToken; }
+                return ExpressionSyntax.Assignment(left, op, ParseAssignment());
+            }
+            if (IsAssignmentToken(Current().Kind())) {
+                SyntaxKind op = Advance().Kind();
                 ExpressionSyntax right = ParseAssignment();
-                return ExpressionSyntax.Assignment(left, right);
+                return ExpressionSyntax.Assignment(left, op, right);
             }
             return left;
+        }
+
+        private ExpressionSyntax ParseConditional() {
+            ExpressionSyntax condition = ParseCoalesce();
+            if (!Check(SyntaxKind.QuestionToken)) { return condition; }
+            Advance();
+            ExpressionSyntax whenTrue = ParseExpression();
+            Consume(SyntaxKind.ColonToken, "Expected ':' in conditional expression");
+            ExpressionSyntax whenFalse = ParseConditional();
+            return ExpressionSyntax.Conditional(condition, whenTrue, whenFalse);
+        }
+
+        private ExpressionSyntax ParseCoalesce() {
+            ExpressionSyntax left = ParseBinaryExpression(0);
+            if (!Check(SyntaxKind.QuestionQuestionToken)) { return left; }
+            SyntaxKind op = Advance().Kind();
+            return ExpressionSyntax.Binary(left, op, ParseCoalesce());
+        }
+
+        private bool ShiftLeftAssignmentPair() {
+            return Current().Kind() == SyntaxKind.LessToken && Peek(1).Kind() == SyntaxKind.LessEqualsToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
+        private bool ShiftRightAssignmentPair() {
+            return Current().Kind() == SyntaxKind.GreaterToken && Peek(1).Kind() == SyntaxKind.GreaterEqualsToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
+        private bool IsAssignmentToken(SyntaxKind kind) {
+            return kind == SyntaxKind.EqualsToken || kind == SyntaxKind.PlusEqualsToken ||
+                kind == SyntaxKind.MinusEqualsToken || kind == SyntaxKind.StarEqualsToken ||
+                kind == SyntaxKind.SlashEqualsToken || kind == SyntaxKind.PercentEqualsToken ||
+                kind == SyntaxKind.AmpersandEqualsToken || kind == SyntaxKind.PipeEqualsToken ||
+                kind == SyntaxKind.CaretEqualsToken;
         }
 
         private ExpressionSyntax ParseBinaryExpression(int parentPrecedence) {
             ExpressionSyntax left = ParseUnary();
             while (true) {
+                if (ShiftLeftAssignmentPair() || ShiftRightAssignmentPair()) { break; }
+                bool shiftLeft = ShiftLeftPair();
+                bool shiftRight = ShiftRightPair();
                 int precedence = BinaryPrecedence(Current().Kind());
+                if (shiftLeft || shiftRight) { precedence = 9; }
                 if (precedence == 0 || precedence <= parentPrecedence) {
                     break;
                 }
-                SyntaxKind op = Advance().Kind();
+                SyntaxKind op = Current().Kind();
+                Advance();
+                if (shiftLeft || shiftRight) {
+                    Advance();
+                    if (shiftLeft) { op = SyntaxKind.ShiftLeftToken; }
+                    else { op = SyntaxKind.ShiftRightToken; }
+                }
                 ExpressionSyntax right = ParseBinaryExpression(precedence);
                 left = ExpressionSyntax.Binary(left, op, right);
             }
             return left;
         }
 
+        private bool ShiftLeftPair() {
+            return Current().Kind() == SyntaxKind.LessToken && Peek(1).Kind() == SyntaxKind.LessToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
+        private bool ShiftRightPair() {
+            return Current().Kind() == SyntaxKind.GreaterToken && Peek(1).Kind() == SyntaxKind.GreaterToken &&
+                   Current().Line() == Peek(1).Line() && Current().Column() + 1 == Peek(1).Column();
+        }
+
         private ExpressionSyntax ParseUnary() {
+            if (Check(SyntaxKind.PlusPlusToken) || Check(SyntaxKind.MinusMinusToken)) {
+                SyntaxKind op = Advance().Kind();
+                return MakeUpdate(ParseUnary(), op, false);
+            }
             if (Check(SyntaxKind.OpenParenToken) && LooksLikeCastExpression()) {
                 Advance();
                 TypeSyntax type = ParseType();
                 Consume(SyntaxKind.CloseParenToken, "Expected ')'");
                 return ExpressionSyntax.Cast(type, ParseUnary());
             }
-            if (Check(SyntaxKind.BangToken) || Check(SyntaxKind.MinusToken) || Check(SyntaxKind.PlusToken)) {
+            if (Check(SyntaxKind.BangToken) || Check(SyntaxKind.TildeToken) ||
+                Check(SyntaxKind.MinusToken) || Check(SyntaxKind.PlusToken)) {
                 SyntaxKind op = Advance().Kind();
                 ExpressionSyntax operand = ParseUnary();
                 return ExpressionSyntax.Unary(op, operand);
@@ -568,10 +897,13 @@ namespace Hydrogen.Compiler.Syntax {
         private ExpressionSyntax ParsePostfix() {
             ExpressionSyntax expr = ParsePrimary();
             while (true) {
-                if (Check(SyntaxKind.DotToken)) {
+                if (Check(SyntaxKind.DotToken) || (Check(SyntaxKind.QuestionToken) && Peek(1).Kind() == SyntaxKind.DotToken)) {
+                    bool conditional = Check(SyntaxKind.QuestionToken);
+                    if (conditional) { Advance(); }
                     Advance();
                     string name = ConsumeIdentifier("Expected member name");
                     expr = ExpressionSyntax.MemberAccess(expr, name);
+                    expr.SetNullConditional(conditional);
                     continue;
                 }
                 if (Check(SyntaxKind.OpenParenToken)) {
@@ -579,16 +911,40 @@ namespace Hydrogen.Compiler.Syntax {
                     expr = ExpressionSyntax.Invocation(expr, args);
                     continue;
                 }
-                if (Check(SyntaxKind.OpenBracketToken)) {
+                if (Check(SyntaxKind.OpenBracketToken) || (Check(SyntaxKind.QuestionToken) && Peek(1).Kind() == SyntaxKind.OpenBracketToken)) {
+                    bool conditional = Check(SyntaxKind.QuestionToken);
+                    if (conditional) { Advance(); }
                     Advance();
                     ExpressionSyntax indexExpr = ParseExpression();
+                    if (Check(SyntaxKind.DotDotToken)) {
+                        Advance();
+                        ExpressionSyntax endExpr = ParseExpression();
+                        Consume(SyntaxKind.CloseBracketToken, "Expected ']' after slice bounds");
+                        if (conditional) { diagnostics.Report(Current().Line(), Current().Column(), "Null-conditional slicing is not supported"); }
+                        expr = ExpressionSyntax.SliceExpr(expr, indexExpr, endExpr);
+                        continue;
+                    }
                     Consume(SyntaxKind.CloseBracketToken, "Expected ']'");
                     expr = ExpressionSyntax.IndexExpr(expr, indexExpr);
+                    expr.SetNullConditional(conditional);
+                    continue;
+                }
+                if (Check(SyntaxKind.PlusPlusToken) || Check(SyntaxKind.MinusMinusToken)) {
+                    SyntaxKind op = Advance().Kind();
+                    expr = MakeUpdate(expr, op, true);
                     continue;
                 }
                 break;
             }
             return expr;
+        }
+
+        private ExpressionSyntax MakeUpdate(ExpressionSyntax target, SyntaxKind op, bool returnsOld) {
+            SyntaxKind assignment = SyntaxKind.MinusEqualsToken;
+            if (op == SyntaxKind.PlusPlusToken) { assignment = SyntaxKind.PlusEqualsToken; }
+            ExpressionSyntax result = ExpressionSyntax.Assignment(target, assignment, ExpressionSyntax.Literal("number", "1"));
+            result.SetReturnsOld(returnsOld);
+            return result;
         }
 
         private ExpressionSyntax[] ParseArgumentList() {
@@ -612,6 +968,12 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private ExpressionSyntax ParsePrimary() {
+            if (Check(SyntaxKind.SwitchKeyword)) {
+                return ParseSwitchExpression();
+            }
+            if (Check(SyntaxKind.InterpolatedStringToken)) {
+                return ParseInterpolatedString(Advance());
+            }
             if (Check(SyntaxKind.OpenParenToken)) {
                 Advance();
                 ExpressionSyntax inner = ParseExpression();
@@ -707,9 +1069,200 @@ namespace Hydrogen.Compiler.Syntax {
                    next == SyntaxKind.NewKeyword ||
                    next == SyntaxKind.SizeOfKeyword ||
                    next == SyntaxKind.BangToken ||
+                   next == SyntaxKind.TildeToken ||
                    next == SyntaxKind.MinusToken ||
                    next == SyntaxKind.PlusToken ||
                    next == SyntaxKind.OpenParenToken;
+        }
+
+        private TextLocation InterpolationLocation(SyntaxToken token, string raw, int offset) {
+            int line = token.Line();
+            int column = token.Column();
+            int index = 0;
+            while (index < offset && index < raw.Length) {
+                if (raw[index] == "\n") { line = line + 1; column = 1; }
+                else { column = column + 1; }
+                index = index + 1;
+            }
+            return new TextLocation(line, column);
+        }
+
+        private ExpressionSyntax AppendInterpolated(ExpressionSyntax left, ExpressionSyntax right, SyntaxToken token) {
+            ExpressionSyntax joined = ExpressionSyntax.Binary(left, SyntaxKind.PlusToken, right);
+            joined.SetLocation(token.Line(), token.Column(), token.Position(), token.Text().Length);
+            return joined;
+        }
+
+        private ExpressionSyntax ParseSwitchExpression() {
+            SyntaxToken token = Consume(SyntaxKind.SwitchKeyword, "Expected switch");
+            Consume(SyntaxKind.OpenParenToken, "Expected '(' after switch");
+            ExpressionSyntax scrutinee = ParseExpression();
+            Consume(SyntaxKind.CloseParenToken, "Expected ')' after switch value");
+            Consume(SyntaxKind.OpenBraceToken, "Expected '{' after switch value");
+            ExpressionSyntax[] labels = new ExpressionSyntax[0];
+            ExpressionSyntax[] values = new ExpressionSyntax[0];
+            string[] keys = new string[0];
+            int count = 0;
+            ExpressionSyntax fallback = null;
+            bool defaultSeen = false;
+            string category = "";
+            while (!Check(SyntaxKind.CloseBraceToken) && !Check(SyntaxKind.EndOfFileToken)) {
+                if (Check(SyntaxKind.CaseKeyword)) {
+                    SyntaxToken at = Advance();
+                    SwitchCaseLabel label = ParseSwitchCaseLabel();
+                    category = ValidateSwitchCase(label, keys, count, category, defaultSeen, at);
+                    Consume(SyntaxKind.FatArrowToken, "Expected '=>' after switch case");
+                    labels = AppendExpression(labels, count, label.Value());
+                    values = AppendExpression(values, count, ParseExpression());
+                    keys = AppendString(keys, count, label.Key());
+                    count = count + 1;
+                } else if (Check(SyntaxKind.DefaultKeyword)) {
+                    SyntaxToken at = Advance();
+                    if (defaultSeen) { diagnostics.Report(at.Line(), at.Column(), "Duplicate switch default"); }
+                    defaultSeen = true;
+                    if (category == "bool" && SwitchHasKey(keys, count, "b:true") && SwitchHasKey(keys, count, "b:false")) {
+                        diagnostics.Report(at.Line(), at.Column(), "Unreachable switch default");
+                    }
+                    Consume(SyntaxKind.FatArrowToken, "Expected '=>' after switch default");
+                    fallback = ParseExpression();
+                } else {
+                    diagnostics.Report(Current().Line(), Current().Column(), "Expected case or default in switch expression");
+                    Advance();
+                }
+                if (!Check(SyntaxKind.CloseBraceToken)) { Consume(SyntaxKind.CommaToken, "Expected ',' after switch arm"); }
+            }
+            Consume(SyntaxKind.CloseBraceToken, "Expected '}' after switch expression");
+            bool boolExhaustive = category == "bool" && SwitchHasKey(keys, count, "b:true") && SwitchHasKey(keys, count, "b:false");
+            if (count == 0) { diagnostics.Report(token.Line(), token.Column(), "Switch expression requires a case"); }
+            if (fallback == null && !boolExhaustive) { diagnostics.Report(token.Line(), token.Column(), "Non-exhaustive switch expression requires default"); }
+            if (switchTemps == null) { diagnostics.Report(token.Line(), token.Column(), "Switch expression requires a method block"); }
+            string tempName = "__hy_switch$value_" + token.Position();
+            if (switchTemps != null) {
+                string typeName = category;
+                if (typeName == "") { typeName = "long"; }
+                ExpressionSyntax initial = ExpressionSyntax.Literal("number", "0");
+                if (typeName == "string") { initial = ExpressionSyntax.Literal("string", ""); }
+                if (typeName == "bool") { initial = ExpressionSyntax.Literal("bool", "false"); }
+                switchTemps = AppendStatement(switchTemps, switchTempCount,
+                    StatementSyntax.VariableDeclaration(new TypeSyntax(typeName), tempName, initial));
+                switchTempCount = switchTempCount + 1;
+            }
+            int testCount = count;
+            if (fallback == null && boolExhaustive && count > 0) {
+                fallback = values[count - 1];
+                testCount = count - 1;
+            }
+            if (fallback == null) { fallback = ExpressionSyntax.Literal("number", "0"); }
+            ExpressionSyntax result = fallback;
+            int i = testCount - 1;
+            while (i >= 0) {
+                ExpressionSyntax left = ExpressionSyntax.NameExpr(tempName);
+                if (i == 0) { left = ExpressionSyntax.Assignment(left, SyntaxKind.EqualsToken, scrutinee); }
+                ExpressionSyntax test = ExpressionSyntax.Binary(left, SyntaxKind.EqualsEqualsToken, labels[i]);
+                result = ExpressionSyntax.Conditional(test, values[i], result);
+                i = i - 1;
+            }
+            return result;
+        }
+
+        private bool SwitchHasKey(string[] keys, int count, string target) {
+            int i = 0;
+            while (i < count) { if (keys[i] == target) { return true; } i = i + 1; }
+            return false;
+        }
+
+        private ExpressionSyntax ParseInterpolatedString(SyntaxToken token) {
+            string raw = token.Text();
+            int end = raw.Length;
+            if (end > 2 && raw[end - 1] == "\"") { end = end - 1; }
+            ExpressionSyntax result = ExpressionSyntax.Literal("string", "");
+            result.SetLocation(token.Line(), token.Column(), token.Position(), token.Text().Length);
+            string segment = "";
+            int index = 2;
+            while (index < end) {
+                string ch = raw[index];
+                if (ch == "\\") {
+                    if (index + 1 >= end) {
+                        TextLocation at = InterpolationLocation(token, raw, index);
+                        diagnostics.Report(at.Line(), at.Column(), "Unterminated interpolation escape");
+                        break;
+                    }
+                    index = index + 1;
+                    string escaped = raw[index];
+                    if (escaped == "n") { segment = segment + "\n"; }
+                    else if (escaped == "r") { segment = segment + "\r"; }
+                    else if (escaped == "t") { segment = segment + "\t"; }
+                    else if (escaped == "\\") { segment = segment + "\\"; }
+                    else if (escaped == "\"") { segment = segment + "\""; }
+                    else {
+                        TextLocation at = InterpolationLocation(token, raw, index);
+                        diagnostics.Report(at.Line(), at.Column(), "Unsupported interpolation escape sequence");
+                        segment = segment + escaped;
+                    }
+                    index = index + 1;
+                    continue;
+                }
+                if ((ch == "{" || ch == "}") && index + 1 < end && raw[index + 1] == ch) {
+                    segment = segment + ch;
+                    index = index + 2;
+                    continue;
+                }
+                if (ch == "}") {
+                    TextLocation at = InterpolationLocation(token, raw, index);
+                    diagnostics.Report(at.Line(), at.Column(), "Unescaped '}' in interpolated string");
+                    index = index + 1;
+                    continue;
+                }
+                if (ch != "{") { segment = segment + ch; index = index + 1; continue; }
+                if (segment != "") {
+                    result = AppendInterpolated(result, ExpressionSyntax.Literal("string", segment), token);
+                    segment = "";
+                }
+                index = index + 1;
+                int holeStart = index;
+                int depth = 1;
+                while (index < end && depth > 0) {
+                    string inner = raw[index];
+                    index = index + 1;
+                    if (inner == "\"") {
+                        while (index < end) {
+                            string quoted = raw[index];
+                            index = index + 1;
+                            if (quoted == "\\" && index < end) { index = index + 1; }
+                            else if (quoted == "\"") { break; }
+                        }
+                    } else if (inner == "{") { depth = depth + 1; }
+                    else if (inner == "}") { depth = depth - 1; }
+                }
+                TextLocation holeLocation = InterpolationLocation(token, raw, holeStart);
+                if (depth != 0) {
+                    diagnostics.Report(holeLocation.Line(), holeLocation.Column(), "Unterminated interpolation expression");
+                    break;
+                }
+                string hole = Slice(raw, holeStart, index - holeStart - 1);
+                if (hole == "") {
+                    diagnostics.Report(holeLocation.Line(), holeLocation.Column(), "Interpolation expression cannot be empty");
+                    continue;
+                }
+                DiagnosticBag holeDiagnostics = new DiagnosticBag();
+                Lexer holeLexer = new Lexer(new SourceText(hole), holeDiagnostics);
+                SyntaxTokenList holeTokens = holeLexer.LexAll();
+                AstParser holeParser = new AstParser(holeTokens, holeDiagnostics);
+                ExpressionSyntax expression = holeParser.ParseEmbeddedExpression();
+                int diagnosticIndex = 0;
+                while (diagnosticIndex < holeDiagnostics.Count()) {
+                    Diagnostic diagnostic = holeDiagnostics.Get(diagnosticIndex);
+                    int line = holeLocation.Line() + diagnostic.Location().Line() - 1;
+                    int column = diagnostic.Location().Column();
+                    if (diagnostic.Location().Line() == 1) { column = holeLocation.Column() + column - 1; }
+                    diagnostics.Report(line, column, diagnostic.Message());
+                    diagnosticIndex = diagnosticIndex + 1;
+                }
+                expression.SetLocation(holeLocation.Line(), holeLocation.Column(), token.Position() + holeStart, hole.Length);
+                result = AppendInterpolated(result, expression, token);
+            }
+            if (segment != "") { result = AppendInterpolated(result, ExpressionSyntax.Literal("string", segment), token); }
+            return result;
         }
 
         private string UnquoteStringToken(string tokenText) {
@@ -815,13 +1368,16 @@ namespace Hydrogen.Compiler.Syntax {
         }
 
         private int BinaryPrecedence(SyntaxKind kind) {
-            if (kind == SyntaxKind.StarToken || kind == SyntaxKind.SlashToken || kind == SyntaxKind.PercentToken) { return 6; }
-            if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken) { return 5; }
+            if (kind == SyntaxKind.StarToken || kind == SyntaxKind.SlashToken || kind == SyntaxKind.PercentToken) { return 10; }
+            if (kind == SyntaxKind.PlusToken || kind == SyntaxKind.MinusToken) { return 9; }
             if (kind == SyntaxKind.LessToken || kind == SyntaxKind.LessEqualsToken ||
-                kind == SyntaxKind.GreaterToken || kind == SyntaxKind.GreaterEqualsToken) { return 4; }
-            if (kind == SyntaxKind.EqualsEqualsToken || kind == SyntaxKind.BangEqualsToken) { return 3; }
-            if (kind == SyntaxKind.AmpersandAmpersandToken) { return 2; }
-            if (kind == SyntaxKind.PipePipeToken) { return 1; }
+                kind == SyntaxKind.GreaterToken || kind == SyntaxKind.GreaterEqualsToken) { return 8; }
+            if (kind == SyntaxKind.EqualsEqualsToken || kind == SyntaxKind.BangEqualsToken) { return 7; }
+            if (kind == SyntaxKind.AmpersandToken) { return 6; }
+            if (kind == SyntaxKind.CaretToken) { return 5; }
+            if (kind == SyntaxKind.PipeToken) { return 4; }
+            if (kind == SyntaxKind.AmpersandAmpersandToken) { return 3; }
+            if (kind == SyntaxKind.PipePipeToken) { return 2; }
             return 0;
         }
 
@@ -856,6 +1412,9 @@ namespace Hydrogen.Compiler.Syntax {
             SyntaxToken token = Current();
             if (!Check(SyntaxKind.EndOfFileToken)) {
                 index = index + 1;
+                if (buildProgress != null && index % 300 == 0) {
+                    buildProgress.Update(index, tokens.Count(), "Parsed " + index + " tokens");
+                }
             }
             return token;
         }
@@ -1002,6 +1561,14 @@ namespace Hydrogen.Compiler.Syntax {
 			next[count] = item;
 			return next;
 		}
+
+        private int[] AppendInt(int[] items, int count, int item) {
+            int[] next = new int[count + 1];
+            int i = 0;
+            while (i < count) { next[i] = items[i]; i = i + 1; }
+            next[count] = item;
+            return next;
+        }
 
 		private int ParseDecimalIntLiteral(SyntaxToken token) {
 			string text = token.Text();

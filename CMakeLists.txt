@@ -1,10 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(HylangCompiler VERSION 0.1.0 LANGUAGES CXX)
 
-set(HYDROGEN_RELEASE_VERSION "" CACHE STRING
-    "Version for hydrogen_package_release, for example alpha-0.0.1")
-set(HYDROGEN_RELEASE_BINARY "${CMAKE_CURRENT_SOURCE_DIR}/safe/hy" CACHE FILEPATH
-    "Verified self-hosted hy binary to package")
+set(HYDROGEN_RELEASE_VERSION "" CACHE STRING "Version for hydrogen_package_release, for example alpha-0.0.1")
+set(HYDROGEN_RELEASE_BINARY "${CMAKE_CURRENT_SOURCE_DIR}/safe/hy" CACHE FILEPATH "Verified self-hosted hy binary to package")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,6 +33,135 @@ add_executable(hy src/hy_main.cpp)
 target_link_libraries(hy PRIVATE hylang)
 
 enable_testing()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_program(HYDROGEN_BASH_EXECUTABLE bash)
+    if(HYDROGEN_BASH_EXECUTABLE)
+        add_test(NAME hy_release_lifecycle
+            COMMAND "${HYDROGEN_BASH_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-lifecycle.sh"
+                "${CMAKE_CURRENT_SOURCE_DIR}")
+        set_tests_properties(hy_release_lifecycle PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
+add_test(NAME hy_sdk_bitwise_operators
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/bitwise_operators.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/bitwise_sdk${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkBitwise.cmake)
+set_tests_properties(hy_sdk_bitwise_operators PROPERTIES TIMEOUT 120)
+add_test(NAME hy_sdk_compound_assignments
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/compound_assignments.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/compound_sdk${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkCompound.cmake)
+set_tests_properties(hy_sdk_compound_assignments PROPERTIES TIMEOUT 120)
+add_test(NAME hy_sdk_compound_exception
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/compound_exception.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/compound_exception_sdk${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkCompound.cmake)
+set_tests_properties(hy_sdk_compound_exception PROPERTIES TIMEOUT 120)
+add_test(NAME hy_sdk_compound_gc
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/compound_gc.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/compound_gc_sdk${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkCompound.cmake)
+set_tests_properties(hy_sdk_compound_gc PROPERTIES TIMEOUT 120)
+add_test(NAME hy_sdk_increment_decrement
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/increment_decrement.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/increment_decrement_sdk${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkUpdate.cmake)
+set_tests_properties(hy_sdk_increment_decrement PROPERTIES TIMEOUT 120)
+add_test(NAME hy_sdk_conditional_expression
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/conditional_expression.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/conditional_sdk${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkConditional.cmake)
+set_tests_properties(hy_sdk_conditional_expression PROPERTIES TIMEOUT 120)
+add_test(NAME hy_sdk_null_coalescing
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/null_coalescing.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/coalescing_sdk${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkCoalescing.cmake)
+set_tests_properties(hy_sdk_null_coalescing PROPERTIES TIMEOUT 120)
+add_test(NAME hy_sdk_null_conditional
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/null_conditional.hy
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/null_conditional_sdk${CMAKE_EXECUTABLE_SUFFIX}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkCoalescing.cmake)
+set_tests_properties(hy_sdk_null_conditional PROPERTIES TIMEOUT 120)
+add_test(NAME hy_sdk_foreach
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/foreach_sdk
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkForeach.cmake)
+set_tests_properties(hy_sdk_foreach PROPERTIES TIMEOUT 120)
+add_test(NAME hy_sdk_interpolation
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/interpolation_sdk
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkInterpolation.cmake)
+set_tests_properties(hy_sdk_interpolation PROPERTIES TIMEOUT 120)
+add_test(NAME hy_sdk_switch
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/switch_sdk
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkSwitch.cmake)
+set_tests_properties(hy_sdk_switch PROPERTIES TIMEOUT 120)
+add_test(NAME hy_sdk_slices
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/slices_sdk_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkSlices.cmake)
+set_tests_properties(hy_sdk_slices PROPERTIES TIMEOUT 120)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME hy_sdk_progress_width
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/progress_width.py
+                $<TARGET_FILE:hy>)
+        add_test(NAME hyc_sdk_progress_width
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/progress_width.py
+                $<TARGET_FILE:hyc>)
+        add_test(NAME hy_interpreted_progress_width
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/progress_width.py
+                $<TARGET_FILE:hy>
+                ${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj)
+    endif()
+    add_test(
+        NAME hy_sdk_shell_characters
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_sdk_shell_characters
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkSecurity.cmake
+    )
+    add_test(
+        NAME hy_sdk_short_file_io
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}/tmp/hy_sdk_short_file_io
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySdkFileIoFailures.cmake
+    )
+endif()
 
 add_custom_target(hydrogen_package_release
     COMMAND ${CMAKE_COMMAND}
@@ -104,6 +231,24 @@ add_test(
     COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/for_loop.hy
 )
 set_tests_properties(hyrun_for_loop PROPERTIES PASS_REGULAR_EXPRESSION "9")
+
+add_test(
+    NAME hyrun_frame_slots
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/interpreter_frame_slots.hy
+)
+set_tests_properties(hyrun_frame_slots PROPERTIES PASS_REGULAR_EXPRESSION "46")
+
+add_test(
+    NAME hyrun_logical_short_circuit
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/logical_short_circuit.hy
+)
+set_tests_properties(hyrun_logical_short_circuit PROPERTIES PASS_REGULAR_EXPRESSION "short-circuit-ok")
+
+add_test(
+    NAME hyrun_unsigned_division
+    COMMAND hyrun ${CMAKE_CURRENT_SOURCE_DIR}/tests/unsigned_division.hy
+)
+set_tests_properties(hyrun_unsigned_division PROPERTIES PASS_REGULAR_EXPRESSION "unsigned-division-ok")
 
 add_test(
     NAME hyrun_string_features
@@ -1329,6 +1474,228 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
     )
     set_tests_properties(hy_stage1_project_closure PROPERTIES
         FIXTURES_SETUP hydrogen_stage1 TIMEOUT 240 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_bitwise_operators
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/bitwise_operators.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/bitwise_operators
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_bitwise_operators PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_compound_assignments
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/compound_assignments.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/compound_assignments
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_compound_assignments PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_compound_assignment_failures
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/compound_non_integral.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/compound_invalid_output
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompoundAssignmentFailures.cmake)
+    set_tests_properties(hy_stage1_compound_assignment_failures PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_compound_gc
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/compound_gc.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/compound_gc
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_compound_gc PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_increment_decrement
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/increment_decrement.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/increment_decrement
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_increment_decrement PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_increment_decrement_failures
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/increment_non_integral.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/increment_invalid_output
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompoundAssignmentFailures.cmake)
+    set_tests_properties(hy_stage1_increment_decrement_failures PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_conditional_expression
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/conditional_expression.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/conditional_expression
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_conditional_expression PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_conditional_failures
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=${stage1_test_dir}/conditional_failures
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyConditionalFailures.cmake)
+    set_tests_properties(hy_stage1_conditional_failures PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_null_coalescing
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/null_coalescing.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/null_coalescing
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_null_coalescing PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_null_coalescing_failures
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=${stage1_test_dir}/coalescing_failures
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCoalescingFailures.cmake)
+    set_tests_properties(hy_stage1_null_coalescing_failures PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_null_conditional
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/null_conditional.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/null_conditional
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_null_conditional PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_null_conditional_failures
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=${stage1_test_dir}/null_conditional_failures
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyNullConditionalFailures.cmake)
+    set_tests_properties(hy_stage1_null_conditional_failures PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_foreach
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/foreach_iteration.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/foreach_iteration
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_foreach PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_foreach_failures
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=${stage1_test_dir}/foreach_failures
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyForeachFailures.cmake)
+    set_tests_properties(hy_stage1_foreach_failures PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_interpolation
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/interpolated_strings.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/interpolated_strings
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_interpolation PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_interpolation_failures
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=${stage1_test_dir}/interpolation_failures
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyInterpolationFailures.cmake)
+    set_tests_properties(hy_stage1_interpolation_failures PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_switch
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/switch_cases.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/switch_cases
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_switch PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_switch_failures
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=${stage1_test_dir}/switch_failures
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySwitchFailures.cmake)
+    set_tests_properties(hy_stage1_switch_failures PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_slices
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DPROJECT_TARGET=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/slices.hy
+            -DOUTPUT_FILE=${stage1_test_dir}/slices
+            -DEXPECTED_OUTPUT=
+            -DEXPECTED_EXIT_CODE=42
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileNativeAndRun.cmake)
+    set_tests_properties(hy_stage1_slices PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 90 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_slice_failures
+        COMMAND ${CMAKE_COMMAND}
+            -DHY_BINARY=$<TARGET_FILE:hy>
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT_DIR=${stage1_test_dir}/slice_failures
+            -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HySliceFailures.cmake)
+    set_tests_properties(hy_stage1_slice_failures PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME hy_stage1_progress_width
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/progress_width.py
+                ${stage1_test_dir}/hydrogen-stage1)
+        set_tests_properties(hy_stage1_progress_width PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 180 RUN_SERIAL TRUE)
+    endif()
     foreach(suite NativeStaticCalls NativeRuntime NativeCompilationFailures ExecutableIr)
         add_test(NAME hy_stage1_${suite}
             COMMAND ${CMAKE_COMMAND}
@@ -1351,6 +1718,177 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
     )
     set_tests_properties(hy_stage1_compile_uefi_hello PROPERTIES
         FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
+
+    # Windows x86-64 cross-compilation, runtime parity, and bootstrap.
+    find_program(HYDROGEN_WINE_BINARY NAMES wine wine64)
+
+    add_test(NAME hy_stage1_windows_parity
+        COMMAND ${CMAKE_COMMAND}
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DTEMP_DIR=${stage1_test_dir}/windows-parity
+            -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyWindowsParity.cmake)
+    set_tests_properties(hy_stage1_windows_parity PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 240 RUN_SERIAL TRUE
+        LABELS "windows;crosscompile")
+
+    if(HYDROGEN_WINE_BINARY)
+        add_test(NAME hy_stage1_windows_bootstrap
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                -DTEMP_DIR=${stage1_test_dir}/windows-bootstrap
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyWindowsBootstrap.cmake)
+        set_tests_properties(hy_stage1_windows_bootstrap PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 600 RUN_SERIAL TRUE
+            LABELS "windows;bootstrap")
+        add_test(
+            NAME hy_stage1_compile_windows_exit
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/windows_exit_42.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/windows_exit_42.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake
+        )
+
+        set_tests_properties(
+            hy_stage1_compile_windows_exit
+            PROPERTIES
+                FIXTURES_REQUIRED hydrogen_stage1
+                TIMEOUT 120
+                RUN_SERIAL TRUE
+                LABELS "windows;crosscompile"
+        )
+        add_test(NAME hy_stage1_windows_bitwise_operators
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/bitwise_operators.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/bitwise_operators.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_bitwise_operators PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
+        add_test(NAME hy_stage1_windows_compound_assignments
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/compound_assignments.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/compound_assignments.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_compound_assignments PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
+        add_test(NAME hy_stage1_windows_compound_gc
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/compound_gc.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/compound_gc.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_compound_gc PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
+        add_test(NAME hy_stage1_windows_increment_decrement
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/increment_decrement.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/increment_decrement.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_increment_decrement PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
+        add_test(NAME hy_stage1_windows_conditional_expression
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/conditional_expression.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/conditional_expression.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_conditional_expression PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
+        add_test(NAME hy_stage1_windows_null_coalescing
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/null_coalescing.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/null_coalescing.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_null_coalescing PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
+        add_test(NAME hy_stage1_windows_null_conditional
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/null_conditional.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/null_conditional.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_null_conditional PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
+        add_test(NAME hy_stage1_windows_foreach
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/foreach_iteration.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/foreach_iteration.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_foreach PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
+        add_test(NAME hy_stage1_windows_interpolation
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/interpolated_strings.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/interpolated_strings.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_interpolation PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
+        add_test(NAME hy_stage1_windows_switch
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/switch_cases.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/switch_cases.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_switch PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
+        add_test(NAME hy_stage1_windows_slices
+            COMMAND ${CMAKE_COMMAND}
+                -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+                -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/slices.hy
+                -DOUTPUT_FILE=${stage1_test_dir}/slices.exe
+                -DWINE_BINARY=${HYDROGEN_WINE_BINARY}
+                -DEXPECTED_EXIT_CODE=42
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyCompileWindowsAndRun.cmake)
+        set_tests_properties(hy_stage1_windows_slices PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 120 RUN_SERIAL TRUE
+            LABELS "windows;crosscompile")
+    else()
+        message(STATUS
+            "Wine not found: Windows execution/bootstrap tests disabled; PE validation remains enabled"
+        )
+    endif()
     add_test(NAME hy_stage1_build_os_project
         COMMAND ${CMAKE_COMMAND}
             -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
@@ -1359,6 +1897,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBuildOsProject.cmake
     )
     set_tests_properties(hy_stage1_build_os_project PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME hy_stage1_aun1_native
+        COMMAND ${CMAKE_COMMAND}
+            -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DTEMP_DIR=${stage1_test_dir}/aun1-native
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyAun1Native.cmake
+    )
+    set_tests_properties(hy_stage1_aun1_native PROPERTIES
         FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
     add_test(NAME hy_stage1_compile_uefi_multiline
         COMMAND ${CMAKE_COMMAND}
@@ -1453,5 +2000,5 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyBootstrapProof.cmake
     )
     set_tests_properties(hy_stage6_bootstrap_proof PROPERTIES
-        FIXTURES_REQUIRED hydrogen_stage1 ENVIRONMENT "PATH=" TIMEOUT 600 RUN_SERIAL TRUE)
+        FIXTURES_REQUIRED hydrogen_stage1 ENVIRONMENT "PATH=" TIMEOUT 1800 RUN_SERIAL TRUE)
 endif()

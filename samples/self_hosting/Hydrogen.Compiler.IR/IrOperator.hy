@@ -77,5 +77,24 @@ namespace Hydrogen.Compiler.IR {
         public static int UnsafeKeyword() { return 74; }
         public static int SizeOfKeyword() { return 75; }
         public static int StackAllocKeyword() { return 76; }
+        public static int PipeToken() { return 77; }
+        public static int CaretToken() { return 78; }
+        public static int TildeToken() { return 79; }
+        public static int ShiftLeftToken() { return 80; }
+        public static int ShiftRightToken() { return 81; }
+        public static int PlusEqualsToken() { return 82; }
+        public static int MinusEqualsToken() { return 83; }
+        public static int StarEqualsToken() { return 84; }
+        public static int SlashEqualsToken() { return 85; }
+        public static int PercentEqualsToken() { return 86; }
+        public static int AmpersandEqualsToken() { return 87; }
+        public static int PipeEqualsToken() { return 88; }
+        public static int CaretEqualsToken() { return 89; }
+        public static int ShiftLeftEqualsToken() { return 90; }
+        public static int ShiftRightEqualsToken() { return 91; }
+        public static int PlusPlusToken() { return 92; }
+        public static int MinusMinusToken() { return 93; }
+        public static int QuestionToken() { return 94; }
+        public static int QuestionQuestionToken() { return 95; }
     }
 }

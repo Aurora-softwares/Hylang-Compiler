@@ -1,0 +1,101 @@
+{
+  "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+  "cpu": "Intel(R) Core(TM) i7-4790K CPU @ 4.00GHz",
+  "iterations": 1000,
+  "records": 100,
+  "bytes": 1024,
+  "nodes": 100000,
+  "runs": 5,
+  "warmups": 1,
+  "flags": {
+    "C": "-O2 -std=c11",
+    "C++": "-O2 -std=c++20",
+    "Rust": "-C opt-level=2"
+  },
+  "compilers": {
+    "C": {
+      "path": "/usr/bin/cc",
+      "version": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0"
+    },
+    "C++": {
+      "path": "/usr/bin/c++",
+      "version": "c++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0"
+    },
+    "Rust": {
+      "path": "/usr/bin/rustc",
+      "version": "rustc 1.93.1 (01f6ddf75 2026-02-11) (built from a source tarball)"
+    }
+  },
+  "hydrogen": {
+    "native_path": "/mnt/Local/Projects/Aurora-Softwares/Hylang-Compiler/build/self_hosting/hydrogen-stage1",
+    "native_sha256": "de08e929b49e7b5a4e3c117001d960a74c06445a8f7cb8c3e80442510f43c4c5"
+  },
+  "sources": {
+    "workload.c": "806ad329a6af25eb9720082914f59852acb27124b78b3cb17be49a534872f235",
+    "workload.cpp": "e78cfc4a6f85c3e70c9be7777072adfc06ad4fcd1abb0854ed82b4235058213b",
+    "workload.hy": "636959c8dcd1741813cada9b015d10e81c0cba7b461261675df782c2971d151a",
+    "workload.rs": "84ce2888b02df3f26282738bfa997fd173afc14917139f4f72a36403374d156e"
+  },
+  "build_seconds": {
+    "Hydrogen native": 0.009618479,
+    "C": 0.135370394,
+    "C++": 0.954106507,
+    "Rust": 0.45480269
+  },
+  "workloads": {
+    "nodes": {
+      "input": "100000",
+      "expected_output": "4799685",
+      "samples_seconds": {
+        "Hydrogen native": [
+          0.031061915,
+          0.024297517,
+          0.021541677,
+          0.02748773,
+          0.025299949
+        ],
+        "C": [
+          0.004504603,
+          0.003484529,
+          0.003804842,
+          0.003984802,
+          0.006227211
+        ],
+        "C++": [
+          0.006109748,
+          0.004957157,
+          0.005337157,
+          0.005597718,
+          0.005918681
+        ],
+        "Rust": [
+          0.004569127,
+          0.003865498,
+          0.004628445,
+          0.004433488,
+          0.004364835
+        ]
+      },
+      "median_seconds": {
+        "Hydrogen native": 0.025299949,
+        "C": 0.003984802,
+        "C++": 0.005597718,
+        "Rust": 0.004433488
+      }
+    }
+  },
+  "inputs": {
+    "log": {
+      "size_bytes": 1000,
+      "sha256": "ccb86449fbb1446467f10ef713c9a542f93ef45e1b25a020d3be3bba325dfa6a"
+    },
+    "csv": {
+      "size_bytes": 577,
+      "sha256": "604e63abefb952f37fefc75ca626541f59450503e9fd77fdd155fd3a833f1922"
+    },
+    "bytes": {
+      "size_bytes": 1024,
+      "sha256": "f1305624e9a6d905a63dc5ec25bee729df52db7ce7ff2c25716dd91303e8a699"
+    }
+  }
+}

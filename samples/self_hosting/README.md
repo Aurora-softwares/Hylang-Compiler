@@ -1,6 +1,6 @@
 # Native Hydrogen compiler
 
-This directory contains the Hydrogen-written compiler and its referenced libraries. It emits standalone Linux x86-64 executables and constrained x86-64 UEFI images, and can compile its own complete CLI project. The executable manifest is `Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj`; `Hydrogen.Compiler.hyproj` is the SDK workspace including tests.
+This directory contains the Hydrogen-written compiler and its referenced libraries. It emits Linux x86-64 ELF and Windows x64 PE32+ console executables, constrained x86-64 UEFI images, and can compile its own complete CLI project. The Linux executable manifest is `Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj`; the Windows manifest is `Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Windows.hyproj`. `Hydrogen.Compiler.hyproj` is the SDK workspace including tests.
 
 ## Build and use
 
@@ -23,13 +23,40 @@ hydrogen-stage1 tokens <file.hy>
 hydrogen-stage1 parse <file.hy>
 hydrogen-stage1 check <file.hy|project.hyproj> [--emit-ir]
 hydrogen-stage1 compile <file.hy> -o <output>
+hydrogen-stage1 compile <file.hy> --target windows-x64 -o <output.exe>
 hydrogen-stage1 compile <file.hy> --target uefi-x64 -o <output>
 hydrogen-stage1 build <project.hyproj> -o <output-file|output-directory>
-hydrogen-stage1 new app|lib|tool|test|workspace|os|efi|kernel|exec <name>
+hydrogen-stage1 new app|lib|tool|test|workspace|os|efi|kernel|exec|windows <name>
 hydrogen-stage1 stage-compare <project.hyproj> --stage1 <artifact> --stage2 <artifact>
 ```
 
-`tokens` prints lexer tokens/locations. `parse` prints a syntax outline. `check` performs semantic checking; `--emit-ir` prints typed executable method-body IR. `compile` emits a Linux executable by default, or a constrained PE32+ UEFI application with `--target uefi-x64`; `build` accepts format-2 `exe`, `efi`, `kernel`, `exec`, and `os` projects. An `exec` project emits an Australis AUEX v1 program. OS builds emit referenced images below the specified output directory and may include `exec` projects. `stage-compare` compares existing files exactly; it does not build or behaviorally test them.
+`build` updates one terminal line per action and leaves its `100%` result when complete. Its braille spinner and bar of up to 60 characters show overall completed milestones; the adjacent action percentage uses source position for lexing and consumed tokens for parsing. Narrow terminals get a shorter bar and `...` at the end of long progress text, with the width checked on every redraw. Redirected output keeps the full text. Stages without a known denominator complete at 100%. Append `--hide-progress`, `--hide-spinner`, and/or `--hide-log` to control the display. Using all three flags leaves only the final `wrote` line or an error. OS projects report each referenced image separately.
+
+`tokens` prints lexer tokens/locations. `parse` prints a syntax outline. `check` performs semantic checking; `--emit-ir` prints typed executable method-body IR. `compile` emits a Linux executable by default, a Windows PE32+ console program with `--target windows-x64`, or a constrained UEFI application with `--target uefi-x64`. `build` accepts format-2 `exe`, `windows`, `efi`, `kernel`, `exec`, `native`, and `os` projects. Windows uses the same direct language backend as Linux, with Win32 implementations of the managed runtime's memory, argument, console, and file services. An `exec` project emits an Australis AUEX v1 program. Its structured backend supports control flow, scalar and bounded string/byte-array data, application method calls, terminal/file APIs, and concurrent AUEX child processes. A `native` project emits AUN1 v2 machine code for a single static `Main(string[] args)` with ASCII literal `System.Australis.Terminal.Write` calls and a literal integer return status; it has no general runtime. OS builds emit referenced images below the specified output directory and may include `exec` projects. `stage-compare` compares existing files exactly; it does not build or behaviorally test them.
+
+## Windows x64 target
+
+```bash
+./build/self_hosting/hydrogen-stage1 compile tests/phase6/native_hello.hy --target windows-x64 -o build/hello.exe
+./build/self_hosting/hydrogen-stage1 build tests/phase6/WindowsFullRuntime.hyproj -o build/WindowsFullRuntime.exe
+./build/self_hosting/hydrogen-stage1 build samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Windows.hyproj -o build/hydrogen.exe
+```
+
+`hy new windows <name>` scaffolds a `type = "windows"` project. Windows and Linux
+share the direct compiler's language features, object layout, checked arrays,
+and collector. Windows executables import system APIs from `KERNEL32.dll` and
+`SHELL32.dll`; they need no Hydrogen runtime DLL or external compiler/linker.
+The PE image has separate executable code and writable data, ASLR and NX
+flags, and a relocation directory. Command-line arguments are decoded with
+Windows quoting rules and converted from UTF-16 to Hydrogen UTF-8 strings;
+file paths are converted back to UTF-16 for Win32 file APIs. Native string
+indexing and length remain byte based on both targets. `exe` projects and
+untargeted `compile` still select Linux ELF; use the explicit Windows target or
+project type for Windows output.
+
+The Windows target is exercised under Wine by the parity and bootstrap tests.
+The [Windows full runtime fixture](../../tests/phase6/windows_full_runtime.hy)
+checks arguments, Unicode file paths, text/byte files, console output, and GC.
 
 ## UEFI console and chain-loading target
 
@@ -110,9 +137,32 @@ The native tool has `new` scaffolding, but not the SDK's `run`, `test`, `fmt`, `
 | Class objects | Reference identity, inheritance, virtual dispatch, instance fields, initializers, constructors |
 | Calls | Static and instance methods, overloads, interface calls, parameters, returns, recursion |
 | Types | Signed and unsigned integer widths (`int` is 32-bit), `bool`, enums, strings, structs, classes, arrays; `void` returns |
-| Expressions | Arithmetic, comparisons, assignment, fields, indexing, numeric casts, short-circuit booleans |
+| Expressions | Arithmetic, bitwise `&`, `|`, `^`, `~`, `<<`, `>>`, comparisons, assignment and integral compound assignment, fields, indexing, numeric casts, short-circuit booleans |
 | Statements | Blocks, `var`, `if`/`else`, `while`, `for`, `break`, `continue`, returns |
 | Entry | Static `Main`, `int`/`void`, zero parameters or `string[]` user arguments |
+
+Bitwise operators use fixed-width integer results. Shift counts are masked by
+the left operand's width minus one; right shift is arithmetic for signed types
+and logical for unsigned types. Shift syntax is recognized in expressions
+without changing the two `>` tokens used by nested generic type names.
+Compound assignment supports `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`,
+`<<=`, and `>>=` on integral lvalues. Field receivers and array indexes are
+evaluated once; the expression returns the stored value.
+Prefix and postfix `++` and `--` also work on integral lvalues. Prefix returns
+the new value; postfix returns the old value, with one target evaluation.
+Conditional expressions use `condition ? whenTrue : whenFalse`; only the
+selected branch executes, and both branches must have compatible types.
+Null coalescing uses `left ?? fallback` for references. The left expression
+evaluates once; the fallback runs only when the left is null.
+Null-conditional member, method, and index access uses `?.` and `?[index]`.
+The receiver evaluates once, and a null receiver produces null without running
+call arguments or index expressions. The result must be a reference value;
+primitive results and null-conditional assignment targets are rejected.
+`foreach (T value in collection)` supports arrays and strings in the native
+compiler. It captures the collection once, reads current element values, and
+preserves `break` and `continue` behavior. Strings follow byte-index semantics.
+The SDK also supports `List<T>`; its live `Count()` controls iteration, so
+adding items can extend the loop. No enumerator or disposal call is involved.
 
 Fatal freestanding CPU exceptions use an allocation-free IDT panic path. It
 captures the CPU exception frame, `CR2`, and all general registers, writes a
@@ -153,14 +203,17 @@ It prints `Answer: 42`. Arrays are mutable, zero/default-initialized, and bounds
 
 | API | Operations |
 | --- | --- |
-| `System.Console` | `Write(value)`, `WriteLine(value)`, native-only empty `WriteLine()` |
+| `System.Console` | `Write(value)`, `WriteLine(value)`, `WriteBytes(bytes)`, `IsTerminal()`, `TerminalWidth()` (zero when unavailable), `Utf8ByteAt(text, index)`, native-only empty `WriteLine()` |
 | `System.IO.File` | `Exists(path)`, `ReadAllText(path)`, `ReadAllBytes(path)`, `WriteAllText(path, text)`, `WriteAllBytes(path, bytes)` |
 | `System.Convert` | `ToInt32(text)` returning Hydrogen's `int` |
-| `System.Runtime.GC` | `Collect()`, `GetAllocatedBytes()` (native source APIs) |
+| `System.Text.Buffer` | Native `FromBytes(bytes, count)` copies the used UTF-8 prefix into an immutable string; see the [text builder sample](../native_text_builder/README.md) |
+| `System.Runtime.GC` | `Collect()` in native code and SDK C output (`hy run` treats it as a no-op); `GetAllocatedBytes()` in native code only |
 
 File reads require seekable files. Null access, invalid indices/sizes, malformed integers, I/O errors, and allocation failures report an error on stderr and exit `1`. `Console.ReadLine` is recognized by the checker but rejected by native generation.
 
-The runtime uses Linux anonymous mappings and conservative non-moving mark/sweep collection. Stack/register and interior roots preserve reachable graphs and cycles. Collection runs under allocation pressure; conservative roots can retain some unreachable objects. A cleared-page reuse pool is bounded at 16 MiB and released by explicit collection. `GetAllocatedBytes` excludes cached free pages. SDK `HYLANG_GC_STRESS`/`HYLANG_GC_THRESHOLD` environment controls do not apply to this runtime.
+The runtime uses Linux anonymous mappings or Windows `VirtualAlloc`/`VirtualFree` and conservative non-moving mark/sweep collection. Small objects occupy 64, 128, 256, or 512-byte slots in shared 4 KiB spans; larger objects have separate mappings. Stack/register and interior roots preserve reachable graphs and cycles, including pointers into individual span slots. Collection runs under allocation pressure, reclaims dead slots, and returns wholly dead spans; conservative roots can retain some unreachable objects. Linux releases adjacent empty spans as one `munmap` range; Windows releases each `VirtualAlloc` reservation separately. A cleared-page reuse pool is bounded at 16 MiB and released by explicit collection. `GetAllocatedBytes` excludes cached free pages. SDK `HYLANG_GC_STRESS`/`HYLANG_GC_THRESHOLD` environment controls do not apply to this runtime.
+
+Linux and Windows native `byte[]` and `int[]` use one-byte and four-byte elements; other arrays use eight-byte slots. Byte-file reads and writes operate directly on packed array storage. The backend emits inline checked indexing for packed arrays, direct comparisons with one-byte string literals, and immediate x64 instructions for numeric literal operations. Freestanding arrays keep their existing eight-byte layout.
 
 ## Projects and IR
 

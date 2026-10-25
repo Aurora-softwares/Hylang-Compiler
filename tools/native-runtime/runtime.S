@@ -3,12 +3,18 @@
 # Internal runtime ABI: rdi/rsi/rdx inputs, rax result; r14 stack root limit,
 # r15 heap state. Runtime helpers preserve rbx/r12/r13/r14/r15 and rbp.
 # Allocation header: next, mapping bytes, payload bytes, marked, spare, mark link.
-# Strings: byte length + UTF-8 bytes + NUL. Arrays: length + 8-byte slots.
+# Strings: byte length + UTF-8 bytes + NUL. Reference and other primitive
+# arrays: length + 8-byte slots. Linux byte/int arrays: length + 1/4-byte slots.
 # Heap state: head, mapped bytes, threshold, collection page index, index mask,
 # index mapping bytes, mark worklist. The temporary index maps every allocation page to its
 # header, making conservative membership checks independent of heap size.
 # State+56 is a recycled-page list; +4160/+4168 are its bytes/limit (after
-# the immutable byte-string table). Cached pages are outside the active heap.
+# the immutable byte-string table). +4200 holds four small-span class lists;
+# +4232 holds their available-span heads. +4264/+4272 track the next and end
+# of the current Linux small-span page batch.
+# A span page has a 64-byte header: next, reserved, slot size, bump offset,
+# free slot, live slots, next available. Small object headers keep mapping bytes zero; a tagged
+# index entry points at their span. Cached pages are outside the active heap.
 rt_init:
  mov eax,9
  xor edi,edi
@@ -53,9 +59,93 @@ rt_alloc:
  ja rt_size_error
  mov rax,[r15+8]
  cmp rax,[r15+16]
- jb .alloc_map
+ jb .alloc_choose
  mov rdi,rsp
  call rt_collect
+.alloc_choose:
+ mov r12,[rsp+56]
+ add r12,48
+ cmp r12,512
+ ja .alloc_map
+ lea rbx,[r15+4200]
+ mov r12d,64
+ cmp qword ptr [rsp+56],16
+ jbe .small_find
+ mov r12d,128
+ add rbx,8
+ cmp qword ptr [rsp+56],80
+ jbe .small_find
+ mov r12d,256
+ add rbx,8
+ cmp qword ptr [rsp+56],208
+ jbe .small_find
+ mov r12d,512
+ add rbx,8
+.small_find:
+ mov r13,[rbx+32]
+.small_span:
+ test r13,r13
+ jz .small_map
+ mov rdx,[r13+32]
+ test rdx,rdx
+ jnz .small_reuse
+ mov rcx,[r13+24]
+ lea r8,[rcx+r12]
+ cmp r8,4096
+ ja .small_full
+ lea rdx,[r13+rcx]
+ mov [r13+24],r8
+ jmp .small_slot
+.small_reuse:
+ mov rcx,[rdx]
+ mov [r13+32],rcx
+ jmp .small_slot
+.small_full:
+ mov rcx,[r13+48]
+ mov [rbx+32],rcx
+ mov qword ptr [r13+48],0
+ jmp .small_find
+.small_map:
+ call rt_span_page
+ mov r13,rax
+ mov rcx,[rbx]
+ mov [r13],rcx
+ mov [rbx],r13
+ mov [r13+16],r12
+ mov qword ptr [r13+24],64
+ mov rcx,[rbx+32]
+ mov [r13+48],rcx
+ mov [rbx+32],r13
+ add qword ptr [r15+8],4096
+ jmp .small_span
+.small_slot:
+ # Reused slots must be zeroed before array/object/string initialization.
+ push rdx
+ mov rdi,rdx
+ mov rcx,r12
+ shr rcx,3
+ xor eax,eax
+ rep stosq
+ pop rdx
+ mov rcx,[r15]
+ mov [rdx],rcx
+ mov [r15],rdx
+ mov rcx,[rsp+56]
+ mov [rdx+16],rcx
+ inc qword ptr [r13+40]
+ mov rcx,[r13+32]
+ test rcx,rcx
+ jnz .small_ready
+ mov rcx,[r13+24]
+ add rcx,r12
+ cmp rcx,4096
+ jbe .small_ready
+ mov rcx,[r13+48]
+ mov [rbx+32],rcx
+ mov qword ptr [r13+48],0
+.small_ready:
+ lea rax,[rdx+48]
+ jmp .alloc_return
 .alloc_map:
  mov rsi,[rsp+56]
  add rsi,48+4095
@@ -95,6 +185,7 @@ rt_alloc:
  mov [r15],rax
  add [r15+8],r12
  add rax,48
+.alloc_return:
  pop r11
  pop r10
  pop r9
@@ -106,6 +197,28 @@ rt_alloc:
  pop r13
  pop r12
  pop rbx
+ ret
+rt_span_page:
+ # Reserve sixteen contiguous span pages with one Linux mmap. Each page is
+ # still indexed and reclaimed independently by the collector.
+ mov rax,[r15+4264]
+ cmp rax,[r15+4272]
+ jb .span_ready
+ mov eax,9
+ xor edi,edi
+ mov esi,65536
+ mov edx,3
+ mov r10d,0x22
+ mov r8,-1
+ xor r9d,r9d
+ syscall
+ cmp rax,-4095
+ jae rt_oom
+ lea rdx,[rax+65536]
+ mov [r15+4272],rdx
+.span_ready:
+ lea rdx,[rax+4096]
+ mov [r15+4264],rdx
  ret
 # Mix page addresses before masking: adjacent mmap pages must not form long
 # clusters that make scanning zero-filled arrays degenerate into linear searches.
@@ -127,6 +240,10 @@ rt_page_hash:
  ret
 # Mark managed and interior pointers conservatively (field/index lvalues are roots).
 rt_mark:
+ # Nulls, type tags and small scalar fields cannot be mapped managed roots.
+ # Skip their hash probes while retaining arbitrary interior heap pointers.
+ cmp rdi,4096
+ jb .mark_done
  mov rsi,rdi
  and rsi,-4096
  mov rax,rsi
@@ -146,6 +263,26 @@ rt_mark:
  jmp .mark_probe
 .mark_page:
  mov rax,[rdx+8]
+ test al,1
+ jnz .mark_span
+ lea rdx,[rax+48]
+ cmp rdi,rdx
+ jb .mark_done
+ add rdx,[rax+16]
+ cmp rdi,rdx
+ jae .mark_done
+ jmp .mark_found
+.mark_span:
+ and rax,-2
+ lea r8,[rax+64]
+ cmp rdi,r8
+ jb .mark_done
+ mov rcx,rdi
+ sub rcx,r8
+ mov rdx,[rax+16]
+ neg rdx
+ and rcx,rdx
+ lea rax,[r8+rcx]
  lea rdx,[rax+48]
  cmp rdi,rdx
  jb .mark_done
@@ -193,7 +330,9 @@ rt_collect:
  mov rbx,[r15]
 .index_allocation:
  test rbx,rbx
- jz .index_ready
+ jz .index_spans
+ cmp qword ptr [rbx+8],0
+ je .index_next
  mov r13,rbx
  mov r8,[rbx+8]
  add r8,rbx
@@ -216,8 +355,40 @@ rt_collect:
  add r13,4096
  cmp r13,r8
  jb .index_page
+.index_next:
  mov rbx,[rbx]
  jmp .index_allocation
+.index_spans:
+ xor r11d,r11d
+.index_class:
+ cmp r11,4
+ jae .index_ready
+ mov rbx,[r15+r11*8+4200]
+.index_span:
+ test rbx,rbx
+ jz .index_next_class
+ mov rax,rbx
+ call rt_page_hash
+ mov rcx,rax
+.index_span_probe:
+ and rcx,[r15+32]
+ mov rdx,rcx
+ shl rdx,4
+ add rdx,[r15+24]
+ cmp qword ptr [rdx],0
+ je .index_span_insert
+ inc rcx
+ jmp .index_span_probe
+.index_span_insert:
+ mov [rdx],rbx
+ mov rax,rbx
+ or rax,1
+ mov [rdx+8],rax
+ mov rbx,[rbx]
+ jmp .index_span
+.index_next_class:
+ inc r11
+ jmp .index_class
 .index_ready:
  mov qword ptr [r15+48],0
  mov rbx,[r15]
@@ -263,12 +434,17 @@ rt_collect:
  cmp qword ptr [rbx+24],0
  je .free
  mov rax,[rbx+8]
+ test rax,rax
+ jz .live_small
  add [r15+8],rax
+.live_small:
  mov r12,rbx
  jmp .sweep
 .free:
  mov rax,[rbx]
  mov [r12],rax
+ cmp qword ptr [rbx+8],0
+ je .free_small
  cmp qword ptr [rbx+8],4096
  jne .free_mapping
  mov rax,[r15+4160]
@@ -285,7 +461,72 @@ rt_collect:
  mov eax,11
  syscall
  jmp .sweep
+.free_small:
+ mov rdx,rbx
+ and rdx,-4096
+ mov rcx,[rdx+32]
+ mov [rbx],rcx
+ mov [rdx+32],rbx
+ mov qword ptr [rbx+16],0
+ dec qword ptr [rdx+40]
+ jmp .sweep
 .collected:
+ xor r12d,r12d
+.sweep_class:
+ cmp r12,4
+ jae .spans_collected
+ mov qword ptr [r15+r12*8+4232],0
+ lea r13,[r15+r12*8+4200]
+.sweep_span:
+ mov rbx,[r13]
+ test rbx,rbx
+ jz .sweep_next_class
+ cmp qword ptr [rbx+40],0
+ jne .keep_span
+ # Adjacent dead span pages can be released with one Linux munmap. Batches
+ # are linked in descending address order when populated from the page arena.
+ mov r9,rbx
+ mov r10,rbx
+ mov rax,[rbx]
+.span_run:
+ test rax,rax
+ jz .span_run_end
+ lea rdx,[r10-4096]
+ cmp rax,rdx
+ jne .span_run_end
+ cmp qword ptr [rax+40],0
+ jne .span_run_end
+ mov r10,rax
+ mov rax,[rax]
+ jmp .span_run
+.span_run_end:
+ mov [r13],rax
+ mov rdi,r10
+ lea rsi,[r9+4096]
+ sub rsi,r10
+ mov eax,11
+ syscall
+ jmp .sweep_span
+.keep_span:
+ add qword ptr [r15+8],4096
+ mov rcx,[rbx+32]
+ test rcx,rcx
+ jnz .available_span
+ mov rcx,[rbx+24]
+ add rcx,[rbx+16]
+ cmp rcx,4096
+ ja .full_span
+.available_span:
+ mov rcx,[r15+r12*8+4232]
+ mov [rbx+48],rcx
+ mov [r15+r12*8+4232],rbx
+.full_span:
+ mov r13,rbx
+ jmp .sweep_span
+.sweep_next_class:
+ inc r12
+ jmp .sweep_class
+.spans_collected:
  mov rdi,[r15+24]
  mov rsi,[r15+40]
  mov eax,11
@@ -380,14 +621,107 @@ rt_array:
  pop rcx
  mov [rax],rcx
  ret
-rt_index:
+rt_byte_array:
+ test rdi,rdi
+ js rt_size_error
+ cmp rdi,0x7ffffff
+ ja rt_size_error
+ push rdi
+ lea rdi,[rdi+8]
+ call rt_alloc
+ pop rcx
+ mov [rax],rcx
+ ret
+rt_int_array:
+ test rdi,rdi
+ js rt_size_error
+ cmp rdi,0x7ffffff
+ ja rt_size_error
+ push rdi
+ lea rdi,[rdi*4+8]
+ call rt_alloc
+ pop rcx
+ mov [rax],rcx
+ ret
+rt_slice:
+ # rdi=source, rsi=start, rdx=exclusive end, rcx=element width;
+ # width zero means a byte string. Validate before subtracting or allocating.
  test rdi,rdi
  jz rt_null_error
  test rsi,rsi
  js rt_index_error
+ cmp rdx,rsi
+ jb rt_index_error
+ cmp rdx,[rdi]
+ ja rt_index_error
+ push rbx
+ push r12
+ push r13
+ push r14
+ mov rbx,rdi
+ mov r12,rsi
+ mov r13,rdx
+ sub r13,rsi
+ cmp r13,0x7ffffff
+ ja rt_size_error
+ mov r14,rcx
+ test r14,r14
+ jnz .slice_array
+ lea rdi,[rbx+r12+8]
+ mov rsi,r13
+ call rt_string
+ jmp .slice_done
+.slice_array:
+ mov rdi,r13
+ cmp r14,1
+ je .slice_byte
+ cmp r14,4
+ je .slice_int
+ call rt_array
+ jmp .slice_copy
+.slice_byte:
+ call rt_byte_array
+ jmp .slice_copy
+.slice_int:
+ call rt_int_array
+.slice_copy:
+ mov r8,rax
+ lea rsi,[rbx+8]
+ mov rcx,r12
+ imul rcx,r14
+ add rsi,rcx
+ lea rdi,[r8+8]
+ mov rcx,r13
+ imul rcx,r14
+ rep movsb
+ mov rax,r8
+.slice_done:
+ pop r14
+ pop r13
+ pop r12
+ pop rbx
+ ret
+rt_index:
+ test rdi,rdi
+ jz rt_null_error
+ # An unsigned compare rejects negative indexes too.
  cmp rsi,[rdi]
  jae rt_index_error
  lea rax,[rdi+rsi*8+8]
+ ret
+rt_byte_index:
+ test rdi,rdi
+ jz rt_null_error
+ cmp rsi,[rdi]
+ jae rt_index_error
+ lea rax,[rdi+rsi+8]
+ ret
+rt_int_index:
+ test rdi,rdi
+ jz rt_null_error
+ cmp rsi,[rdi]
+ jae rt_index_error
+ lea rax,[rdi+rsi*4+8]
  ret
 rt_string:
  # Clone rsi bytes starting at rdi; allocation cannot collect raw input because
@@ -407,6 +741,15 @@ rt_string:
  pop r12
  pop rbx
  ret
+rt_string_from_bytes:
+ # rdi=byte array, rsi=used byte count. Copy just the used prefix into an
+ # immutable string; unsigned comparison also rejects a negative count.
+ test rdi,rdi
+ jz rt_null_error
+ cmp rsi,[rdi]
+ ja rt_index_error
+ add rdi,8
+ jmp rt_string
 rt_concat:
  test rdi,rdi
  jz rt_null_error
@@ -459,8 +802,6 @@ rt_equal:
 rt_char:
  test rdi,rdi
  jz rt_null_error
- test rsi,rsi
- js rt_index_error
  cmp rsi,[rdi]
  jae rt_index_error
  movzx eax,byte ptr [rdi+rsi+8]
@@ -587,6 +928,52 @@ rt_print:
  pop rbx
  xor eax,eax
  ret
+rt_console_bytes:
+ test rdi,rdi
+ jz rt_null_error
+ mov rdx,[rdi]
+ lea rsi,[rdi+8]
+ mov edi,1
+ call rt_write_all
+ xor eax,eax
+ ret
+rt_isatty:
+ sub rsp,16
+ mov eax,16
+ mov edi,1
+ mov esi,0x5413
+ mov rdx,rsp
+ syscall
+ add rsp,16
+ test rax,rax
+ sete al
+ movzx eax,al
+ ret
+rt_terminal_width:
+ sub rsp,16
+ mov eax,16
+ mov edi,1
+ mov esi,0x5413
+ mov rdx,rsp
+ syscall
+ test rax,rax
+ js .unknown_width
+ movzx eax,word ptr [rsp+2]
+ add rsp,16
+ ret
+.unknown_width:
+ xor eax,eax
+ add rsp,16
+ ret
+rt_string_byte_at:
+ test rdi,rdi
+ jz rt_null_error
+ test rsi,rsi
+ js rt_index_error
+ cmp rsi,[rdi]
+ jae rt_index_error
+ movzx eax,byte ptr [rdi+rsi+8]
+ ret
 rt_write_all:
  test rdx,rdx
  jz .written
@@ -654,12 +1041,16 @@ rt_read_text:
  syscall
  test rax,rax
  js rt_io_error
+ cmp rax,0x1000000
+ ja rt_size_error
  mov r12,rax
  mov rdi,rbx
  xor esi,esi
  xor edx,edx
  mov eax,8
  syscall
+ test rax,rax
+ js rt_io_error
  lea rdi,[r12+9]
  call rt_alloc
  mov r13,rax
@@ -668,9 +1059,21 @@ rt_read_text:
  mov rdx,r12
  mov rdi,rbx
  call rt_read_all
+.check_extra:
+ mov rdi,rbx
+ lea rsi,[r13+r12+8]
+ mov edx,1
+ xor eax,eax
+ syscall
+ cmp rax,-4
+ je .check_extra
+ test rax,rax
+ jne rt_io_error
  mov rdi,rbx
  mov eax,3
  syscall
+ test rax,rax
+ js rt_io_error
  mov byte ptr [r13+r12+8],0
  mov rax,r13
  pop r13
@@ -678,22 +1081,50 @@ rt_read_text:
  pop rbx
  ret
 rt_read_bytes:
+ test rdi,rdi
+ jz rt_null_error
  push rbx
  push r12
- call rt_read_text
+ push r13
+ add rdi,8
+ xor esi,esi
+ xor edx,edx
+ mov eax,2
+ syscall
+ test rax,rax
+ js rt_io_error
  mov rbx,rax
- mov rdi,[rax]
- call rt_array
- xor ecx,ecx
- mov rdx,[rbx]
-.bytes_read:
- cmp rcx,rdx
- jae .bytes_read_done
- movzx esi,byte ptr [rbx+rcx+8]
- mov [rax+rcx*8+8],rsi
- inc rcx
- jmp .bytes_read
-.bytes_read_done:
+ mov rdi,rbx
+ xor esi,esi
+ mov edx,2
+ mov eax,8
+ syscall
+ test rax,rax
+ js rt_io_error
+ cmp rax,0x7ffffff
+ ja rt_size_error
+ mov r12,rax
+ mov rdi,rbx
+ xor esi,esi
+ xor edx,edx
+ mov eax,8
+ syscall
+ test rax,rax
+ js rt_io_error
+ mov rdi,r12
+ call rt_byte_array
+ mov r13,rax
+ lea rsi,[rax+8]
+ mov rdx,r12
+ mov rdi,rbx
+ call rt_read_all
+ mov rdi,rbx
+ mov eax,3
+ syscall
+ test rax,rax
+ js rt_io_error
+ mov rax,r13
+ pop r13
  pop r12
  pop rbx
  ret
@@ -732,33 +1163,37 @@ rt_write_text:
  xor eax,eax
  ret
 rt_write_bytes:
+ test rdi,rdi
+ jz rt_null_error
  test rsi,rsi
  jz rt_null_error
  push rbx
  push r12
  push r13
- mov rbx,rdi
+ mov r13,rdi
  mov r12,rsi
- mov r13,[rsi]
- lea rdi,[r13+9]
- call rt_alloc
- mov [rax],r13
- xor ecx,ecx
-.bytes_write:
- cmp rcx,r13
- jae .bytes_write_done
- mov rdx,[r12+rcx*8+8]
- mov [rax+rcx+8],dl
- inc rcx
- jmp .bytes_write
-.bytes_write_done:
- mov byte ptr [rax+r13+8],0
+ call rt_create_parents
+ lea rdi,[r13+8]
+ mov esi,0x241
+ mov edx,420
+ mov eax,2
+ syscall
+ test rax,rax
+ js rt_io_error
+ mov rbx,rax
  mov rdi,rbx
- mov rsi,rax
- call rt_write_text
+ lea rsi,[r12+8]
+ mov rdx,[r12]
+ call rt_write_all
+ mov rdi,rbx
+ mov eax,3
+ syscall
+ test rax,rax
+ js rt_io_error
  pop r13
  pop r12
  pop rbx
+ xor eax,eax
  ret
 rt_create_parents:
  test rdi,rdi

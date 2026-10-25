@@ -312,7 +312,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 i = i + 1;
             }
-            if (writes == 0) { return Failed("UEFI target requires at least one System.Console.WriteLine string literal"); }
+            if (writes == 0 && rawKernelLoads == 0) {
+                return Failed("UEFI target requires at least one System.Console.WriteLine string literal");
+            }
             if (startImages > 1) { return Failed("UEFI target supports one System.Uefi.StartImage call"); }
             if (rawKernelLoads > 1 || (rawKernelLoads != 0 && startImages != 0)) {
                 return Failed("UEFI target supports exactly one kernel loading mode");
@@ -421,6 +423,14 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             int graphicsOutputGuidOffset = 0;
             int framebufferFontOffset = 0;
             int panicMessageOffset = 0;
+            int debugKernelOffset = 0;
+            int debugDisplayOffset = 0;
+            int debugExitOffset = 0;
+            int rescueOffset = 0;
+            string debugKernelMessage = "[BOOT:DEBUG] AUKR kernel validated.\r\n";
+            string debugDisplayMessage = "[BOOT:DEBUG] GOP framebuffer captured.\r\n";
+            string debugExitMessage = "[BOOT:DEBUG] Exiting UEFI boot services.\r\n";
+            string rescueMessage = "[BOOT] Rescue mode selected.\r\n";
             string panicHeader = "\r\n*** AUSTRALIS KERNEL PANIC ***\r\nFatal CPU exception; interrupts are disabled.\r\n";
             string panicMessage = panicHeader +
                 "VECTOR  =0x0000000000000000\r\n" +
@@ -485,6 +495,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 framebufferDataEnd = framebufferDataEnd + panicMessage.Length + 1;
                 dataSize = framebufferDataEnd;
             }
+            if (rawKernelLoad) {
+                debugKernelOffset = dataSize;
+                debugDisplayOffset = debugKernelOffset + (debugKernelMessage.Length + 1) * 2;
+                debugExitOffset = debugDisplayOffset + (debugDisplayMessage.Length + 1) * 2;
+                rescueOffset = debugExitOffset + (debugExitMessage.Length + 1) * 2;
+                dataSize = rescueOffset + (rescueMessage.Length + 1) * 2;
+            }
             int dataRawSize = ((dataSize + 511) / 512) * 512;
             int dataVirtualSize = ((dataSize + 4095) / 4096) * 4096;
             int bootInfoRawSize = 0;
@@ -541,7 +558,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             EmitEntrySetup(code);
             if (clearScreen) { EmitClearScreen(code); }
-            EmitConsoleWrite(code, textRva, dataRva);
+            if (payload.Length != 0) { EmitConsoleWrite(code, textRva, dataRva); }
+            if (rawKernelLoad) { EmitSelectBootMode(code, textRva, bootInfoRva); }
             int awaitIndex = 0;
             while (awaitIndex < awaitKeyCount) {
                 EmitAwaitKey(code);
@@ -564,10 +582,22 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     rawFailureCount = EmitChainLoader(code, textRva, dataRva + payloadSize,
                         dataRva + loadedImageGuidOffset, dataRva + simpleFileSystemGuidOffset,
                         dataRva + fileInfoGuidOffset, bootInfoRva, true, rawFailureJumps, rawFailureCount);
+                    EmitConsoleWriteIfMode(code, textRva, bootInfoRva, 1,
+                        dataRva + debugKernelOffset);
                 }
                 if (initializeFramebuffer) {
                     framebufferFailureJump = EmitCaptureFramebuffer(code, textRva, bootInfoRva,
                         dataRva + graphicsOutputGuidOffset);
+                    if (rawKernelLoad) {
+                        EmitConsoleWriteIfMode(code, textRva, bootInfoRva, 1,
+                            dataRva + debugDisplayOffset);
+                    }
+                }
+                if (rawKernelLoad) {
+                    EmitConsoleWriteIfMode(code, textRva, bootInfoRva, 3,
+                        dataRva + rescueOffset);
+                    EmitConsoleWriteIfMode(code, textRva, bootInfoRva, 1,
+                        dataRva + debugExitOffset);
                 }
                 failureCount = EmitExitBootServices(code, textRva, bootInfoRva, failureJumps, failureCount);
                 if (initializeMemoryMap) {
@@ -600,9 +630,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     kernelFailureCount = EmitInitializeFramebuffer(code, kernelFailureJumps, kernelFailureCount);
                     int framebufferMessage = 0;
                     while (framebufferMessage < framebufferWriteCount) {
+                        int skipSilentMessage = -1;
+                        if (rawKernelLoad) {
+                            skipSilentMessage = EmitJumpIfBootMode(code, textRva, bootInfoRva, 2);
+                        }
                         kernelFailureCount = EmitFramebufferWriteLine(code, textRva, bootInfoRva,
                             dataRva + framebufferFontOffset, dataRva + framebufferMessageOffsets[framebufferMessage],
                             kernelFailureJumps, kernelFailureCount);
+                        if (skipSilentMessage >= 0) {
+                            code.Patch32(skipSilentMessage,
+                                code.Position() - (skipSilentMessage + 4));
+                        }
                         framebufferMessage = framebufferMessage + 1;
                     }
                 }
@@ -617,6 +655,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 if (initializeTimer) {
                     kernelFailureCount = EmitInitializeTimer(code, kernelFailureJumps, kernelFailureCount);
+                }
+                int skipRescueHardware = -1;
+                if (rawKernelLoad && (initializePci || initializeMmio || initializeDma ||
+                    dmaAllocationCount != 0 || initializeStorage)) {
+                    skipRescueHardware = EmitJumpIfBootMode(code, textRva, bootInfoRva, 3);
                 }
                 if (initializePci) {
                     kernelFailureCount = EmitInitializePci(code, kernelFailureJumps, kernelFailureCount);
@@ -634,6 +677,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 if (initializeStorage) {
                     kernelFailureCount = EmitInitializeStorage(code, kernelFailureJumps, kernelFailureCount);
+                }
+                if (skipRescueHardware >= 0) {
+                    code.Patch32(skipRescueHardware,
+                        code.Position() - (skipRescueHardware + 4));
                 }
                 if (kernelCode.Length != 0) {
                     code.EmitByte(0x41); code.EmitByte(0x57); // push r15: boot information argument
@@ -681,7 +728,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (chainLoad) {
                     int failureStart = code.Position();
                     EmitConsoleWrite(code, textRva, dataRva + errorOffset);
-                    code.EmitByte(0xeb); code.EmitByte(0xfe);
+                    EmitExitImageWithError(code);
                     int jump = 0;
                     while (jump < failureCount) {
                         code.Patch32(failureJumps[jump], failureStart - (failureJumps[jump] + 4));
@@ -691,7 +738,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     if (rawKernelLoad) {
                         int rawFailureStart = code.Position();
                         EmitConsoleWrite(code, textRva, dataRva + rawLoadErrorOffset);
-                        code.EmitByte(0xeb); code.EmitByte(0xfe);
+                        EmitExitImageWithError(code);
                         int rawJump = 0;
                         while (rawJump < rawFailureCount) {
                             code.Patch32(rawFailureJumps[rawJump], rawFailureStart - (rawFailureJumps[rawJump] + 4));
@@ -701,15 +748,15 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     if (initializeFramebuffer) {
                         int framebufferFailureStart = code.Position();
                         EmitConsoleWrite(code, textRva, dataRva + framebufferErrorOffset);
-                        code.EmitByte(0xeb); code.EmitByte(0xfe);
+                        EmitExitImageWithError(code);
                         code.Patch32(framebufferFailureJump, framebufferFailureStart - (framebufferFailureJump + 4));
                     }
                     int allocationFailureStart = code.Position();
                     EmitConsoleWrite(code, textRva, dataRva + errorOffset);
-                    code.EmitByte(0xeb); code.EmitByte(0xfe);
+                    EmitExitImageWithError(code);
                     int memoryMapFailureStart = code.Position();
                     EmitConsoleWrite(code, textRva, dataRva + memoryMapErrorOffset);
-                    code.EmitByte(0xeb); code.EmitByte(0xfe);
+                    EmitExitImageWithError(code);
                     code.Patch32(failureJumps[0], allocationFailureStart - (failureJumps[0] + 4));
                     code.Patch32(failureJumps[1], memoryMapFailureStart - (failureJumps[1] + 4));
                 }
@@ -821,6 +868,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 WriteAscii(image, dataOffset + panicMessageOffset, panicMessage, ascii);
             }
+            if (rawKernelLoad) {
+                WriteUtf16(image, dataOffset + debugKernelOffset, debugKernelMessage, ascii);
+                WriteUtf16(image, dataOffset + debugDisplayOffset, debugDisplayMessage, ascii);
+                WriteUtf16(image, dataOffset + debugExitOffset, debugExitMessage, ascii);
+                WriteUtf16(image, dataOffset + rescueOffset, rescueMessage, ascii);
+            }
             if (initializeMemoryMap) {
                 WriteKernelBootInfo(image, bootInfoOffset);
             }
@@ -860,6 +913,76 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x54); code.EmitByte(0x24); code.EmitByte(64); // EFI_INPUT_KEY
             code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x41); code.EmitByte(8); // rax = ReadKeyStroke
             code.EmitByte(0xff); code.EmitByte(0xd0);
+        }
+
+        // Poll ConIn for two seconds before loading the raw kernel. Silent is
+        // the default; R selects rescue, D enables detailed diagnostics, N
+        // restores normal messages, and S selects silent explicitly. The
+        // choice survives in AUBI.
+        private void EmitSelectBootMode(X64Assembler code, int textRva, int bootInfoRva) {
+            EmitStore32Rva(code, textRva, bootInfoRva + 3472, 2);
+            code.EmitByte(0xbb); code.Emit32(40); // ebx = 40 * 50 ms
+            int poll = code.Position();
+            code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x4d); code.EmitByte(0x30); // rcx = ConIn
+            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc9);
+            int noKeyboard = EmitConditionalJump(code, 0x84);
+            EmitLeaRdxRsp(code, 64); // EFI_INPUT_KEY
+            code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x41); code.EmitByte(8);
+            code.EmitByte(0xff); code.EmitByte(0xd0); // ReadKeyStroke
+            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc0);
+            int noKey = EmitConditionalJump(code, 0x85);
+            code.EmitByte(0x0f); code.EmitByte(0xb7); code.EmitByte(0x44); code.EmitByte(0x24); code.EmitByte(66); // UnicodeChar
+            code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(114); // r
+            int lowerRescue = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(82); // R
+            int upperRescue = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(100); // d
+            int lowerDebug = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(68); // D
+            int upperDebug = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(115); // s
+            int lowerSilent = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(83); // S
+            int upperSilent = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(110); // n
+            int lowerNormal = EmitConditionalJump(code, 0x84);
+            code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(78); // N
+            int upperNormal = EmitConditionalJump(code, 0x84);
+            int wait = code.Position();
+            code.Patch32(noKey, wait - (noKey + 4));
+            code.EmitByte(0xb9); code.Emit32(50000); // Stall(50 ms)
+            code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x75); code.EmitByte(0x60);
+            EmitBootService(code, 248);
+            code.EmitByte(0xff); code.EmitByte(0xcb); // dec ebx
+            int more = EmitConditionalJump(code, 0x85);
+            code.Patch32(more, poll - (more + 4));
+            int timeout = EmitForwardJump(code);
+
+            int rescue = code.Position();
+            code.Patch32(lowerRescue, rescue - (lowerRescue + 4));
+            code.Patch32(upperRescue, rescue - (upperRescue + 4));
+            EmitStore32Rva(code, textRva, bootInfoRva + 3472, 3);
+            int rescueDone = EmitForwardJump(code);
+            int debug = code.Position();
+            code.Patch32(lowerDebug, debug - (lowerDebug + 4));
+            code.Patch32(upperDebug, debug - (upperDebug + 4));
+            EmitStore32Rva(code, textRva, bootInfoRva + 3472, 1);
+            int debugDone = EmitForwardJump(code);
+            int silent = code.Position();
+            code.Patch32(lowerSilent, silent - (lowerSilent + 4));
+            code.Patch32(upperSilent, silent - (upperSilent + 4));
+            EmitStore32Rva(code, textRva, bootInfoRva + 3472, 2);
+            int silentDone = EmitForwardJump(code);
+            int normal = code.Position();
+            code.Patch32(lowerNormal, normal - (lowerNormal + 4));
+            code.Patch32(upperNormal, normal - (upperNormal + 4));
+            EmitStore32Rva(code, textRva, bootInfoRva + 3472, 0);
+            int done = code.Position();
+            code.Patch32(noKeyboard, done - (noKeyboard + 4));
+            code.Patch32(timeout, done - (timeout + 4));
+            code.Patch32(rescueDone, done - (rescueDone + 4));
+            code.Patch32(debugDone, done - (debugDone + 4));
+            code.Patch32(silentDone, done - (silentDone + 4));
         }
 
         // Locate the Graphics Output Protocol while boot services are still
@@ -965,9 +1088,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (rawKernelLoad) {
                 // AUKR header plus nonempty code, capped at 1 MiB. Keep the
                 // exact size so a short EFI_FILE_PROTOCOL.Read is rejected.
-                code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(16);
+                code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(24);
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x86); failureCount = failureCount + 1; // jbe
-                code.EmitByte(0x48); code.EmitByte(0x3d); code.Emit32(1048576);
+                code.EmitByte(0x48); code.EmitByte(0x3d); code.Emit32(4194304);
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x87); failureCount = failureCount + 1; // ja
                 EmitStoreRaxRsp(code, 112);
             }
@@ -999,17 +1122,54 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // rcx = image base
                 code.EmitByte(0x81); code.EmitByte(0x39); code.Emit32(1380668737); // AUKR
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
-                code.EmitByte(0x83); code.EmitByte(0x79); code.EmitByte(4); code.EmitByte(1); // version
+                code.EmitByte(0x83); code.EmitByte(0x79); code.EmitByte(4); code.EmitByte(2); // AUKR v2
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
-                code.EmitByte(0x83); code.EmitByte(0x79); code.EmitByte(12); code.EmitByte(16); // entry offset
+                code.EmitByte(0x83); code.EmitByte(0x79); code.EmitByte(12); code.EmitByte(24); // entry offset
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
                 code.EmitByte(0x8b); code.EmitByte(0x41); code.EmitByte(8); // eax = code length
                 code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x54); code.EmitByte(0x24); code.EmitByte(112);
-                code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xea); code.EmitByte(16);
+                code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xea); code.EmitByte(24);
                 code.EmitByte(0x48); code.EmitByte(0x39); code.EmitByte(0xd0);
                 failureJumps[failureCount] = EmitConditionalJump(code, 0x85); failureCount = failureCount + 1;
                 EmitStoreRaxRva(code, textRva, bootInfoRva + 1032);
-                code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x41); code.EmitByte(16);
+				// AUKR v2: read the Hydrogen-generated panic entry offset.
+				// EAX still contains the validated native code length.
+				// RCX points to the loaded AUKR header.
+
+				// mov edx, [rcx + 16]
+				code.EmitByte(0x8b);
+				code.EmitByte(0x51);
+				code.EmitByte(16);
+
+				// Reject a zero panic entry offset.
+				// test edx, edx
+				code.EmitByte(0x85);
+				code.EmitByte(0xd2);
+
+				failureJumps[failureCount] =
+					EmitConditionalJump(code, 0x84); // jz
+				failureCount = failureCount + 1;
+
+				// Reject offsets outside the native code.
+				// cmp edx, eax
+				code.EmitByte(0x39);
+				code.EmitByte(0xc2);
+
+				failureJumps[failureCount] =
+					EmitConditionalJump(code, 0x83); // jae
+				failureCount = failureCount + 1;
+
+				// Calculate the absolute panic function address.
+				// lea rax, [rcx + rdx + 24]
+				code.EmitByte(0x48);
+				code.EmitByte(0x8d);
+				code.EmitByte(0x44);
+				code.EmitByte(0x11);
+				code.EmitByte(24);
+
+				// Publish panic entry in KernelBootInfo + 3616.
+				EmitStoreRaxRva(code, textRva, bootInfoRva + 3616);
+                code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x41); code.EmitByte(24);
                 EmitStoreRaxRva(code, textRva, bootInfoRva + 1024);
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8);
                 EmitStoreRaxRva(code, textRva, bootInfoRva + 1040);
@@ -2070,13 +2230,154 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             EmitPanicHexFromStack(code, digits + lineSize * line, 16); line = line + 1;  // R13
             EmitPanicHexFromStack(code, digits + lineSize * line, 8); line = line + 1;   // R14
             EmitPanicHexFromStack(code, digits + lineSize * line, 0);                   // R15
-            EmitPanicSerialReport(code);
-            EmitPanicFramebufferReport(code, textRva, fontRva);
+			// Always produce the human-readable diagnostic report first.
+			EmitPanicSerialReport(code);
+			EmitPanicFramebufferReport(code, textRva, fontRva);
+
+			// Optional Hydrogen QR diagnostics.
+			//
+			// Text has already been rendered.
+			// This uses the dedicated preallocated panic stack.
+			EmitPanicQrAfterText(code);
             code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x84); code.EmitByte(0x24); code.Emit32(2672); code.Emit32(2);
             int haltAt = code.Position(); code.Patch32(nestedPanic, haltAt - (nestedPanic + 4));
             EmitKernelHalt(code);
             return start;
         }
+
+		// Call the compiled Hydrogen panic QR renderer.
+		//
+		// R12 contains KernelBootInfo.
+		//
+		// The existing serial and framebuffer text reports must
+		// already have completed before this method executes.
+		//
+		// Missing entry/stack: skip QR and preserve the text.
+		//
+		// Hydrogen's native convention takes its bootInfo
+		// argument on the stack.
+		private void EmitPanicQrAfterText(X64Assembler code) {
+
+			// R11 = compiled Hydrogen panic entry.
+			// mov r11, [r12 + 3616]
+			code.EmitByte(0x4d);
+			code.EmitByte(0x8b);
+			code.EmitByte(0x9c);
+			code.EmitByte(0x24);
+			code.Emit32(3616);
+
+			// test r11, r11
+			code.EmitByte(0x4d);
+			code.EmitByte(0x85);
+			code.EmitByte(0xdb);
+
+			int missingEntry = EmitConditionalJump(code, 0x84);
+
+			// RAX = emergency stack top.
+			// mov rax, [r12 + 3680]
+			code.EmitByte(0x49);
+			code.EmitByte(0x8b);
+			code.EmitByte(0x84);
+			code.EmitByte(0x24);
+			code.Emit32(3680);
+
+			// RDX = emergency stack base.
+			// mov rdx, [r12 + 3672]
+			code.EmitByte(0x49);
+			code.EmitByte(0x8b);
+			code.EmitByte(0x94);
+			code.EmitByte(0x24);
+			code.Emit32(3672);
+
+			// Reject an invalid stack base.
+			// cmp rdx, 4096
+			code.EmitByte(0x48);
+			code.EmitByte(0x81);
+			code.EmitByte(0xfa);
+			code.Emit32(4096);
+
+			int invalidBase = EmitConditionalJump(code, 0x82);
+
+			// Validate top - base == 16384.
+			// mov rcx, rax
+			code.EmitByte(0x48);
+			code.EmitByte(0x89);
+			code.EmitByte(0xc1);
+
+			// sub rcx, rdx
+			code.EmitByte(0x48);
+			code.EmitByte(0x29);
+			code.EmitByte(0xd1);
+
+			// cmp rcx, 16384
+			code.EmitByte(0x48);
+			code.EmitByte(0x81);
+			code.EmitByte(0xf9);
+			code.Emit32(16384);
+
+			int invalidBounds = EmitConditionalJump(code, 0x85);
+
+			// Require a 16-byte-aligned stack top.
+			// test rax, 15
+			code.EmitByte(0x48);
+			code.EmitByte(0xa9);
+			code.Emit32(15);
+
+			int invalidAlignment = EmitConditionalJump(code, 0x85);
+
+			// Switch to the emergency panic stack.
+			// mov rsp, rax
+			code.EmitByte(0x48);
+			code.EmitByte(0x89);
+			code.EmitByte(0xc4);
+
+			// Preserve R12 across the native call.
+			// push r12
+			code.EmitByte(0x41);
+			code.EmitByte(0x54);
+
+			// Push the Hydrogen bootInfo argument.
+			// push r12
+			code.EmitByte(0x41);
+			code.EmitByte(0x54);
+
+			// Call compiled PanicQr.Render(bootInfo).
+			// call r11
+			code.EmitByte(0x41);
+			code.EmitByte(0xff);
+			code.EmitByte(0xd3);
+
+			// Discard the argument.
+			// add rsp, 8
+			code.EmitByte(0x48);
+			code.EmitByte(0x83);
+			code.EmitByte(0xc4);
+			code.EmitByte(8);
+
+			// Restore KernelBootInfo into R12.
+			// pop r12
+			code.EmitByte(0x41);
+			code.EmitByte(0x5c);
+
+			// All failure paths skip QR generation.
+			int done = code.Position();
+
+			code.Patch32(
+				missingEntry,
+				done - (missingEntry + 4));
+
+			code.Patch32(
+				invalidBase,
+				done - (invalidBase + 4));
+
+			code.Patch32(
+				invalidBounds,
+				done - (invalidBounds + 4));
+
+			code.Patch32(
+				invalidAlignment,
+				done - (invalidAlignment + 4));
+		}
 
         // Stubs avoid firmware services and enter a single allocation-free
         // panic reporter. Masked IRQs and APIC handlers still acknowledge their
@@ -2909,9 +3210,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 		    code.EmitByte(0xfc); code.EmitByte(0xf3); code.EmitByte(0x48); code.EmitByte(0xab);
 		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(272);
 		    code.EmitByte(0x4d); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(280);
-		    code.EmitByte(0x48); code.EmitByte(0xb8); code.Emit32(pageCount * 4096); code.Emit32(0);
+		    // Each literal allocation consumes the next slice of the same reserved
+		    // interval. Publish the combined span, not only the final slice.
+		    code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x87); code.Emit32(288);
+		    code.EmitByte(0x48); code.EmitByte(0x05); code.Emit32(pageCount * 4096);
 		    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0x87); code.Emit32(288);
-		    code.EmitByte(0x41); code.EmitByte(0xc7); code.EmitByte(0x87); code.Emit32(296); code.Emit32(pageCount);
+		    code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0x87); code.Emit32(296); code.Emit32(pageCount);
 		    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xff);
             return failureCount;
         }
@@ -3601,9 +3905,40 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.EmitByte(0xff); code.EmitByte(0xd0);
         }
 
+        private int EmitJumpIfBootMode(X64Assembler code, int textRva, int bootInfoRva, int mode) {
+            code.EmitByte(0x8b); code.EmitByte(0x05);
+            code.Emit32(bootInfoRva + 3472 - (textRva + code.Position() + 4));
+            code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(mode);
+            return EmitConditionalJump(code, 0x84);
+        }
+
+        private void EmitConsoleWriteIfMode(X64Assembler code, int textRva,
+            int bootInfoRva, int mode, int messageRva) {
+            code.EmitByte(0x8b); code.EmitByte(0x05);
+            code.Emit32(bootInfoRva + 3472 - (textRva + code.Position() + 4));
+            code.EmitByte(0x83); code.EmitByte(0xf8); code.EmitByte(mode);
+            int skip = EmitConditionalJump(code, 0x85);
+            EmitConsoleWrite(code, textRva, messageRva);
+            code.Patch32(skip, code.Position() - (skip + 4));
+        }
+
         private void EmitBootService(X64Assembler code, int offset) {
             code.EmitByte(0x49); code.EmitByte(0x8b); code.EmitByte(0x86); code.Emit32(offset);
             code.EmitByte(0xff); code.EmitByte(0xd0);
+        }
+
+        // EFI_BOOT_SERVICES.Exit returns a failed image to the firmware boot
+        // manager while services are still live. If firmware rejects Exit,
+        // stop rather than falling into unrelated generated code.
+        private void EmitExitImageWithError(X64Assembler code) {
+            code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe1); // rcx = ImageHandle
+            code.EmitByte(0x48); code.EmitByte(0xba); // rdx = EFI_LOAD_ERROR
+            code.Emit32(1); code.Emit32(-2147483648);
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xc0); // r8 = 0
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xc9); // r9 = 0
+            code.EmitByte(0x4d); code.EmitByte(0x8b); code.EmitByte(0x75); code.EmitByte(0x60);
+            EmitBootService(code, 216); // Exit(ImageHandle, status, 0, null)
+            code.EmitByte(0xeb); code.EmitByte(0xfe);
         }
 
         private int EmitFailureJump(X64Assembler code) {

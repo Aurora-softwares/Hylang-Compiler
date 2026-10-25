@@ -53,6 +53,12 @@ namespace Hydrogen.Compiler.Tests {
                 bytes[offset + 2] * 65536 + (long)bytes[offset + 3] * 16777216;
         }
 
+        private static bool ContainsByte(byte[] bytes, int start, int value) {
+            int i = start;
+            while (i < bytes.Length) { if (bytes[i] == (byte)value) { return true; } i = i + 1; }
+            return false;
+        }
+
         public static int Main(string[] args) {
             SyntaxTree hello = SyntaxTree.Parse(new SourceText("public class Program { public static void Main(string[] args) { System.Console.WriteLine(\"Hello\"); } }"));
             Assert.Equal("Public", SyntaxFacts.KindName(hello.Tokens().Get(0).Kind()), "first token should be public");
@@ -136,11 +142,59 @@ namespace Hydrogen.Compiler.Tests {
             Assert.True(execImage[32] == 2 && execImage[41] == 3,
                 "Australis backend should emit write then terminal read opcodes");
 
+            string portableExecSource = "public class Program { public static int Main(string[] args) { " +
+                "System.Console.Write(\"user> \"); " +
+                "string input = System.Console.ReadLine(); " +
+                "System.Console.WriteLine(input); " +
+                "if (!System.IO.File.Exists(\"/hello.txt\")) { return 2; } " +
+                "string contents = System.IO.File.ReadAllText(\"/hello.txt\"); " +
+                "System.IO.File.WriteAllText(\"/data/new\", contents); " +
+                "if (System.Convert.ToInt32(\"42\") != 42) { return 3; } " +
+                "System.Console.Write(contents); return 0; } }";
+            SyntaxTree portableExecTree = SyntaxTree.ParseFast(new SourceText(portableExecSource));
+            DiagnosticBag portableExecDiagnostics = new DiagnosticBag();
+            BoundProgram portableExecProgram = new Hydrogen.Compiler.Binding.Binder().Bind(
+                portableExecTree.Root(), portableExecDiagnostics);
+            Assert.True(!portableExecDiagnostics.HasErrors(),
+                "portable console and file intrinsics should bind");
+            byte[] portableExecImage = new AustralisExecImageBuilder().Build(portableExecProgram);
+            Assert.True(portableExecImage != null && Read32(portableExecImage, 16) == 65536,
+                "portable Australis strings should reserve checked result storage");
+            Assert.True(ContainsByte(portableExecImage, 32, 56) &&
+                ContainsByte(portableExecImage, 32, 57) &&
+                ContainsByte(portableExecImage, 32, 58) &&
+                ContainsByte(portableExecImage, 32, 59),
+                "portable Australis program should emit shared console, file, and conversion calls");
+
+            string advancedExecSource = "public class Program { public static int Helper() { return 3; } " +
+                "public static int Main(string[] args) { " +
+                "int total = 0; for (int i = 0; i < 8; i = i + 1) { " +
+                "if (i % 2 == 0) { continue; } total = total + i; " +
+                "if (total > 10) { break; } } while (total < 20) { total = total + 2; } " +
+                "System.Console.WriteLine(total); return total; } }";
+            SyntaxTree advancedExecTree = SyntaxTree.ParseFast(new SourceText(advancedExecSource));
+            DiagnosticBag advancedExecDiagnostics = new DiagnosticBag();
+            BoundProgram advancedExecProgram = new Hydrogen.Compiler.Binding.Binder().Bind(
+                advancedExecTree.Root(), advancedExecDiagnostics);
+            Assert.True(!advancedExecDiagnostics.HasErrors(), "structured Australis program should bind");
+            byte[] advancedExecImage = new AustralisExecImageBuilder().Build(advancedExecProgram);
+            Assert.True(advancedExecImage != null && advancedExecImage.Length > 64,
+                "Australis backend should emit arithmetic and loop bytecode");
+            Assert.True(ContainsByte(advancedExecImage, 32, 19) &&
+                ContainsByte(advancedExecImage, 32, 28) && ContainsByte(advancedExecImage, 32, 32),
+                "Australis bytecode should include modulo, conditional branch, and scalar output");
+
             DirectMainCompiler directMain = new DirectMainCompiler();
             SyntaxTree directTree = SyntaxTree.ParseFast(new SourceText("public class Program { public static int Main(string[] args) { int x = 1; if (x == 1) { System.Console.WriteLine(\"x was 1\"); return 7; } System.Console.WriteLine(\"x was not 1\"); return 3; } }"));
             DirectImageResult directImage = directMain.Compile(new Hydrogen.Compiler.Binding.Binder().Bind(directTree.Root(), new DiagnosticBag()).Module());
             Assert.True(directImage.Success(), "direct backend should lower locals, comparison, if, WriteLine, and return");
             Assert.True(directImage.Image().Length > 200, "direct backend image should include generated code and rodata");
+            DirectImageResult missingEntry = directMain.CompileFreestanding(
+                new Hydrogen.Compiler.Binding.Binder().Bind(directTree.Root(), new DiagnosticBag()).Module(),
+                "Missing", "Run", false);
+            Assert.True(!missingEntry.Success() &&
+                missingEntry.Message() == "missing freestanding entry method Missing.Run",
+                "direct backend must report compilation failures instead of returning partial code");
 
             ProjectClosure cliClosure = ProjectClosure.Collect(FindRepoPath("samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj"));
             string[] projects = cliClosure.Projects();

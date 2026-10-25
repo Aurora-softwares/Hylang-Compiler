@@ -40,27 +40,56 @@ if ((EXISTS "${ARCHIVE_PATH}" OR EXISTS "${ARCHIVE_SUM_PATH}") AND NOT FORCE)
         "Release output already exists. Choose a new VERSION or pass -DFORCE=ON: ${ARCHIVE_PATH}")
 endif()
 
+set(LAUNCHER "${SOURCE_DIR}/scripts/hy-launcher")
+set(MAINTENANCE "${SOURCE_DIR}/scripts/hy-maintenance")
+if (NOT EXISTS "${LAUNCHER}" OR NOT EXISTS "${MAINTENANCE}")
+    message(FATAL_ERROR "Hydrogen release launcher/maintenance scripts are missing.")
+endif()
+
 file(MAKE_DIRECTORY "${RELEASES_DIR}")
 file(REMOVE_RECURSE "${STAGING_ROOT}")
-file(MAKE_DIRECTORY "${PACKAGE_DIR}/bin")
+file(MAKE_DIRECTORY "${PACKAGE_DIR}/bin" "${PACKAGE_DIR}/libexec")
 
-configure_file("${INPUT_BINARY}" "${PACKAGE_DIR}/bin/hy" COPYONLY)
-file(CHMOD "${PACKAGE_DIR}/bin/hy"
-    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+configure_file("${INPUT_BINARY}" "${PACKAGE_DIR}/libexec/hy-core" COPYONLY)
+configure_file("${LAUNCHER}" "${PACKAGE_DIR}/bin/hy" COPYONLY)
+configure_file("${MAINTENANCE}" "${PACKAGE_DIR}/libexec/hy-maintenance" COPYONLY)
+foreach(EXECUTABLE "bin/hy" "libexec/hy-core" "libexec/hy-maintenance")
+    file(CHMOD "${PACKAGE_DIR}/${EXECUTABLE}"
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+endforeach()
 configure_file("${SOURCE_DIR}/release/README.md" "${PACKAGE_DIR}/README.md" COPYONLY)
 
+set(INSTALLED_FILES
+    "bin/hy"
+    "libexec/hy-core"
+    "libexec/hy-maintenance"
+    "BUILD-INFO.txt"
+    "README.md"
+)
 if (EXISTS "${SOURCE_DIR}/LICENSE")
     configure_file("${SOURCE_DIR}/LICENSE" "${PACKAGE_DIR}/LICENSE" COPYONLY)
+    list(APPEND INSTALLED_FILES "LICENSE")
 else()
     message(WARNING "No LICENSE file found; add one before publishing the release.")
 endif()
 
-file(SHA256 "${PACKAGE_DIR}/bin/hy" BINARY_SHA256)
-file(WRITE "${PACKAGE_DIR}/SHA256SUMS" "${BINARY_SHA256}  bin/hy\n")
 file(WRITE "${PACKAGE_DIR}/BUILD-INFO.txt"
     "Hydrogen release: ${VERSION}\n"
     "Platform: linux-x86_64\n"
-    "Entrypoint: bin/hy\n")
+    "Entrypoint: bin/hy\n"
+    "Compiler: libexec/hy-core\n")
+
+file(WRITE "${PACKAGE_DIR}/SHA256SUMS" "")
+foreach(INSTALLED_FILE IN LISTS INSTALLED_FILES)
+    file(SHA256 "${PACKAGE_DIR}/${INSTALLED_FILE}" INSTALLED_SHA256)
+    file(APPEND "${PACKAGE_DIR}/SHA256SUMS" "${INSTALLED_SHA256}  ${INSTALLED_FILE}\n")
+endforeach()
+
+file(WRITE "${PACKAGE_DIR}/INSTALL-MANIFEST" "hydrogen-install-manifest-v1\n")
+foreach(INSTALLED_FILE IN LISTS INSTALLED_FILES)
+    file(APPEND "${PACKAGE_DIR}/INSTALL-MANIFEST" "${INSTALLED_FILE}\n")
+endforeach()
+file(APPEND "${PACKAGE_DIR}/INSTALL-MANIFEST" "SHA256SUMS\nINSTALL-MANIFEST\n")
 
 file(REMOVE "${ARCHIVE_PATH}" "${ARCHIVE_SUM_PATH}")
 execute_process(

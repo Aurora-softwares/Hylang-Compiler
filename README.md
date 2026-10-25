@@ -1,19 +1,76 @@
+<div align="center">
+
+<img src="assets/hydrogen.icon.svg" width="30%" />
+
 # Hydrogen (Hylang)
 
-<img src="assets/hydrogen.icon.svg" style="display: block;margin-left: auto; margin-right: auto; width: 30%;" />
+</div>
 
 Hydrogen is a C#-inspired language with classes, methods, managed strings and arrays, and explicit low-level facilities. Source files use `.hy`; project manifests use `.hyproj`.
 
-The Hydrogen-written compiler produces standalone Linux x86-64 executables, constrained x86-64 UEFI images, and can compile itself. The C++ SDK provides additional language features, an interpreter, packaging, formatting, and editor integration. Choose the tool according to the features your program needs.
+The Hydrogen-written compiler produces Linux x86-64 ELF and Windows x64 PE32+ executables from the same direct language backend, constrained x86-64 UEFI images, and can compile itself. The C++ SDK provides additional language features, an interpreter, packaging, formatting, and editor integration. Choose the tool according to the features your program needs.
 
 | Tool | Use it for | Output or execution |
 | --- | --- | --- |
-| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI boot/kernel images, and project scaffolding | Linux x64 ELF or constrained `uefi-x64` PE32+ output; no external compiler or linker |
+| `hydrogen-stage1` (Hydrogen) | Direct native compilation, source/project checking, IR inspection, UEFI boot/kernel images, and project scaffolding | Linux x64 ELF, Windows x64 PE32+ console executable, constrained `uefi-x64` PE32+, raw `AUKR` kernel, checked AUEX `.exec`, or narrow AUN1; no external compiler or linker for these outputs |
 | `hy` (C++ SDK) | Build/run/test/check/fmt/new/package/LSP workflows; UEFI console proof | Interpreter, host C backend, or constrained `uefi-x64` PE32+ output |
 | `hyrun` | Direct interpreted execution | Shares the SDK semantic pipeline |
 | `hyc build` | Compatibility build command | Host C backend, executables or static libraries |
 
 See the [language and tool reference](https://aurora-softwares.github.io/Hylang-Docs/) and [native compiler guide](samples/self_hosting/README.md) for the supported features of each route.
+For runtime performance measurements and planned work, see the [optimisation notes](optimisations.md).
+The [runtime comparison harness](benchmarks/runtime/README.md) times equivalent Hydrogen, C, C++, and Rust programs.
+The [security review](security.md) records confirmed issues and hardening work.
+
+The [Hydrogen Development project](https://github.com/orgs/Aurora-softwares/projects/4)
+tracks the 0.2.0 development target. Fixed-width bitwise operators, integral
+compound assignment, increment/decrement, conditional expressions, null
+coalescing, null-conditional access, `foreach` over arrays and strings, interpolated strings,
+switch statements and expressions, and range-based slicing are implemented across the
+SDK, Linux native, and Windows native paths under Wine. The top ten language
+features are tracked on that project. The next 0.2.0 language target is
+[full-width unsigned hexadecimal literals](https://github.com/Aurora-softwares/Hylang-Compiler/issues/166);
+real Windows-host validation remains an open release gate.
+Native text assembly now has a [byte-buffer builder sample](samples/native_text_builder/README.md)
+for Linux and Windows; its `FromBytes` finishing intrinsic is native only.
+The native collector now groups adjacent dead-span releases on Linux; the
+[GC profiling notes](optimisations.md) retain its before/after measurements.
+The 0.8.0 optimisation work has completed
+[proven packed-array bounds elimination](https://github.com/Aurora-softwares/Hylang-Compiler/issues/167)
+for guarded native loops. Broader local register and loop code generation in
+[#127](https://github.com/Aurora-softwares/Hylang-Compiler/issues/127) is the
+next performance target; real Windows-host validation remains a release gate.
+
+## Build output
+
+`hy build`, `hyc build`, and the self-hosted `hy build` update one terminal line per action. The braille spinner and bar show overall build progress, with a separate percentage for the active action. The bar uses up to 60 characters and shrinks in narrow terminals; long interactive progress text ends in `...` instead of wrapping. Terminal width is checked on each redraw, so resizing takes effect during a build. The line becomes its `100%` result when that action completes. Overall progress counts completed milestones, while lexing and parsing use source and token positions for their action percentages. Stages without measurable internal work stay at 0% until completion. The SDK spinner animates while a terminal build is busy. Redirected output uses full plain text without terminal escape codes.
+
+Use `--hide-progress`, `--hide-spinner`, or `--hide-log` to remove individual parts. For example, `hy build MyApp/MyApp.hyproj --hide-progress` keeps the spinner and messages. Using all three flags leaves the normal output path or `wrote` result, plus any errors.
+
+## Manage a released Hydrogen installation
+
+The **packaged native compiler** for Linux x86-64 includes a shell launcher and
+safe lifecycle commands. These are not commands of the C++ development SDK
+binary (`./build/hy`) or an unbundled `hydrogen-stage1` binary.
+
+```bash
+hy --version
+hy update-check
+hy update
+hy update --force
+hy uninstall
+hy uninstall --force
+hy remove --force # alias for uninstall
+```
+
+The launcher detects APT/dpkg, DNF/YUM/RPM, Pacman and Homebrew ownership and
+delegates package-management operations. Manual installations use an included
+file manifest and GitHub Releases checksums/digests; they refuse to touch any
+unmanaged files. `--force` skips prompts, but never disables safety checks.
+
+This is available in newly packaged releases, not in old standalone compiler
+binaries. See [release installation details](release/README.md). The isolated
+lifecycle checks run with `ctest -R hy_release_lifecycle --output-on-failure`.
 
 ## Package a self-hosted release
 
@@ -39,7 +96,7 @@ cmake --build build --target hydrogen_package_release
 
 ## Build the tools
 
-Run these commands from this repository's root. The SDK requires CMake 3.20 or newer and a C++20 compiler. Its executable builds also require a host C compiler; static-library builds require an archiver. The direct native compiler targets Linux x86-64.
+Run these commands from this repository's root. The SDK requires CMake 3.20 or newer and a C++20 compiler. Its executable builds also require a host C compiler; static-library builds require an archiver. The direct native compiler targets Linux x86-64 and Windows x64.
 
 ```bash
 cd /path/to/Hylang-Compiler
@@ -270,6 +327,20 @@ UEFI application, `type = "kernel"` for a raw freestanding kernel image,
 aggregate project. The older `type = "australis"` spelling remains accepted
 for existing AUEX projects.
 
+The AUEX backend supports scalar and string locals, assignment,
+arithmetic including division and remainder, comparisons, short-circuit
+Boolean expressions, `if`/`else`, `while`, `for`, `break`, and `continue`.
+`System.Console.Write` and `WriteLine` accept strings and scalar values, and
+`System.Console.ReadLine()` returns a string. `System.IO.File.Exists(path)`
+and `ReadAllText(path)`, `System.IO.File.WriteAllText(path, text)`, and
+`System.Convert.ToInt32(text)` use the same source API as native programs.
+AUEX text values are currently limited to 255 bytes. `Main` may return a
+computed integer exit code. Australis-specific file, metadata, directory,
+yield, and checked-memory intrinsics remain available for lower-level work.
+The current development AUEX backend also supports application method calls,
+bounded strings and byte arrays, and concurrent child processes. These calls
+remain software-checked inside the kernel interpreter.
+
 An OS project lists component `.hyproj` files in `project_references` and has
 no sources of its own. Each component sets an `output` path relative to the
 build directory, such as `EFI/BOOT/BOOTX64.EFI`. Hydrogen compiles each
@@ -282,20 +353,39 @@ type = "os"
 project_references = ["Boot/Boot.hyproj", "Kernel/Kernel.hyproj"]
 
 # In Boot/Boot.hyproj: type = "efi", output = "EFI/BOOT/BOOTX64.EFI"
-# In Kernel/Kernel.hyproj: type = "kernel", output = "EFI/OS/KERNEL.EFI"
+# In Kernel/Kernel.hyproj: type = "kernel", output = "EFI/OS/KERNEL.BIN"
 ```
 
 ```bash
 ./build/self_hosting/hydrogen-stage1 build OS/OS.hyproj -o build/efi
 ```
 
-The output directory contains separate EFI applications ready for image
-packaging. You can also build an `efi`, `kernel`, or `exec` project directly
+The output directory contains a PE32+ EFI bootloader and a separate raw `AUKR`
+kernel image ready for packaging. You can also build an `efi`, `kernel`, or `exec` project directly
 with `-o` pointing to its output file. Scaffold them with
 `hydrogen-stage1 new efi <name>`, `hydrogen-stage1 new kernel <name>`,
 `hydrogen-stage1 new exec <name>`, or `hydrogen-stage1 new os <name>`.
 These project types are currently available in
 `hydrogen-stage1`.
+
+For Windows x64, use `--target windows-x64` on a source file or a format-2
+`type = "windows"` project. Both routes produce PE32+ console programs with
+the same direct language subset and managed runtime APIs as Linux:
+
+```bash
+./build/self_hosting/hydrogen-stage1 compile tests/phase6/native_hello.hy --target windows-x64 -o build/hello.exe
+./build/self_hosting/hydrogen-stage1 build tests/phase6/WindowsFullRuntime.hyproj -o build/WindowsFullRuntime.exe
+```
+
+The [native compiler guide](samples/self_hosting/README.md#windows-x64-target)
+has the Windows runtime and verification details.
+
+Australis OS additionally loads bounded AUN1 machine-code children in hardware
+ring 3. Hydrogen's `exec` backend emits AUEX; a separate `native` project emits
+AUN1 version 2 for a single static `Main(string[] args)` with ASCII literal
+`System.Australis.Terminal.Write` calls and a literal integer return status.
+The native target has no general-purpose runtime yet. See the
+[AUN1 v2 contract](https://github.com/Aurora-Softwares/Australis-OS/blob/main/docs/aun1-v2.md).
 
 SDK projects additionally support workspaces, test projects, local package dependencies, caching, and static-library artifacts. Useful SDK commands:
 
@@ -311,7 +401,54 @@ SDK projects additionally support workspaces, test projects, local package depen
 
 The direct native route supports classes, inheritance, interfaces, virtual dispatch, structs, overloads, static and instance fields/methods, constructors, recursion, enums, signed and unsigned integer widths, `bool`, strings, arrays, `var`, `if`/`else`, `while`, `for`, `break`, `continue`, and returns. `int` is signed 32-bit. Strings have byte-based length/indexing; indexing returns a one-byte string. Native literals accept ASCII and common escaped control characters; file contents and arguments preserve raw bytes.
 
-Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings. File reads require seekable files.
+The SDK and native compiler support fixed-width integer `&`, `|`, `^`, `~`,
+`<<`, and `>>`. Shift counts are masked by the left operand's width minus one;
+signed right shifts preserve the sign bit, while unsigned right shifts fill
+with zero.
+Integral lvalues also support `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`,
+`<<=`, and `>>=`. The assignment returns the stored value and evaluates an
+indexed or field target once. Compound shifts use the target's integer width.
+Prefix and postfix `++` and `--` work on integral lvalues. Prefix returns the
+new value; postfix returns the old value. Both evaluate the target once.
+The conditional `condition ? whenTrue : whenFalse` expression requires a bool
+condition and compatible branch types; only the selected branch runs.
+Null coalescing with `left ?? fallback` accepts references, evaluates the left
+once, and evaluates the fallback only when the left is null.
+Null-conditional `receiver?.member`, `receiver?.Method(args)`, and
+`receiver?[index]` evaluate the receiver once. A null receiver produces null
+without evaluating call arguments or an index. The result must be a reference;
+primitive-valued access and assignment through a null-conditional access are
+rejected until nullable value types are supported.
+`foreach (T value in collection)` captures the collection once and reads each
+element at its current index. `break` and `continue` use ordinary loop rules.
+Arrays and strings work in both compilers; strings use the language's current
+byte-index semantics. The SDK also iterates `List<T>` through `Count()` and
+`Get(index)`. Its count is checked each iteration, so additions can extend the
+loop and `Set` changes are observed. No enumerator is created or disposed.
+Interpolated strings use `$"literal {expression}"`. Literal text accepts the
+ordinary `\\`, `\"`, `\n`, `\r`, and `\t` escapes; `{{` and `}}` write braces.
+Embedded expressions run once in left-to-right order and use the existing
+string-concatenation conversion for strings, numbers, and booleans. Formatting
+suffixes such as `{value:x}` are rejected. Literal UTF-8 bytes are preserved
+without normalization, and string length and indexing remain byte based.
+`switch (value) { case constant: statements; default: statements; }` selects one
+branch without fallthrough. A branch can use `break` to leave the switch.
+`switch (value) { case constant => expression, default => expression }` yields a
+value; a bool switch may omit `default` when it covers both `true` and `false`.
+Cases accept constant numbers, strings, and booleans, and duplicate cases and
+branches after `default` are errors. The switch value is evaluated once.
+`continue` cannot target an outer loop across a switch; put the continuation
+in a loop nested inside the selected branch.
+`collection[start..end]` creates a new array or string containing positions
+from `start` up to but excluding `end`. Both bounds are required and must be
+`int`; the source and bounds are evaluated once, left to right. Bounds outside
+`0..Length` or a reversed range fail at runtime. Arrays copy their element
+slots once, so changing the source array does not change the slice; referenced
+objects remain shared. String positions count UTF-8 bytes, matching existing
+string length and indexing. Slicing may therefore select a partial UTF-8
+sequence. Null-conditional slicing is not supported.
+
+Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings or Windows `VirtualAlloc`/`VirtualFree`. Windows file paths are converted from Hydrogen UTF-8 strings to Win32 UTF-16. File reads require seekable files.
 
 The SDK additionally supports generics, string exceptions, `List<T>`, checked unsafe/manual-memory operations, `Buffer`, and `BinaryPrimitives`. These additional facilities are not implemented by the native compiler. The SDK interpreter evaluates both sides of `&&` and `||`; generated native and C-backed programs short-circuit. Write explicit conditional guards when sharing code with the interpreter.
 

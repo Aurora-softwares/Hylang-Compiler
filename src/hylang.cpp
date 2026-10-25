@@ -1,6 +1,8 @@
 #include "hylang/hylang.hpp"
 
 #include <algorithm>
+#include <bit>
+#include <cerrno>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
@@ -25,6 +27,18 @@
 #include <variant>
 #include <vector>
 
+#ifdef _WIN32
+#include <io.h>
+#include <process.h>
+#include <windows.h>
+#else
+#include <spawn.h>
+#include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+extern char** environ;
+#endif
+
 namespace hylang {
 namespace {
 
@@ -32,6 +46,30 @@ using std::string;
 using std::unique_ptr;
 using std::vector;
 namespace fs = std::filesystem;
+
+constexpr std::size_t kMaxCompilerTextBytes = 16 * 1024 * 1024;
+
+enum class TextReadResult { Ok, OpenFailed, TooLarge, IoError };
+
+TextReadResult read_bounded_text_file(const fs::path& path, string& output) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return TextReadResult::OpenFailed;
+    input.seekg(0, std::ios::end);
+    const auto size = input.tellg();
+    if (size < 0) return TextReadResult::IoError;
+    if (size > static_cast<std::streamoff>(kMaxCompilerTextBytes)) return TextReadResult::TooLarge;
+    input.seekg(0, std::ios::beg);
+    if (!input) return TextReadResult::IoError;
+    string text(static_cast<std::size_t>(size), '\0');
+    if (!input.read(text.data(), static_cast<std::streamsize>(text.size()))) return TextReadResult::IoError;
+    char extra;
+    if (input.get(extra) || input.bad()) return TextReadResult::IoError;
+    input.clear();
+    input.close();
+    if (input.fail()) return TextReadResult::IoError;
+    output = std::move(text);
+    return TextReadResult::Ok;
+}
 
 struct DiagnosticBag {
     std::vector<Diagnostic> items;
@@ -106,6 +144,7 @@ enum class TokenKind {
     Identifier,
     Number,
     StringLiteral,
+    InterpolatedString,
     OpenParen,
     CloseParen,
     OpenBrace,
@@ -115,14 +154,35 @@ enum class TokenKind {
     Semicolon,
     Comma,
     Dot,
+    DotDot,
+    Question,
+    QuestionQuestion,
     Plus,
+    PlusPlus,
+    PlusEquals,
     Minus,
+    MinusMinus,
+    MinusEquals,
     Star,
+    StarEquals,
     Slash,
+    SlashEquals,
     Percent,
+    PercentEquals,
     Bang,
     Ampersand,
+    AmpersandEquals,
+    Pipe,
+    PipeEquals,
+    Caret,
+    CaretEquals,
+    Tilde,
+    ShiftLeft,
+    ShiftRight,
+    ShiftLeftEquals,
+    ShiftRightEquals,
     Equals,
+    FatArrow,
     EqualsEquals,
     BangEquals,
     Less,
@@ -165,6 +225,11 @@ enum class TokenKind {
     Else,
     While,
     For,
+    Foreach,
+    Switch,
+    Case,
+    Default,
+    In,
     Break,
     Continue,
     Return,
@@ -180,6 +245,38 @@ enum class TokenKind {
     Colon,
 };
 
+TokenKind compound_binary_operator(TokenKind kind) {
+    switch (kind) {
+        case TokenKind::PlusEquals: return TokenKind::Plus;
+        case TokenKind::MinusEquals: return TokenKind::Minus;
+        case TokenKind::StarEquals: return TokenKind::Star;
+        case TokenKind::SlashEquals: return TokenKind::Slash;
+        case TokenKind::PercentEquals: return TokenKind::Percent;
+        case TokenKind::AmpersandEquals: return TokenKind::Ampersand;
+        case TokenKind::PipeEquals: return TokenKind::Pipe;
+        case TokenKind::CaretEquals: return TokenKind::Caret;
+        case TokenKind::ShiftLeftEquals: return TokenKind::ShiftLeft;
+        case TokenKind::ShiftRightEquals: return TokenKind::ShiftRight;
+        default: return TokenKind::Equals;
+    }
+}
+
+int compound_operator_code(TokenKind kind) {
+    switch (kind) {
+        case TokenKind::Plus: return 1;
+        case TokenKind::Minus: return 2;
+        case TokenKind::Star: return 3;
+        case TokenKind::Slash: return 4;
+        case TokenKind::Percent: return 5;
+        case TokenKind::Ampersand: return 6;
+        case TokenKind::Pipe: return 7;
+        case TokenKind::Caret: return 8;
+        case TokenKind::ShiftLeft: return 9;
+        case TokenKind::ShiftRight: return 10;
+        default: return 0;
+    }
+}
+
 struct Token {
     TokenKind kind = TokenKind::EndOfFile;
     string text;
@@ -191,6 +288,10 @@ class Lexer {
 	public:
 		Lexer(fs::path file, string source, DiagnosticBag& diagnostics)
 			: file_(std::move(file)), source_(std::move(source)), diagnostics_(diagnostics) {}
+
+		void set_progress(std::function<void(std::size_t, std::size_t)> callback) {
+			progress_ = std::move(callback);
+		}
 
 		vector<Token> lex() {
 			vector<Token> tokens;
@@ -214,6 +315,10 @@ class Lexer {
 
 				if (current == '"') {
 					tokens.push_back(lex_string());
+					continue;
+				}
+				if (current == '$' && peek_next() == '"') {
+					tokens.push_back(lex_interpolated_string());
 					continue;
 				}
 
@@ -246,25 +351,37 @@ class Lexer {
 						tokens.push_back(Token{TokenKind::Comma, ",", line, column});
 						break;
 					case '.':
-						tokens.push_back(Token{TokenKind::Dot, ".", line, column});
+						if (match('.')) tokens.push_back(Token{TokenKind::DotDot, "..", line, column});
+						else tokens.push_back(Token{TokenKind::Dot, ".", line, column});
 						break;
 					case ':':
 						tokens.push_back(Token{TokenKind::Colon, ":", line, column});
 						break;
+					case '?':
+						if (match('?')) tokens.push_back(Token{TokenKind::QuestionQuestion, "??", line, column});
+						else tokens.push_back(Token{TokenKind::Question, "?", line, column});
+						break;
 					case '+':
-						tokens.push_back(Token{TokenKind::Plus, "+", line, column});
+						if (match('+')) tokens.push_back(Token{TokenKind::PlusPlus, "++", line, column});
+						else if (match('=')) tokens.push_back(Token{TokenKind::PlusEquals, "+=", line, column});
+						else tokens.push_back(Token{TokenKind::Plus, "+", line, column});
 						break;
 					case '-':
-						tokens.push_back(Token{TokenKind::Minus, "-", line, column});
+						if (match('-')) tokens.push_back(Token{TokenKind::MinusMinus, "--", line, column});
+						else if (match('=')) tokens.push_back(Token{TokenKind::MinusEquals, "-=", line, column});
+						else tokens.push_back(Token{TokenKind::Minus, "-", line, column});
 						break;
 					case '*':
-						tokens.push_back(Token{TokenKind::Star, "*", line, column});
+						if (match('=')) tokens.push_back(Token{TokenKind::StarEquals, "*=", line, column});
+						else tokens.push_back(Token{TokenKind::Star, "*", line, column});
 						break;
 					case '/':
-						tokens.push_back(Token{TokenKind::Slash, "/", line, column});
+						if (match('=')) tokens.push_back(Token{TokenKind::SlashEquals, "/=", line, column});
+						else tokens.push_back(Token{TokenKind::Slash, "/", line, column});
 						break;
 					case '%':
-						tokens.push_back(Token{TokenKind::Percent, "%", line, column});
+						if (match('=')) tokens.push_back(Token{TokenKind::PercentEquals, "%=", line, column});
+						else tokens.push_back(Token{TokenKind::Percent, "%", line, column});
 						break;
 					case '!':
 						if (match('=')) {
@@ -276,6 +393,8 @@ class Lexer {
 					case '=':
 						if (match('=')) {
 							tokens.push_back(Token{TokenKind::EqualsEquals, "==", line, column});
+						} else if (match('>')) {
+							tokens.push_back(Token{TokenKind::FatArrow, "=>", line, column});
 						} else {
 							tokens.push_back(Token{TokenKind::Equals, "=", line, column});
 						}
@@ -297,6 +416,8 @@ class Lexer {
 					case '&':
 						if (match('&')) {
 							tokens.push_back(Token{TokenKind::AmpAmp, "&&", line, column});
+						} else if (match('=')) {
+							tokens.push_back(Token{TokenKind::AmpersandEquals, "&=", line, column});
 						} else {
 							tokens.push_back(Token{TokenKind::Ampersand, "&", line, column});
 						}
@@ -304,9 +425,18 @@ class Lexer {
 					case '|':
 						if (match('|')) {
 							tokens.push_back(Token{TokenKind::PipePipe, "||", line, column});
+						} else if (match('=')) {
+							tokens.push_back(Token{TokenKind::PipeEquals, "|=", line, column});
 						} else {
-							diagnostics_.add(file_, line, column, "Unexpected '|'. Did you mean '||'?");
+							tokens.push_back(Token{TokenKind::Pipe, "|", line, column});
 						}
+						break;
+					case '^':
+						if (match('=')) tokens.push_back(Token{TokenKind::CaretEquals, "^=", line, column});
+						else tokens.push_back(Token{TokenKind::Caret, "^", line, column});
+						break;
+					case '~':
+						tokens.push_back(Token{TokenKind::Tilde, "~", line, column});
 						break;
 					default:
 						diagnostics_.add(file_, line, column, "Unexpected character '" + string(1, current) + "'");
@@ -314,6 +444,7 @@ class Lexer {
 				}
 			}
 
+			if (progress_) progress_(source_.size(), source_.size());
 			return tokens;
 		}
 
@@ -339,6 +470,7 @@ class Lexer {
 				return '\0';
 			}
 			const char ch = source_[index_++];
+			if (progress_ && index_ % 1024 == 0) progress_(index_, source_.size());
 			if (ch == '\n') {
 				++line_;
 				column_ = 1;
@@ -421,6 +553,11 @@ class Lexer {
 				{"else", TokenKind::Else},
 				{"while", TokenKind::While},
 				{"for", TokenKind::For},
+				{"foreach", TokenKind::Foreach},
+				{"switch", TokenKind::Switch},
+				{"case", TokenKind::Case},
+				{"default", TokenKind::Default},
+				{"in", TokenKind::In},
 				{"break", TokenKind::Break},
 				{"continue", TokenKind::Continue},
 				{"return", TokenKind::Return},
@@ -508,9 +645,52 @@ class Lexer {
 			return Token{TokenKind::StringLiteral, value, line, column};
 		}
 
+		Token lex_interpolated_string() {
+			const int line = line_;
+			const int column = column_;
+			advance(); // $
+			advance(); // opening quote
+			string raw;
+			int hole_depth = 0;
+			while (!is_at_end()) {
+				const char ch = advance();
+				if (hole_depth == 0) {
+					if (ch == '"') return Token{TokenKind::InterpolatedString, raw, line, column};
+					if (ch == '\\' && !is_at_end()) {
+						raw.push_back(ch);
+						raw.push_back(advance());
+						continue;
+					}
+					if ((ch == '{' || ch == '}') && !is_at_end() && peek() == ch) {
+						raw.push_back(ch);
+						raw.push_back(advance());
+						continue;
+					}
+					if (ch == '{') hole_depth = 1;
+				} else {
+					if (ch == '"') {
+						raw.push_back(ch);
+						while (!is_at_end()) {
+							const char quoted = advance();
+							raw.push_back(quoted);
+							if (quoted == '\\' && !is_at_end()) raw.push_back(advance());
+							else if (quoted == '"') break;
+						}
+						continue;
+					}
+					if (ch == '{') ++hole_depth;
+					else if (ch == '}') --hole_depth;
+				}
+				raw.push_back(ch);
+			}
+			diagnostics_.add(file_, line, column, "Unterminated interpolated string literal");
+			return Token{TokenKind::InterpolatedString, raw, line, column};
+		}
+
 		fs::path file_;
 		string source_;
 		DiagnosticBag& diagnostics_;
+		std::function<void(std::size_t, std::size_t)> progress_;
 		std::size_t index_ = 0;
 		int line_ = 1;
 		int column_ = 1;
@@ -564,6 +744,14 @@ struct BaseExpressionSyntax final : ExpressionSyntax {};
 struct AssignmentExpressionSyntax final : ExpressionSyntax {
     unique_ptr<ExpressionSyntax> target;
     unique_ptr<ExpressionSyntax> expression;
+    TokenKind op = TokenKind::Equals;
+    bool returns_old = false;
+};
+
+struct ConditionalExpressionSyntax final : ExpressionSyntax {
+    unique_ptr<ExpressionSyntax> condition;
+    unique_ptr<ExpressionSyntax> when_true;
+    unique_ptr<ExpressionSyntax> when_false;
 };
 
 struct UnaryExpressionSyntax final : ExpressionSyntax {
@@ -585,11 +773,19 @@ struct BinaryExpressionSyntax final : ExpressionSyntax {
 struct MemberAccessExpressionSyntax final : ExpressionSyntax {
     unique_ptr<ExpressionSyntax> target;
     string member_name;
+    bool null_conditional = false;
 };
 
 struct ElementAccessExpressionSyntax final : ExpressionSyntax {
     unique_ptr<ExpressionSyntax> target;
     unique_ptr<ExpressionSyntax> index;
+    bool null_conditional = false;
+};
+
+struct SliceExpressionSyntax final : ExpressionSyntax {
+    unique_ptr<ExpressionSyntax> target;
+    unique_ptr<ExpressionSyntax> start;
+    unique_ptr<ExpressionSyntax> end;
 };
 
 struct InvocationExpressionSyntax final : ExpressionSyntax {
@@ -758,6 +954,10 @@ public:
     Parser(fs::path file, vector<Token> tokens, DiagnosticBag& diagnostics)
         : file_(std::move(file)), tokens_(std::move(tokens)), diagnostics_(diagnostics) {}
 
+    void set_progress(std::function<void(std::size_t, std::size_t)> callback) {
+        progress_ = std::move(callback);
+    }
+
     CompilationUnitSyntax parse() {
         CompilationUnitSyntax unit;
         unit.file = file_;
@@ -791,6 +991,7 @@ public:
             }
         }
 
+        if (progress_) progress_(tokens_.size(), tokens_.size());
         return unit;
     }
 
@@ -811,6 +1012,7 @@ private:
     bool match(TokenKind kind) {
         if (check(kind)) {
             ++index_;
+            report_progress();
             return true;
         }
         return false;
@@ -819,8 +1021,13 @@ private:
     const Token& advance() {
         if (!check(TokenKind::EndOfFile)) {
             ++index_;
+            report_progress();
         }
         return previous();
+    }
+
+    void report_progress() {
+        if (progress_ && index_ % 256 == 0) progress_(index_, tokens_.size());
     }
 
     const Token& previous() const {
@@ -1209,9 +1416,11 @@ private:
         auto block = std::make_unique<BlockStatementSyntax>();
         block->line = brace.line;
         block->column = brace.column;
+        block_stack_.push_back(block.get());
         while (!check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile)) {
             block->statements.push_back(parse_statement());
         }
+        block_stack_.pop_back();
         consume(TokenKind::CloseBrace, "Expected '}' after block");
         return block;
     }
@@ -1282,6 +1491,12 @@ private:
         if (match(TokenKind::For)) {
             return parse_for_statement(previous());
         }
+        if (match(TokenKind::Foreach)) {
+            return parse_foreach_statement(previous());
+        }
+        if (match(TokenKind::Switch)) {
+            return parse_switch_statement(previous());
+        }
         if (match(TokenKind::Break)) {
             return parse_break_statement(previous());
         }
@@ -1328,7 +1543,9 @@ private:
         statement->column = token.column;
         statement->condition = parse_expression();
         consume(TokenKind::CloseParen, "Expected ')' after while condition");
+        ++loop_depth_;
         statement->body = parse_statement();
+        --loop_depth_;
         return statement;
     }
 
@@ -1353,8 +1570,249 @@ private:
             statement->update = parse_expression();
         }
         consume(TokenKind::CloseParen, "Expected ')' after for clauses");
+        ++loop_depth_;
         statement->body = parse_statement();
+        --loop_depth_;
         return statement;
+    }
+
+    unique_ptr<StatementSyntax> parse_foreach_statement(const Token& token) {
+        consume(TokenKind::OpenParen, "Expected '(' after 'foreach'");
+        TypeSyntax element_type = parse_type_syntax();
+        const Token variable = consume(TokenKind::Identifier, "Expected foreach variable name");
+        consume(TokenKind::In, "Expected 'in' after foreach variable");
+        auto collection = parse_expression();
+        consume(TokenKind::CloseParen, "Expected ')' after foreach collection");
+        ++loop_depth_;
+        auto body = parse_statement();
+        --loop_depth_;
+
+        const string suffix = std::to_string(token.line) + "_" + std::to_string(token.column);
+        const string collection_name = "__hy_foreach$collection_" + suffix;
+        const string index_name = "__hy_foreach$index_" + suffix;
+        auto name = [&](const string& value) -> unique_ptr<ExpressionSyntax> {
+            auto result = std::make_unique<NameExpressionSyntax>();
+            result->line = token.line;
+            result->column = token.column;
+            result->name = value;
+            return result;
+        };
+        auto number = [&](int64_t value) -> unique_ptr<ExpressionSyntax> {
+            auto result = std::make_unique<LiteralExpressionSyntax>();
+            result->line = token.line;
+            result->column = token.column;
+            result->value = value;
+            return result;
+        };
+
+        auto collection_variable = std::make_unique<VariableDeclarationStatementSyntax>();
+        collection_variable->line = token.line;
+        collection_variable->column = token.column;
+        collection_variable->type.is_var = true;
+        collection_variable->type.name_parts.push_back("var");
+        collection_variable->name = collection_name;
+        collection_variable->initializer = std::move(collection);
+
+        auto index_variable = std::make_unique<VariableDeclarationStatementSyntax>();
+        index_variable->line = token.line;
+        index_variable->column = token.column;
+        index_variable->type.name_parts.push_back("int");
+        index_variable->name = index_name;
+        index_variable->initializer = number(0);
+
+        auto length = std::make_unique<MemberAccessExpressionSyntax>();
+        length->line = token.line;
+        length->column = token.column;
+        length->target = name(collection_name);
+        length->member_name = "Length";
+        auto condition = std::make_unique<BinaryExpressionSyntax>();
+        condition->line = token.line;
+        condition->column = token.column;
+        condition->left = name(index_name);
+        condition->op = TokenKind::Less;
+        condition->right = std::move(length);
+
+        auto update = std::make_unique<AssignmentExpressionSyntax>();
+        update->line = token.line;
+        update->column = token.column;
+        update->target = name(index_name);
+        update->op = TokenKind::PlusEquals;
+        update->expression = number(1);
+
+        auto element = std::make_unique<ElementAccessExpressionSyntax>();
+        element->line = token.line;
+        element->column = token.column;
+        element->target = name(collection_name);
+        element->index = name(index_name);
+        auto iteration_variable = std::make_unique<VariableDeclarationStatementSyntax>();
+        iteration_variable->line = variable.line;
+        iteration_variable->column = variable.column;
+        iteration_variable->type = std::move(element_type);
+        iteration_variable->name = variable.text;
+        iteration_variable->initializer = std::move(element);
+
+        auto loop_body = std::make_unique<BlockStatementSyntax>();
+        loop_body->line = token.line;
+        loop_body->column = token.column;
+        loop_body->statements.push_back(std::move(iteration_variable));
+        loop_body->statements.push_back(std::move(body));
+        auto loop = std::make_unique<ForStatementSyntax>();
+        loop->line = token.line;
+        loop->column = token.column;
+        loop->initializer = std::move(index_variable);
+        loop->condition = std::move(condition);
+        loop->update = std::move(update);
+        loop->body = std::move(loop_body);
+
+        auto block = std::make_unique<BlockStatementSyntax>();
+        block->line = token.line;
+        block->column = token.column;
+        block->statements.push_back(std::move(collection_variable));
+        block->statements.push_back(std::move(loop));
+        return block;
+    }
+
+    struct SwitchCaseLabel {
+        unique_ptr<ExpressionSyntax> value;
+        string key;
+        string category;
+    };
+
+    SwitchCaseLabel parse_switch_case_label() {
+        const bool negative = match(TokenKind::Minus);
+        const Token token = current();
+        if (match(TokenKind::Number)) {
+            int64_t number = 0;
+            if (!try_parse_integer_text(token.text, &number))
+                diagnostics_.add(file_, token.line, token.column, "Invalid switch case integer literal");
+            auto literal = std::make_unique<LiteralExpressionSyntax>();
+            literal->line = token.line;
+            literal->column = token.column;
+            literal->value = number;
+            if (negative) {
+                auto unary = std::make_unique<UnaryExpressionSyntax>();
+                unary->line = token.line;
+                unary->column = token.column;
+                unary->op = TokenKind::Minus;
+                unary->operand = std::move(literal);
+                return {std::move(unary), "n:" + std::to_string(-number), "long"};
+            }
+            return {std::move(literal), "n:" + std::to_string(number), "long"};
+        }
+        if (!negative && (match(TokenKind::StringLiteral) || match(TokenKind::True) || match(TokenKind::False))) {
+            auto literal = std::make_unique<LiteralExpressionSyntax>();
+            literal->line = token.line;
+            literal->column = token.column;
+            if (token.kind == TokenKind::StringLiteral) {
+                literal->value = token.text;
+                return {std::move(literal), "s:" + token.text, "string"};
+            }
+            const bool value = token.kind == TokenKind::True;
+            literal->value = value;
+            return {std::move(literal), value ? "b:true" : "b:false", "bool"};
+        }
+        diagnostics_.add(file_, token.line, token.column, "Switch case must be a constant number, string, or bool");
+        if (!check(TokenKind::EndOfFile) && !check(TokenKind::Colon) && !check(TokenKind::FatArrow)) advance();
+        auto fallback = std::make_unique<LiteralExpressionSyntax>();
+        fallback->value = int64_t{0};
+        return {std::move(fallback), "invalid", "long"};
+    }
+
+    void validate_switch_case(const SwitchCaseLabel& label, std::unordered_set<string>& seen,
+                              string& category, bool default_seen, const Token& at) {
+        if (default_seen)
+            diagnostics_.add(file_, at.line, at.column, "Unreachable switch case after default");
+        if (!seen.insert(label.key).second)
+            diagnostics_.add(file_, at.line, at.column, "Duplicate switch case constant");
+        if (category.empty()) category = label.category;
+        else if (category != label.category)
+            diagnostics_.add(file_, at.line, at.column, "Switch cases must use one constant type");
+    }
+
+    unique_ptr<StatementSyntax> parse_switch_statement(const Token& token) {
+        consume(TokenKind::OpenParen, "Expected '(' after switch");
+        auto scrutinee = parse_expression();
+        consume(TokenKind::CloseParen, "Expected ')' after switch value");
+        consume(TokenKind::OpenBrace, "Expected '{' after switch value");
+        switch_loop_baselines_.push_back(loop_depth_);
+        struct Arm { SwitchCaseLabel label; unique_ptr<StatementSyntax> body; };
+        vector<Arm> arms;
+        unique_ptr<StatementSyntax> default_body;
+        std::unordered_set<string> seen;
+        string category;
+        bool default_seen = false;
+        while (!check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile)) {
+            if (match(TokenKind::Case)) {
+                const Token at = previous();
+                auto label = parse_switch_case_label();
+                validate_switch_case(label, seen, category, default_seen, at);
+                consume(TokenKind::Colon, "Expected ':' after switch case");
+                auto body = std::make_unique<BlockStatementSyntax>();
+                while (!check(TokenKind::Case) && !check(TokenKind::Default) &&
+                       !check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile))
+                    body->statements.push_back(parse_statement());
+                if (body->statements.empty() ||
+                    (!dynamic_cast<BreakStatementSyntax*>(body->statements.back().get()) &&
+                     !dynamic_cast<ReturnStatementSyntax*>(body->statements.back().get()) &&
+                     !dynamic_cast<ThrowStatementSyntax*>(body->statements.back().get())))
+                    body->statements.push_back(std::make_unique<BreakStatementSyntax>());
+                arms.push_back(Arm{std::move(label), std::move(body)});
+                continue;
+            }
+            if (match(TokenKind::Default)) {
+                const Token at = previous();
+                if (default_seen) diagnostics_.add(file_, at.line, at.column, "Duplicate switch default");
+                default_seen = true;
+                consume(TokenKind::Colon, "Expected ':' after switch default");
+                auto body = std::make_unique<BlockStatementSyntax>();
+                while (!check(TokenKind::Case) && !check(TokenKind::Default) &&
+                       !check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile))
+                    body->statements.push_back(parse_statement());
+                if (body->statements.empty() ||
+                    (!dynamic_cast<BreakStatementSyntax*>(body->statements.back().get()) &&
+                     !dynamic_cast<ReturnStatementSyntax*>(body->statements.back().get()) &&
+                     !dynamic_cast<ThrowStatementSyntax*>(body->statements.back().get())))
+                    body->statements.push_back(std::make_unique<BreakStatementSyntax>());
+                default_body = std::move(body);
+                continue;
+            }
+            diagnostics_.add(file_, current().line, current().column, "Expected case or default in switch");
+            advance();
+        }
+        consume(TokenKind::CloseBrace, "Expected '}' after switch");
+        switch_loop_baselines_.pop_back();
+        const string temp_name = "__hy_switch$value_" + std::to_string(token.line) + "_" + std::to_string(token.column);
+        auto name = [&]() -> unique_ptr<ExpressionSyntax> {
+            auto value = std::make_unique<NameExpressionSyntax>(); value->name = temp_name;
+            value->line = token.line; value->column = token.column; return value;
+        };
+        unique_ptr<StatementSyntax> chain = std::move(default_body);
+        for (auto it = arms.rbegin(); it != arms.rend(); ++it) {
+            auto test = std::make_unique<BinaryExpressionSyntax>();
+            test->line = token.line; test->column = token.column;
+            test->left = name(); test->op = TokenKind::EqualsEquals; test->right = std::move(it->label.value);
+            auto branch = std::make_unique<IfStatementSyntax>();
+            branch->line = token.line; branch->column = token.column;
+            branch->condition = std::move(test);
+            branch->then_statement = std::move(it->body);
+            branch->else_statement = std::move(chain);
+            chain = std::move(branch);
+        }
+        auto loop_body = std::make_unique<BlockStatementSyntax>();
+        if (chain) loop_body->statements.push_back(std::move(chain));
+        if (!default_seen) loop_body->statements.push_back(std::make_unique<BreakStatementSyntax>());
+        auto loop = std::make_unique<WhileStatementSyntax>();
+        loop->line = token.line; loop->column = token.column;
+        auto always = std::make_unique<LiteralExpressionSyntax>(); always->value = true;
+        loop->condition = std::move(always); loop->body = std::move(loop_body);
+        auto temp = std::make_unique<VariableDeclarationStatementSyntax>();
+        temp->line = token.line; temp->column = token.column;
+        temp->type.is_var = true; temp->type.name_parts.push_back("var");
+        temp->name = temp_name; temp->initializer = std::move(scrutinee);
+        auto result = std::make_unique<BlockStatementSyntax>();
+        result->statements.push_back(std::move(temp));
+        result->statements.push_back(std::move(loop));
+        return result;
     }
 
     unique_ptr<StatementSyntax> parse_break_statement(const Token& token) {
@@ -1366,6 +1824,8 @@ private:
     }
 
     unique_ptr<StatementSyntax> parse_continue_statement(const Token& token) {
+        if (!switch_loop_baselines_.empty() && loop_depth_ <= switch_loop_baselines_.back())
+            diagnostics_.add(file_, token.line, token.column, "continue cannot target an outer loop across switch");
         auto statement = std::make_unique<ContinueStatementSyntax>();
         statement->line = token.line;
         statement->column = token.column;
@@ -1465,17 +1925,64 @@ private:
     }
 
     unique_ptr<ExpressionSyntax> parse_assignment_expression() {
-        auto left = parse_logical_or_expression();
-        if (match(TokenKind::Equals)) {
+        auto left = parse_conditional_expression();
+        if (shift_assignment_ahead(TokenKind::Less) || shift_assignment_ahead(TokenKind::Greater)) {
+            const Token first = advance();
+            advance();
+            auto assignment = std::make_unique<AssignmentExpressionSyntax>();
+            assignment->line = first.line;
+            assignment->column = first.column;
+            assignment->target = std::move(left);
+            assignment->op = first.kind == TokenKind::Less ? TokenKind::ShiftLeftEquals : TokenKind::ShiftRightEquals;
+            assignment->expression = parse_assignment_expression();
+            return assignment;
+        }
+        if (match(TokenKind::Equals) || match(TokenKind::PlusEquals) || match(TokenKind::MinusEquals) ||
+            match(TokenKind::StarEquals) || match(TokenKind::SlashEquals) || match(TokenKind::PercentEquals) ||
+            match(TokenKind::AmpersandEquals) || match(TokenKind::PipeEquals) || match(TokenKind::CaretEquals)) {
             const Token token = previous();
             auto assignment = std::make_unique<AssignmentExpressionSyntax>();
             assignment->line = token.line;
             assignment->column = token.column;
             assignment->target = std::move(left);
+            assignment->op = token.kind;
             assignment->expression = parse_assignment_expression();
             return assignment;
         }
         return left;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_conditional_expression() {
+        auto condition = parse_coalescing_expression();
+        if (!match(TokenKind::Question)) return condition;
+        const Token question = previous();
+        auto result = std::make_unique<ConditionalExpressionSyntax>();
+        result->line = question.line;
+        result->column = question.column;
+        result->condition = std::move(condition);
+        result->when_true = parse_expression();
+        consume(TokenKind::Colon, "Expected ':' in conditional expression");
+        result->when_false = parse_conditional_expression();
+        return result;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_coalescing_expression() {
+        auto left = parse_logical_or_expression();
+        if (!match(TokenKind::QuestionQuestion)) return left;
+        const Token token = previous();
+        auto binary = std::make_unique<BinaryExpressionSyntax>();
+        binary->line = token.line;
+        binary->column = token.column;
+        binary->left = std::move(left);
+        binary->op = token.kind;
+        binary->right = parse_coalescing_expression();
+        return binary;
+    }
+
+    bool shift_assignment_ahead(TokenKind bracket) const {
+        const TokenKind second = bracket == TokenKind::Less ? TokenKind::LessEquals : TokenKind::GreaterEquals;
+        return check(bracket) && peek(1).kind == second && current().line == peek(1).line &&
+               peek(1).column == current().column + 1;
     }
 
     unique_ptr<ExpressionSyntax> parse_logical_or_expression() {
@@ -1494,8 +2001,53 @@ private:
     }
 
     unique_ptr<ExpressionSyntax> parse_logical_and_expression() {
-        auto expression = parse_equality_expression();
+        auto expression = parse_bitwise_or_expression();
         while (match(TokenKind::AmpAmp)) {
+            const Token token = previous();
+            auto binary = std::make_unique<BinaryExpressionSyntax>();
+            binary->line = token.line;
+            binary->column = token.column;
+            binary->left = std::move(expression);
+            binary->op = token.kind;
+            binary->right = parse_bitwise_or_expression();
+            expression = std::move(binary);
+        }
+        return expression;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_bitwise_or_expression() {
+        auto expression = parse_bitwise_xor_expression();
+        while (match(TokenKind::Pipe)) {
+            const Token token = previous();
+            auto binary = std::make_unique<BinaryExpressionSyntax>();
+            binary->line = token.line;
+            binary->column = token.column;
+            binary->left = std::move(expression);
+            binary->op = token.kind;
+            binary->right = parse_bitwise_xor_expression();
+            expression = std::move(binary);
+        }
+        return expression;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_bitwise_xor_expression() {
+        auto expression = parse_bitwise_and_expression();
+        while (match(TokenKind::Caret)) {
+            const Token token = previous();
+            auto binary = std::make_unique<BinaryExpressionSyntax>();
+            binary->line = token.line;
+            binary->column = token.column;
+            binary->left = std::move(expression);
+            binary->op = token.kind;
+            binary->right = parse_bitwise_and_expression();
+            expression = std::move(binary);
+        }
+        return expression;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_bitwise_and_expression() {
+        auto expression = parse_equality_expression();
+        while (match(TokenKind::Ampersand)) {
             const Token token = previous();
             auto binary = std::make_unique<BinaryExpressionSyntax>();
             binary->line = token.line;
@@ -1524,15 +2076,36 @@ private:
     }
 
     unique_ptr<ExpressionSyntax> parse_relational_expression() {
-        auto expression = parse_additive_expression();
-        while (match(TokenKind::Less) || match(TokenKind::LessEquals) ||
-               match(TokenKind::Greater) || match(TokenKind::GreaterEquals)) {
+        auto expression = parse_shift_expression();
+        while (!shift_assignment_ahead(TokenKind::Less) && !shift_assignment_ahead(TokenKind::Greater) &&
+               (match(TokenKind::Less) || match(TokenKind::LessEquals) ||
+               match(TokenKind::Greater) || match(TokenKind::GreaterEquals))) {
             const Token token = previous();
             auto binary = std::make_unique<BinaryExpressionSyntax>();
             binary->line = token.line;
             binary->column = token.column;
             binary->left = std::move(expression);
             binary->op = token.kind;
+            binary->right = parse_shift_expression();
+            expression = std::move(binary);
+        }
+        return expression;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_shift_expression() {
+        auto expression = parse_additive_expression();
+        while (!shift_assignment_ahead(TokenKind::Less) && !shift_assignment_ahead(TokenKind::Greater) &&
+               ((check(TokenKind::Less) && peek(1).kind == TokenKind::Less &&
+                peek(1).line == current().line && peek(1).column == current().column + 1) ||
+               (check(TokenKind::Greater) && peek(1).kind == TokenKind::Greater &&
+                peek(1).line == current().line && peek(1).column == current().column + 1))) {
+            const Token first = advance();
+            advance();
+            auto binary = std::make_unique<BinaryExpressionSyntax>();
+            binary->line = first.line;
+            binary->column = first.column;
+            binary->left = std::move(expression);
+            binary->op = first.kind == TokenKind::Less ? TokenKind::ShiftLeft : TokenKind::ShiftRight;
             binary->right = parse_additive_expression();
             expression = std::move(binary);
         }
@@ -1570,6 +2143,10 @@ private:
     }
 
     unique_ptr<ExpressionSyntax> parse_unary_expression() {
+        if (match(TokenKind::PlusPlus) || match(TokenKind::MinusMinus)) {
+            const Token token = previous();
+            return make_update_expression(parse_unary_expression(), token, false);
+        }
         if (looks_like_type_cast()) {
             const Token open = consume(TokenKind::OpenParen, "Expected '(' to start cast");
             auto cast = std::make_unique<CastExpressionSyntax>();
@@ -1580,7 +2157,7 @@ private:
             cast->expression = parse_unary_expression();
             return cast;
         }
-        if (match(TokenKind::Bang) || match(TokenKind::Minus) || match(TokenKind::Plus) ||
+        if (match(TokenKind::Bang) || match(TokenKind::Tilde) || match(TokenKind::Minus) || match(TokenKind::Plus) ||
             match(TokenKind::Ampersand) || match(TokenKind::Star)) {
             const Token token = previous();
             auto unary = std::make_unique<UnaryExpressionSyntax>();
@@ -1596,13 +2173,16 @@ private:
     unique_ptr<ExpressionSyntax> parse_postfix_expression() {
         auto expression = parse_primary_expression();
         while (true) {
-            if (match(TokenKind::Dot)) {
+            if (check(TokenKind::Dot) || (check(TokenKind::Question) && peek(1).kind == TokenKind::Dot)) {
+                const bool conditional = match(TokenKind::Question);
+                consume(TokenKind::Dot, "Expected '.' after '?'");
                 const Token member = consume(TokenKind::Identifier, "Expected member name after '.'");
                 auto access = std::make_unique<MemberAccessExpressionSyntax>();
                 access->line = member.line;
                 access->column = member.column;
                 access->target = std::move(expression);
                 access->member_name = member.text;
+                access->null_conditional = conditional;
                 expression = std::move(access);
                 continue;
             }
@@ -1622,14 +2202,38 @@ private:
                 continue;
             }
 
-            if (match(TokenKind::OpenBracket)) {
+            if (check(TokenKind::OpenBracket) || (check(TokenKind::Question) && peek(1).kind == TokenKind::OpenBracket)) {
+                const bool conditional = match(TokenKind::Question);
+                consume(TokenKind::OpenBracket, "Expected '[' after '?'");
+                const Token bracket = previous();
+                auto start = parse_expression();
+                if (match(TokenKind::DotDot)) {
+                    auto slice = std::make_unique<SliceExpressionSyntax>();
+                    slice->line = bracket.line;
+                    slice->column = bracket.column;
+                    slice->target = std::move(expression);
+                    slice->start = std::move(start);
+                    slice->end = parse_expression();
+                    if (conditional)
+                        diagnostics_.add(file_, bracket.line, bracket.column, "Null-conditional slicing is not supported");
+                    consume(TokenKind::CloseBracket, "Expected ']' after slice bounds");
+                    expression = std::move(slice);
+                    continue;
+                }
                 auto access = std::make_unique<ElementAccessExpressionSyntax>();
-                access->line = previous().line;
-                access->column = previous().column;
+                access->line = bracket.line;
+                access->column = bracket.column;
                 access->target = std::move(expression);
-                access->index = parse_expression();
+                access->index = std::move(start);
+                access->null_conditional = conditional;
                 consume(TokenKind::CloseBracket, "Expected ']' after index expression");
                 expression = std::move(access);
+                continue;
+            }
+
+            if (match(TokenKind::PlusPlus) || match(TokenKind::MinusMinus)) {
+                const Token token = previous();
+                expression = make_update_expression(std::move(expression), token, true);
                 continue;
             }
 
@@ -1638,8 +2242,225 @@ private:
         return expression;
     }
 
+    unique_ptr<ExpressionSyntax> make_update_expression(unique_ptr<ExpressionSyntax> target,
+                                                        const Token& token, bool returns_old) {
+        auto one = std::make_unique<LiteralExpressionSyntax>();
+        one->line = token.line;
+        one->column = token.column;
+        one->value = int64_t{1};
+        auto assignment = std::make_unique<AssignmentExpressionSyntax>();
+        assignment->line = token.line;
+        assignment->column = token.column;
+        assignment->target = std::move(target);
+        assignment->expression = std::move(one);
+        assignment->op = token.kind == TokenKind::PlusPlus ? TokenKind::PlusEquals : TokenKind::MinusEquals;
+        assignment->returns_old = returns_old;
+        return assignment;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_interpolated_expression(const Token& token) {
+        auto literal = [&](const string& value) -> unique_ptr<ExpressionSyntax> {
+            auto result = std::make_unique<LiteralExpressionSyntax>();
+            result->line = token.line;
+            result->column = token.column;
+            result->value = value;
+            return result;
+        };
+        auto location = [&](std::size_t offset) {
+            int line = token.line;
+            int column = token.column + 2;
+            for (std::size_t index = 0; index < offset && index < token.text.size(); ++index) {
+                if (token.text[index] == '\n') { ++line; column = 1; }
+                else { ++column; }
+            }
+            return std::pair<int, int>{line, column};
+        };
+        unique_ptr<ExpressionSyntax> result = literal("");
+        auto append = [&](unique_ptr<ExpressionSyntax> part) {
+            auto joined = std::make_unique<BinaryExpressionSyntax>();
+            joined->line = part->line;
+            joined->column = part->column;
+            joined->left = std::move(result);
+            joined->op = TokenKind::Plus;
+            joined->right = std::move(part);
+            result = std::move(joined);
+        };
+        string segment;
+        std::size_t index = 0;
+        while (index < token.text.size()) {
+            const char ch = token.text[index];
+            if (ch == '\\') {
+                if (index + 1 >= token.text.size()) {
+                    diagnostics_.add(file_, location(index).first, location(index).second,
+                                     "Unterminated interpolation escape");
+                    break;
+                }
+                const char escaped = token.text[++index];
+                if (escaped == 'n') segment.push_back('\n');
+                else if (escaped == 'r') segment.push_back('\r');
+                else if (escaped == 't') segment.push_back('\t');
+                else if (escaped == '"') segment.push_back('"');
+                else if (escaped == '\\') segment.push_back('\\');
+                else {
+                    diagnostics_.add(file_, location(index).first, location(index).second,
+                                     "Unsupported interpolation escape sequence");
+                    segment.push_back(escaped);
+                }
+                ++index;
+                continue;
+            }
+            if ((ch == '{' || ch == '}') && index + 1 < token.text.size() && token.text[index + 1] == ch) {
+                segment.push_back(ch);
+                index += 2;
+                continue;
+            }
+            if (ch == '}') {
+                diagnostics_.add(file_, location(index).first, location(index).second,
+                                 "Unescaped '}' in interpolated string");
+                ++index;
+                continue;
+            }
+            if (ch != '{') { segment.push_back(ch); ++index; continue; }
+            if (!segment.empty()) { append(literal(segment)); segment.clear(); }
+            const std::size_t hole_start = ++index;
+            int depth = 1;
+            while (index < token.text.size() && depth > 0) {
+                const char inner = token.text[index++];
+                if (inner == '"') {
+                    while (index < token.text.size()) {
+                        const char quoted = token.text[index++];
+                        if (quoted == '\\' && index < token.text.size()) ++index;
+                        else if (quoted == '"') break;
+                    }
+                } else if (inner == '{') ++depth;
+                else if (inner == '}') --depth;
+            }
+            if (depth != 0) {
+                diagnostics_.add(file_, location(hole_start).first, location(hole_start).second,
+                                 "Unterminated interpolation expression");
+                break;
+            }
+            const string source = token.text.substr(hole_start, index - hole_start - 1);
+            if (trim(source).empty()) {
+                diagnostics_.add(file_, location(hole_start).first, location(hole_start).second,
+                                 "Interpolation expression cannot be empty");
+                continue;
+            }
+            DiagnosticBag hole_diagnostics;
+            Lexer hole_lexer(file_, source, hole_diagnostics);
+            Parser hole_parser(file_, hole_lexer.lex(), hole_diagnostics);
+            auto expression = hole_parser.parse_expression();
+            if (!hole_parser.check(TokenKind::EndOfFile)) {
+                const string reason = hole_parser.check(TokenKind::Colon)
+                                          ? "Interpolation format specifiers are not supported"
+                                          : "Unexpected token in interpolation expression";
+                hole_diagnostics.add(file_, hole_parser.current().line, hole_parser.current().column, reason);
+            }
+            const auto [base_line, base_column] = location(hole_start);
+            for (const auto& diagnostic : hole_diagnostics.items) {
+                diagnostics_.add(file_, base_line + diagnostic.line - 1,
+                                 diagnostic.line == 1 ? base_column + diagnostic.column - 1 : diagnostic.column,
+                                 diagnostic.message);
+            }
+            expression->line = base_line;
+            expression->column = base_column;
+            append(std::move(expression));
+        }
+        if (!segment.empty()) append(literal(segment));
+        return result;
+    }
+
+    unique_ptr<ExpressionSyntax> parse_switch_expression(const Token& token) {
+        consume(TokenKind::OpenParen, "Expected '(' after switch");
+        auto scrutinee = parse_expression();
+        consume(TokenKind::CloseParen, "Expected ')' after switch value");
+        consume(TokenKind::OpenBrace, "Expected '{' after switch value");
+        struct Arm { SwitchCaseLabel label; unique_ptr<ExpressionSyntax> value; };
+        vector<Arm> arms;
+        unique_ptr<ExpressionSyntax> fallback;
+        std::unordered_set<string> seen;
+        string category;
+        bool default_seen = false;
+        while (!check(TokenKind::CloseBrace) && !check(TokenKind::EndOfFile)) {
+            if (match(TokenKind::Case)) {
+                const Token at = previous();
+                auto label = parse_switch_case_label();
+                validate_switch_case(label, seen, category, default_seen, at);
+                consume(TokenKind::FatArrow, "Expected '=>' after switch case");
+                arms.push_back(Arm{std::move(label), parse_expression()});
+            } else if (match(TokenKind::Default)) {
+                const Token at = previous();
+                if (default_seen) diagnostics_.add(file_, at.line, at.column, "Duplicate switch default");
+                default_seen = true;
+                if (category == "bool" && seen.contains("b:true") && seen.contains("b:false"))
+                    diagnostics_.add(file_, at.line, at.column, "Unreachable switch default");
+                consume(TokenKind::FatArrow, "Expected '=>' after switch default");
+                fallback = parse_expression();
+            } else {
+                diagnostics_.add(file_, current().line, current().column, "Expected case or default in switch expression");
+                advance();
+            }
+            if (!match(TokenKind::Comma) && !check(TokenKind::CloseBrace))
+                consume(TokenKind::Comma, "Expected ',' after switch arm");
+        }
+        consume(TokenKind::CloseBrace, "Expected '}' after switch expression");
+        const bool bool_exhaustive = category == "bool" && seen.contains("b:true") && seen.contains("b:false");
+        if (arms.empty()) diagnostics_.add(file_, token.line, token.column, "Switch expression requires a case");
+        if (!fallback && !bool_exhaustive)
+            diagnostics_.add(file_, token.line, token.column, "Non-exhaustive switch expression requires default");
+        if (block_stack_.empty())
+            diagnostics_.add(file_, token.line, token.column, "Switch expression requires a method block");
+
+        const string temp_name = "__hy_switch$value_" + std::to_string(token.line) + "_" + std::to_string(token.column);
+        auto name = [&]() -> unique_ptr<ExpressionSyntax> {
+            auto value = std::make_unique<NameExpressionSyntax>(); value->name = temp_name;
+            value->line = token.line; value->column = token.column; return value;
+        };
+        if (!block_stack_.empty()) {
+            auto temp = std::make_unique<VariableDeclarationStatementSyntax>();
+            temp->line = token.line; temp->column = token.column;
+            temp->type.name_parts.push_back(category.empty() ? "long" : category);
+            temp->name = temp_name;
+            auto initial = std::make_unique<LiteralExpressionSyntax>();
+            if (category == "string") initial->value = string{};
+            else if (category == "bool") initial->value = false;
+            else initial->value = int64_t{0};
+            temp->initializer = std::move(initial);
+            block_stack_.back()->statements.insert(block_stack_.back()->statements.begin(), std::move(temp));
+        }
+        std::size_t test_count = arms.size();
+        if (!fallback && bool_exhaustive && test_count > 0) {
+            fallback = std::move(arms.back().value);
+            --test_count;
+        }
+        if (!fallback) { auto empty = std::make_unique<LiteralExpressionSyntax>(); empty->value = int64_t{0}; fallback = std::move(empty); }
+        unique_ptr<ExpressionSyntax> result = std::move(fallback);
+        for (std::size_t reverse = test_count; reverse > 0; --reverse) {
+            auto& arm = arms[reverse - 1];
+            auto test = std::make_unique<BinaryExpressionSyntax>();
+            test->line = token.line; test->column = token.column;
+            if (reverse == 1) {
+                auto assign = std::make_unique<AssignmentExpressionSyntax>();
+                assign->line = token.line; assign->column = token.column;
+                assign->target = name(); assign->op = TokenKind::Equals;
+                assign->expression = std::move(scrutinee);
+                test->left = std::move(assign);
+            } else test->left = name();
+            test->op = TokenKind::EqualsEquals;
+            test->right = std::move(arm.label.value);
+            auto choice = std::make_unique<ConditionalExpressionSyntax>();
+            choice->line = token.line; choice->column = token.column;
+            choice->condition = std::move(test);
+            choice->when_true = std::move(arm.value);
+            choice->when_false = std::move(result);
+            result = std::move(choice);
+        }
+        return result;
+    }
+
     unique_ptr<ExpressionSyntax> parse_primary_expression() {
         const Token token = current();
+        if (match(TokenKind::Switch)) return parse_switch_expression(token);
         if (match(TokenKind::Number)) {
             auto literal = std::make_unique<LiteralExpressionSyntax>();
             literal->line = token.line;
@@ -1658,6 +2479,7 @@ private:
             literal->value = token.text;
             return literal;
         }
+        if (match(TokenKind::InterpolatedString)) return parse_interpolated_expression(token);
         if (match(TokenKind::True)) {
             auto literal = std::make_unique<LiteralExpressionSyntax>();
             literal->line = token.line;
@@ -1833,8 +2655,10 @@ private:
 
     static bool is_expression_start_token(TokenKind kind) {
         return kind == TokenKind::Identifier ||
+               kind == TokenKind::Switch ||
                kind == TokenKind::Number ||
                kind == TokenKind::StringLiteral ||
+               kind == TokenKind::InterpolatedString ||
                kind == TokenKind::True ||
                kind == TokenKind::False ||
                kind == TokenKind::Null ||
@@ -1845,6 +2669,7 @@ private:
                kind == TokenKind::Stackalloc ||
                kind == TokenKind::OpenParen ||
                kind == TokenKind::Bang ||
+               kind == TokenKind::Tilde ||
                kind == TokenKind::Ampersand ||
                kind == TokenKind::Minus ||
                kind == TokenKind::Plus ||
@@ -1856,6 +2681,8 @@ private:
                kind == TokenKind::If ||
                kind == TokenKind::While ||
                kind == TokenKind::For ||
+               kind == TokenKind::Foreach ||
+               kind == TokenKind::Switch ||
                kind == TokenKind::Break ||
                kind == TokenKind::Continue ||
                kind == TokenKind::Return ||
@@ -1870,6 +2697,10 @@ private:
     fs::path file_;
     vector<Token> tokens_;
     DiagnosticBag& diagnostics_;
+    std::function<void(std::size_t, std::size_t)> progress_;
+    vector<BlockStatementSyntax*> block_stack_;
+    int loop_depth_ = 0;
+    vector<int> switch_loop_baselines_;
     std::size_t index_ = 0;
 };
 
@@ -2023,11 +2854,13 @@ enum class BoundExpressionKind {
     ArrayIndex,
     PointerIndex,
     StringIndex,
+    Slice,
     StringLength,
     Assignment,
     Conversion,
     Unary,
     Binary,
+    Conditional,
     Call,
     NewObject,
     NewArray,
@@ -2073,6 +2906,7 @@ struct BoundThisExpression final : BoundExpression {};
 struct BoundFieldExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> receiver;
     const FieldSymbol* field = nullptr;
+    bool null_conditional = false;
 };
 
 struct BoundArrayLengthExpression final : BoundExpression {
@@ -2082,6 +2916,7 @@ struct BoundArrayLengthExpression final : BoundExpression {
 struct BoundArrayIndexExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> array_expression;
     std::unique_ptr<BoundExpression> index_expression;
+    bool null_conditional = false;
 };
 
 struct BoundPointerIndexExpression final : BoundExpression {
@@ -2092,6 +2927,13 @@ struct BoundPointerIndexExpression final : BoundExpression {
 struct BoundStringIndexExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> string_expression;
     std::unique_ptr<BoundExpression> index_expression;
+    bool null_conditional = false;
+};
+
+struct BoundSliceExpression final : BoundExpression {
+    std::unique_ptr<BoundExpression> target;
+    std::unique_ptr<BoundExpression> start;
+    std::unique_ptr<BoundExpression> end;
 };
 
 struct BoundStringLengthExpression final : BoundExpression {
@@ -2101,6 +2943,8 @@ struct BoundStringLengthExpression final : BoundExpression {
 struct BoundAssignmentExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> target;
     std::unique_ptr<BoundExpression> expression;
+    TokenKind compound_op = TokenKind::Equals;
+    bool returns_old = false;
 };
 
 struct BoundConversionExpression final : BoundExpression {
@@ -2118,9 +2962,16 @@ struct BoundBinaryExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> right;
 };
 
+struct BoundConditionalExpression final : BoundExpression {
+    std::unique_ptr<BoundExpression> condition;
+    std::unique_ptr<BoundExpression> when_true;
+    std::unique_ptr<BoundExpression> when_false;
+};
+
 struct BoundCallExpression final : BoundExpression {
     const MethodSymbol* method = nullptr;
     std::unique_ptr<BoundExpression> receiver;
+    bool null_conditional = false;
     vector<std::unique_ptr<BoundExpression>> arguments;
     bool dispatch_virtual = false;
     bool dispatch_interface = false;
@@ -2245,11 +3096,16 @@ struct SemanticModel {
     ClassSymbol* file_class = nullptr;
     ClassSymbol* convert_class = nullptr;
     ClassSymbol* memory_class = nullptr;
+    ClassSymbol* gc_class = nullptr;
     ClassSymbol* assert_class = nullptr;
     ClassSymbol* intrinsics_class = nullptr;
     MethodSymbol* console_write_string = nullptr;
     MethodSymbol* console_write_int = nullptr;
     MethodSymbol* console_write_bool = nullptr;
+    MethodSymbol* console_write_bytes = nullptr;
+    MethodSymbol* console_is_terminal = nullptr;
+    MethodSymbol* console_terminal_width = nullptr;
+    MethodSymbol* console_utf8_byte_at = nullptr;
     MethodSymbol* console_writeline_string = nullptr;
     MethodSymbol* console_writeline_int = nullptr;
     MethodSymbol* console_writeline_bool = nullptr;
@@ -2264,6 +3120,7 @@ struct SemanticModel {
     MethodSymbol* memory_copy = nullptr;
     MethodSymbol* memory_set = nullptr;
     MethodSymbol* memory_compare = nullptr;
+    MethodSymbol* gc_collect = nullptr;
     MethodSymbol* assert_true = nullptr;
     MethodSymbol* assert_false = nullptr;
     MethodSymbol* assert_equal = nullptr;
@@ -2436,6 +3293,62 @@ int integral_type_size_bytes(const TypeSymbol* type) {
             return 8;
     }
     return 8;
+}
+
+int64_t normalize_integral_bits(uint64_t bits, const TypeSymbol* type) {
+    const int width = integral_type_size_bytes(type) * 8;
+    if (width > 0 && width < 64) {
+        const uint64_t mask = (uint64_t{1} << width) - 1;
+        bits &= mask;
+        if (is_signed_integral_type(type) && (bits & (uint64_t{1} << (width - 1))) != 0) {
+            bits |= ~mask;
+        }
+    }
+    return std::bit_cast<int64_t>(bits);
+}
+
+int64_t shift_integral_bits(int64_t value, int64_t count, const TypeSymbol* type, bool right) {
+    const int width = integral_type_size_bytes(type) * 8;
+    const uint64_t mask = width == 64 ? ~uint64_t{0} : (uint64_t{1} << width) - 1;
+    const uint64_t bits = static_cast<uint64_t>(value) & mask;
+    const unsigned amount = static_cast<unsigned>(count) & static_cast<unsigned>(width - 1);
+    uint64_t shifted = right ? bits >> amount : bits << amount;
+    if (right && amount != 0 && is_signed_integral_type(type) &&
+        (bits & (uint64_t{1} << (width - 1))) != 0) {
+        shifted |= ~uint64_t{0} << (width - amount);
+    }
+    return normalize_integral_bits(shifted, type);
+}
+
+int64_t compound_integral_value(int64_t old_value, int64_t right_value, TokenKind op, const TypeSymbol* type) {
+    const uint64_t left_bits = static_cast<uint64_t>(old_value);
+    const uint64_t right_bits = static_cast<uint64_t>(right_value);
+    switch (op) {
+        case TokenKind::Plus: return normalize_integral_bits(left_bits + right_bits, type);
+        case TokenKind::Minus: return normalize_integral_bits(left_bits - right_bits, type);
+        case TokenKind::Star: return normalize_integral_bits(left_bits * right_bits, type);
+        case TokenKind::Ampersand: return normalize_integral_bits(left_bits & right_bits, type);
+        case TokenKind::Pipe: return normalize_integral_bits(left_bits | right_bits, type);
+        case TokenKind::Caret: return normalize_integral_bits(left_bits ^ right_bits, type);
+        case TokenKind::ShiftLeft: return shift_integral_bits(old_value, right_value, type, false);
+        case TokenKind::ShiftRight: return shift_integral_bits(old_value, right_value, type, true);
+        case TokenKind::Slash:
+        case TokenKind::Percent: {
+            const int64_t left = normalize_integral_bits(left_bits, type);
+            const int64_t right = normalize_integral_bits(right_bits, type);
+            if (right == 0) throw std::runtime_error("Division by zero");
+            if (is_signed_integral_type(type)) {
+                if (left == INT64_MIN && right == -1) throw std::runtime_error("Integer division overflow");
+                return normalize_integral_bits(static_cast<uint64_t>(op == TokenKind::Slash ? left / right : left % right), type);
+            }
+            const int width = integral_type_size_bytes(type) * 8;
+            const uint64_t mask = width == 64 ? ~uint64_t{0} : (uint64_t{1} << width) - 1;
+            const uint64_t result = op == TokenKind::Slash ? (left_bits & mask) / (right_bits & mask)
+                                                          : (left_bits & mask) % (right_bits & mask);
+            return normalize_integral_bits(result, type);
+        }
+        default: throw std::runtime_error("Unsupported compound assignment operator");
+    }
 }
 
 bool integral_literal_fits_type(int64_t value, const TypeSymbol* destination) {
@@ -3009,6 +3922,12 @@ private:
             create_builtin(model.console_class, "Write", &model.void_type, {{"value", &model.int_type}});
         model.console_write_bool =
             create_builtin(model.console_class, "Write", &model.void_type, {{"value", &model.bool_type}});
+        model.console_write_bytes = create_builtin(model.console_class, "WriteBytes", &model.void_type,
+                                                   {{"value", model.get_array_type(&model.byte_type)}});
+        model.console_is_terminal = create_builtin(model.console_class, "IsTerminal", &model.bool_type, {});
+        model.console_terminal_width = create_builtin(model.console_class, "TerminalWidth", &model.int_type, {});
+        model.console_utf8_byte_at = create_builtin(model.console_class, "Utf8ByteAt", &model.int_type,
+                                                   {{"value", &model.string_type}, {"index", &model.int_type}});
         model.console_writeline_string =
             create_builtin(model.console_class, "WriteLine", &model.void_type, {{"value", &model.string_type}});
         model.console_writeline_int =
@@ -3064,6 +3983,9 @@ private:
                                               {{"left", byte_pointer_type},
                                                {"right", byte_pointer_type},
                                                {"bytes", &model.nuint_type}});
+
+        model.gc_class = create_builtin_class("System.Runtime", "GC");
+        model.gc_collect = create_builtin(model.gc_class, "Collect", &model.void_type, {});
 
         model.assert_class = create_builtin_class("System.Testing", "Assert");
         model.assert_true = create_builtin(model.assert_class,
@@ -3809,6 +4731,34 @@ private:
         }
 
     private:
+        bool is_list_type(const TypeSymbol* type) const {
+            if (type == nullptr || type->kind != TypeKind::Class || type->class_symbol == nullptr) return false;
+            const ClassSymbol* definition = type->class_symbol->generic_definition != nullptr
+                                                ? type->class_symbol->generic_definition
+                                                : type->class_symbol;
+            return definition->namespace_name == "System.Collections" && definition->name == "List";
+        }
+
+        std::unique_ptr<BoundCallExpression> bind_list_method(std::unique_ptr<BoundExpression> receiver,
+                                                               const string& name,
+                                                               std::unique_ptr<BoundExpression> argument,
+                                                               int line,
+                                                               int column) {
+            const TypeSymbol* receiver_type = receiver->type;
+            auto methods = select_methods(*receiver_type->class_symbol, name, false);
+            if (methods.empty()) return nullptr;
+            const MethodSymbol* method = specialize_method(*methods.front(), build_type_substitutions(receiver_type));
+            auto call = std::make_unique<BoundCallExpression>();
+            call->kind = BoundExpressionKind::Call;
+            call->line = line;
+            call->column = column;
+            call->type = method->return_type;
+            call->method = method;
+            call->receiver = convert_expression(make_named_type(*method->owner), std::move(receiver));
+            if (argument != nullptr) call->arguments.push_back(convert_expression(method->parameters[0].type, std::move(argument)));
+            return call;
+        }
+
         const TypeSymbol* make_named_type(const ClassSymbol& klass) {
             auto type_symbol = std::make_unique<TypeSymbol>();
             type_symbol->kind = klass.kind;
@@ -4331,6 +5281,14 @@ private:
                     type = resolve_type(variable->type);
                 }
 
+                if (variable->name.rfind("__hy_foreach$collection_", 0) == 0 &&
+                    type != &program_.semantic_model.error_type &&
+                    type != &program_.semantic_model.string_type &&
+                    (type == nullptr || type->kind != TypeKind::Array) && !is_list_type(type)) {
+                    diagnostics_.add(find_file_for_class(&current_class_), variable->line, variable->column,
+                                     "foreach requires an array, string, or List<T> collection");
+                }
+
                 bound->variable = declare_local(variable->name, type);
                 if (bound->initializer != nullptr) {
                     if (!is_expression_assignable_to_type(type, bound->initializer.get())) {
@@ -4629,13 +5587,33 @@ private:
             }
 
             if (const auto* assignment = dynamic_cast<const AssignmentExpressionSyntax*>(&expression)) {
+                if ((dynamic_cast<const MemberAccessExpressionSyntax*>(assignment->target.get()) != nullptr &&
+                     static_cast<const MemberAccessExpressionSyntax*>(assignment->target.get())->null_conditional) ||
+                    (dynamic_cast<const ElementAccessExpressionSyntax*>(assignment->target.get()) != nullptr &&
+                     static_cast<const ElementAccessExpressionSyntax*>(assignment->target.get())->null_conditional)) {
+                    diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                     "Null-conditional access is not an assignment target");
+                }
                 auto target = bind_assignable_expression(*assignment->target);
                 auto value = bind_expression(*assignment->expression);
                 auto bound = std::make_unique<BoundAssignmentExpression>();
                 bound->kind = BoundExpressionKind::Assignment;
                 bound->line = expression.line;
                 bound->column = expression.column;
-                if (!is_expression_assignable_to_type(target->type, value.get())) {
+                if (assignment->op != TokenKind::Equals) {
+                    if (!is_integral_type(target->type) || !is_integral_type(value->type)) {
+                        diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                         "Compound assignment requires integral operands");
+                    }
+                    if (target->kind == BoundExpressionKind::PointerIndex ||
+                        (target->kind == BoundExpressionKind::Unary &&
+                         static_cast<const BoundUnaryExpression&>(*target).op == TokenKind::Star)) {
+                        diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                         "Compound assignment to pointer targets is not supported");
+                    }
+                    bound->compound_op = compound_binary_operator(assignment->op);
+                    bound->returns_old = assignment->returns_old;
+                } else if (!is_expression_assignable_to_type(target->type, value.get())) {
                     diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                      "Cannot assign expression of type '" + value->type->display_name +
                                          "' to target of type '" + target->type->display_name + "'");
@@ -4650,6 +5628,27 @@ private:
 
             if (const auto* access = dynamic_cast<const ElementAccessExpressionSyntax*>(&expression)) {
                 return bind_element_access(*access);
+            }
+            if (const auto* slice = dynamic_cast<const SliceExpressionSyntax*>(&expression)) {
+                auto bound = std::make_unique<BoundSliceExpression>();
+                bound->kind = BoundExpressionKind::Slice;
+                bound->line = expression.line;
+                bound->column = expression.column;
+                bound->target = bind_expression(*slice->target);
+                bound->start = bind_expression(*slice->start);
+                bound->end = bind_expression(*slice->end);
+                if (bound->start->type != &program_.semantic_model.int_type ||
+                    bound->end->type != &program_.semantic_model.int_type) {
+                    diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                     "Slice bounds must be int");
+                }
+                if (bound->target->type != &program_.semantic_model.string_type &&
+                    bound->target->type->kind != TypeKind::Array) {
+                    diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                     "Slicing requires an array or string");
+                    bound->type = &program_.semantic_model.error_type;
+                } else bound->type = bound->target->type;
+                return bound;
             }
 
             if (const auto* unary = dynamic_cast<const UnaryExpressionSyntax*>(&expression)) {
@@ -4708,7 +5707,7 @@ private:
                     } else {
                         if (!is_integral_type(bound->operand->type)) {
                             diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
-                                             "Unary '+' and '-' require int operands");
+                                             "Unary arithmetic and bitwise operators require integral operands");
                         }
                         bound->type = bound->operand->type;
                     }
@@ -4719,12 +5718,39 @@ private:
                                          "Operator '!' requires a bool operand");
                     }
                     bound->type = &program_.semantic_model.bool_type;
-                } else if (unary->op == TokenKind::Minus || unary->op == TokenKind::Plus) {
+                } else if (unary->op == TokenKind::Minus || unary->op == TokenKind::Plus ||
+                           unary->op == TokenKind::Tilde) {
                     if (!is_integral_type(bound->operand->type)) {
                         diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
-                                         "Unary '+' and '-' require int operands");
+                                         "Unary arithmetic and bitwise operators require integral operands");
                     }
                     bound->type = bound->operand->type;
+                }
+                return bound;
+            }
+
+            if (const auto* conditional = dynamic_cast<const ConditionalExpressionSyntax*>(&expression)) {
+                auto bound = std::make_unique<BoundConditionalExpression>();
+                bound->kind = BoundExpressionKind::Conditional;
+                bound->line = expression.line;
+                bound->column = expression.column;
+                bound->condition = bind_expression(*conditional->condition);
+                bound->when_true = bind_expression(*conditional->when_true);
+                bound->when_false = bind_expression(*conditional->when_false);
+                if (bound->condition->type != &program_.semantic_model.bool_type) {
+                    diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                     "Conditional expression requires a bool condition");
+                }
+                if (is_expression_assignable_to_type(bound->when_true->type, bound->when_false.get())) {
+                    bound->type = bound->when_true->type;
+                    bound->when_false = convert_expression(bound->type, std::move(bound->when_false));
+                } else if (is_expression_assignable_to_type(bound->when_false->type, bound->when_true.get())) {
+                    bound->type = bound->when_false->type;
+                    bound->when_true = convert_expression(bound->type, std::move(bound->when_true));
+                } else {
+                    diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                     "Conditional branches have incompatible types");
+                    bound->type = &program_.semantic_model.error_type;
                 }
                 return bound;
             }
@@ -4743,6 +5769,25 @@ private:
                 bound->right = std::move(right);
                 bound->op = binary->op;
                 switch (binary->op) {
+                    case TokenKind::QuestionQuestion:
+                        if (bound->left->type == &program_.semantic_model.null_type) {
+                            if (!is_reference_type(bound->right->type)) {
+                                diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                                 "Null coalescing requires a reference operand and compatible fallback");
+                                bound->type = &program_.semantic_model.error_type;
+                            } else {
+                                bound->type = bound->right->type;
+                            }
+                        } else if (!is_reference_type(bound->left->type) ||
+                                   !is_expression_assignable_to_type(bound->left->type, bound->right.get())) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Null coalescing requires a reference operand and compatible fallback");
+                            bound->type = &program_.semantic_model.error_type;
+                        } else {
+                            bound->type = bound->left->type;
+                            bound->right = convert_expression(bound->type, std::move(bound->right));
+                        }
+                        break;
                     case TokenKind::Plus:
                         if (is_pointer_type(bound->left->type) && is_integral_type(bound->right->type)) {
                             bound->type = bound->left->type;
@@ -4784,6 +5829,24 @@ private:
                             !is_integral_type(bound->right->type)) {
                             diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
                                              "Arithmetic operators require int operands");
+                        }
+                        bound->type = bound->left->type;
+                        break;
+                    case TokenKind::Ampersand:
+                    case TokenKind::Pipe:
+                    case TokenKind::Caret:
+                        if (!is_integral_type(bound->left->type) ||
+                            !are_types_equal(bound->left->type, bound->right->type)) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Bitwise operators require matching integral operands");
+                        }
+                        bound->type = bound->left->type;
+                        break;
+                    case TokenKind::ShiftLeft:
+                    case TokenKind::ShiftRight:
+                        if (!is_integral_type(bound->left->type) || !is_integral_type(bound->right->type)) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Shift operators require integral operands");
                         }
                         bound->type = bound->left->type;
                         break;
@@ -4867,9 +5930,25 @@ private:
         std::unique_ptr<BoundExpression> bind_element_access(const ElementAccessExpressionSyntax& syntax) {
             auto target_expression = bind_expression(*syntax.target);
             auto index_expression = bind_expression(*syntax.index);
+            if (syntax.null_conditional && !is_reference_type(target_expression->type)) {
+                diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                 "Null-conditional indexing requires a reference receiver");
+            }
             if (!is_integral_type(index_expression->type)) {
                 diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
                                  "Indices must be of type 'int'");
+            }
+
+            if (is_list_type(target_expression->type)) {
+                auto result = bind_list_method(std::move(target_expression), "Get", std::move(index_expression),
+                                               syntax.line, syntax.column);
+                if (result != nullptr) {
+                    if (syntax.null_conditional) {
+                        diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                         "Null-conditional List indexing is not supported");
+                    }
+                    return result;
+                }
             }
 
             if (target_expression->type == &program_.semantic_model.string_type) {
@@ -4880,10 +5959,15 @@ private:
                 bound->type = &program_.semantic_model.string_type;
                 bound->string_expression = std::move(target_expression);
                 bound->index_expression = std::move(index_expression);
+                bound->null_conditional = syntax.null_conditional;
                 return bound;
             }
 
             if (is_pointer_type(target_expression->type) && target_expression->type->element_type != nullptr) {
+                if (syntax.null_conditional) {
+                    diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                     "Null-conditional pointer indexing is not supported");
+                }
                 if (unsafe_depth_ == 0) {
                     diagnostics_.add(find_file_for_class(&current_class_),
                                      syntax.line,
@@ -4906,6 +5990,7 @@ private:
             bound->column = syntax.column;
             bound->array_expression = std::move(target_expression);
             bound->index_expression = std::move(index_expression);
+            bound->null_conditional = syntax.null_conditional;
 
             if (bound->array_expression->type == nullptr || bound->array_expression->type->kind != TypeKind::Array ||
                 bound->array_expression->type->element_type == nullptr) {
@@ -4916,6 +6001,10 @@ private:
             }
 
             bound->type = bound->array_expression->type->element_type;
+            if (syntax.null_conditional && !is_reference_type(bound->type)) {
+                diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                 "Null-conditional access requires a reference result");
+            }
             return bound;
         }
 
@@ -5099,6 +6188,18 @@ private:
             call->line = syntax.line;
             call->column = syntax.column;
             call->method = selected;
+            if (const auto* member = dynamic_cast<const MemberAccessExpressionSyntax*>(syntax.callee.get());
+                member != nullptr && member->null_conditional) {
+                call->null_conditional = true;
+                if (entity.receiver == nullptr || selected->is_static) {
+                    diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                     "Null-conditional invocation requires an instance receiver");
+                }
+                if (!is_reference_type(selected->return_type)) {
+                    diagnostics_.add(find_file_for_class(&current_class_), syntax.line, syntax.column,
+                                     "Null-conditional access requires a reference result");
+                }
+            }
             if (entity.receiver != nullptr && selected->owner != nullptr) {
                 call->receiver = convert_expression(make_named_type(*selected->owner), std::move(entity.receiver));
             } else {
@@ -5422,6 +6523,12 @@ private:
                 if (base.kind == EntityResolution::Kind::Error) {
                     return {};
                 }
+                if (member->null_conditional && (base.kind != EntityResolution::Kind::Value ||
+                                                 base.value == nullptr || !is_reference_type(base.value->type))) {
+                    diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                     "Null-conditional access requires a reference receiver");
+                    return {};
+                }
                 if (base.kind == EntityResolution::Kind::Namespace) {
                     const string candidate = base.namespace_name + "." + member->member_name;
                     if (is_namespace(candidate)) {
@@ -5525,7 +6632,22 @@ private:
                 }
 
                 if (base.kind == EntityResolution::Kind::Value) {
+                    if (is_list_type(base.value->type) && member->member_name == "Length") {
+                        if (member->null_conditional) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Null-conditional access requires a reference result");
+                        }
+                        EntityResolution result;
+                        result.kind = EntityResolution::Kind::Value;
+                        result.value = bind_list_method(std::move(base.value), "Count", nullptr,
+                                                        expression.line, expression.column);
+                        return result;
+                    }
                     if (base.value->type != nullptr && base.value->type->kind == TypeKind::Array && member->member_name == "Length") {
+                        if (member->null_conditional) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Null-conditional access requires a reference result");
+                        }
                         auto length = std::make_unique<BoundArrayLengthExpression>();
                         length->kind = BoundExpressionKind::ArrayLength;
                         length->type = &program_.semantic_model.int_type;
@@ -5539,6 +6661,10 @@ private:
                     }
 
                     if (base.value->type == &program_.semantic_model.string_type && member->member_name == "Length") {
+                        if (member->null_conditional) {
+                            diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                             "Null-conditional access requires a reference result");
+                        }
                         auto length = std::make_unique<BoundStringLengthExpression>();
                         length->kind = BoundExpressionKind::StringLength;
                         length->type = &program_.semantic_model.int_type;
@@ -5567,6 +6693,13 @@ private:
                         EntityResolution result;
                         result.kind = EntityResolution::Kind::Value;
                         result.value = make_field_expression(std::move(base.value), field, expression.line, expression.column);
+                        if (member->null_conditional) {
+                            if (!is_reference_type(field->type)) {
+                                diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                                 "Null-conditional access requires a reference result");
+                            }
+                            static_cast<BoundFieldExpression&>(*result.value).null_conditional = true;
+                        }
                         return result;
                     }
 
@@ -5962,9 +7095,39 @@ private:
         Continue,
     };
 
+    template <typename Symbol>
+    struct FrameSlots {
+        // Most interpreted methods use only a few parameters and locals. Keep
+        // those values together instead of hashing and allocating a node for
+        // every variable access; promote larger frames to the old map path.
+        vector<std::pair<const Symbol*, Value>> small;
+        std::unordered_map<const Symbol*, Value> large;
+
+        Value& operator[](const Symbol* symbol) {
+            for (auto& slot : small) {
+                if (slot.first == symbol) {
+                    return slot.second;
+                }
+            }
+            if (!large.empty()) {
+                return large[symbol];
+            }
+            if (small.size() < 8) {
+                small.emplace_back(symbol, Value{});
+                return small.back().second;
+            }
+            large.reserve(16);
+            for (auto& slot : small) {
+                large.emplace(slot.first, std::move(slot.second));
+            }
+            small.clear();
+            return large[symbol];
+        }
+    };
+
     struct Frame {
-        std::unordered_map<const ParameterSymbol*, Value> parameters;
-        std::unordered_map<const VariableSymbol*, Value> locals;
+        FrameSlots<ParameterSymbol> parameters;
+        FrameSlots<VariableSymbol> locals;
         std::shared_ptr<RuntimeObject> self;
     };
 
@@ -6002,7 +7165,9 @@ private:
             std::cout << "null";
         }
         if (newline) {
-            std::cout << '\n';
+            std::cout << '\n' << std::flush;
+        } else {
+            std::cout << std::flush;
         }
     }
 
@@ -6244,6 +7409,54 @@ private:
                         const vector<Value>& arguments,
                         const vector<const TypeSymbol*>* argument_types = nullptr) {
         if (method.is_builtin) {
+            if (&method == program_.semantic_model.gc_collect) {
+                // The SDK interpreter uses C++ object lifetimes, not the
+                // generated native runtime's tracing collector.
+                return Value{nullptr};
+            }
+            if (method.owner == program_.semantic_model.console_class && method.name == "IsTerminal") {
+#ifdef _WIN32
+                return Value{_isatty(_fileno(stdout)) != 0};
+#else
+                return Value{isatty(fileno(stdout)) != 0};
+#endif
+            }
+            if (method.owner == program_.semantic_model.console_class && method.name == "TerminalWidth") {
+#ifdef _WIN32
+                CONSOLE_SCREEN_BUFFER_INFO info{};
+                const HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+                if (handle != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(handle, &info))
+                    return Value{int64_t{info.srWindow.Right - info.srWindow.Left + 1}};
+#else
+                winsize size{};
+                if (ioctl(fileno(stdout), TIOCGWINSZ, &size) == 0 && size.ws_col > 0)
+                    return Value{int64_t{size.ws_col}};
+#endif
+                return Value{int64_t{0}};
+            }
+            if (method.owner == program_.semantic_model.console_class && method.name == "Utf8ByteAt") {
+                if (arguments.size() != 2 || !std::holds_alternative<string>(arguments[0].data) ||
+                    !std::holds_alternative<int64_t>(arguments[1].data))
+                    throw std::runtime_error("Utf8ByteAt requires a string and index");
+                const string& value = std::get<string>(arguments[0].data);
+                const int64_t index = std::get<int64_t>(arguments[1].data);
+                if (index < 0 || static_cast<std::size_t>(index) >= value.size())
+                    throw std::runtime_error("String index out of range");
+                return Value{int64_t{static_cast<unsigned char>(value[static_cast<std::size_t>(index)])}};
+            }
+            if (method.owner == program_.semantic_model.console_class && method.name == "WriteBytes") {
+                if (arguments.size() != 1 || !std::holds_alternative<std::shared_ptr<RuntimeArray>>(arguments[0].data)) {
+                    throw std::runtime_error("System.Console.WriteBytes requires a byte array");
+                }
+                const auto& array = std::get<std::shared_ptr<RuntimeArray>>(arguments[0].data);
+                if (array != nullptr) {
+                    for (const auto& element : array->elements) {
+                        std::cout.put(static_cast<char>(std::get<int64_t>(element.data) & 0xFF));
+                    }
+                    std::cout.flush();
+                }
+                return Value{nullptr};
+            }
             if (method.owner == program_.semantic_model.console_class &&
                 (method.name == "Write" || method.name == "WriteLine")) {
                 const TypeSymbol* argument_type =
@@ -6261,13 +7474,11 @@ private:
                 if (arguments.empty() || !std::holds_alternative<string>(arguments[0].data)) {
                     return Value{nullptr};
                 }
-                std::ifstream input(std::get<string>(arguments[0].data));
-                if (!input) {
-                    return Value{nullptr};
-                }
-                std::ostringstream buffer;
-                buffer << input.rdbuf();
-                return Value{buffer.str()};
+                string text;
+                const auto result = read_bounded_text_file(std::get<string>(arguments[0].data), text);
+                if (result == TextReadResult::OpenFailed) return Value{nullptr};
+                if (result != TextReadResult::Ok) throw std::runtime_error("File text read failed or exceeds 16 MiB");
+                return Value{std::move(text)};
             }
             if (method.owner == program_.semantic_model.file_class && method.name == "WriteAllText") {
                 if (arguments.size() < 2 || !std::holds_alternative<string>(arguments[0].data)) {
@@ -6648,7 +7859,7 @@ private:
         return {};
     }
 
-    Value& access_assignable(const BoundExpression& expression, Frame& frame) {
+    Value& access_assignable(const BoundExpression& expression, Frame& frame, Value& keepalive) {
         if (expression.kind == BoundExpressionKind::Local) {
             const auto& local = static_cast<const BoundLocalExpression&>(expression);
             return frame.locals[local.variable];
@@ -6662,17 +7873,18 @@ private:
             if (field.field->is_static) {
                 return static_fields_[field.field];
             }
-            auto receiver = std::get<std::shared_ptr<RuntimeObject>>(evaluate_expression(*field.receiver, frame).data);
+            keepalive = evaluate_expression(*field.receiver, frame);
+            auto receiver = std::get<std::shared_ptr<RuntimeObject>>(keepalive.data);
             return receiver->fields[field.field];
         }
         if (expression.kind == BoundExpressionKind::ArrayIndex) {
             const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
-            Value array_value = evaluate_expression(*access.array_expression, frame);
+            keepalive = evaluate_expression(*access.array_expression, frame);
             Value index_value = evaluate_expression(*access.index_expression, frame);
-            if (!std::holds_alternative<std::shared_ptr<RuntimeArray>>(array_value.data)) {
+            if (!std::holds_alternative<std::shared_ptr<RuntimeArray>>(keepalive.data)) {
                 throw std::runtime_error("Array index assignment requires an array");
             }
-            const auto& array = std::get<std::shared_ptr<RuntimeArray>>(array_value.data);
+            const auto& array = std::get<std::shared_ptr<RuntimeArray>>(keepalive.data);
             const int64_t index = std::get<int64_t>(index_value.data);
             if (array == nullptr || index < 0 || static_cast<std::size_t>(index) >= array->elements.size()) {
                 throw std::runtime_error("Array index out of range");
@@ -6712,7 +7924,11 @@ private:
                 if (field.field->is_static) {
                     return static_fields_[field.field];
                 }
-                auto receiver = std::get<std::shared_ptr<RuntimeObject>>(evaluate_expression(*field.receiver, frame).data);
+                Value receiver_value = evaluate_expression(*field.receiver, frame);
+                if (field.null_conditional && (std::holds_alternative<std::nullptr_t>(receiver_value.data) ||
+                    (std::holds_alternative<std::shared_ptr<RuntimeObject>>(receiver_value.data) &&
+                     !std::get<std::shared_ptr<RuntimeObject>>(receiver_value.data)))) return Value{nullptr};
+                auto receiver = std::get<std::shared_ptr<RuntimeObject>>(receiver_value.data);
                 return receiver->fields[field.field];
             }
             case BoundExpressionKind::ArrayLength: {
@@ -6727,6 +7943,9 @@ private:
             case BoundExpressionKind::ArrayIndex: {
                 const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
                 Value array_value = evaluate_expression(*access.array_expression, frame);
+                if (access.null_conditional && (std::holds_alternative<std::nullptr_t>(array_value.data) ||
+                    (std::holds_alternative<std::shared_ptr<RuntimeArray>>(array_value.data) &&
+                     !std::get<std::shared_ptr<RuntimeArray>>(array_value.data)))) return Value{nullptr};
                 Value index_value = evaluate_expression(*access.index_expression, frame);
                 if (!std::holds_alternative<std::shared_ptr<RuntimeArray>>(array_value.data)) {
                     return Value{nullptr};
@@ -6741,6 +7960,7 @@ private:
             case BoundExpressionKind::StringIndex: {
                 const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
                 Value string_value = evaluate_expression(*access.string_expression, frame);
+                if (access.null_conditional && std::holds_alternative<std::nullptr_t>(string_value.data)) return Value{nullptr};
                 Value index_value = evaluate_expression(*access.index_expression, frame);
                 if (!std::holds_alternative<string>(string_value.data)) {
                     return Value{nullptr};
@@ -6752,6 +7972,31 @@ private:
                 }
                 return Value{string(1, source[static_cast<std::size_t>(index)])};
             }
+            case BoundExpressionKind::Slice: {
+                const auto& slice = static_cast<const BoundSliceExpression&>(expression);
+                Value source = evaluate_expression(*slice.target, frame);
+                const int64_t start = std::get<int64_t>(evaluate_expression(*slice.start, frame).data);
+                const int64_t end = std::get<int64_t>(evaluate_expression(*slice.end, frame).data);
+                if (std::holds_alternative<string>(source.data)) {
+                    const string& value = std::get<string>(source.data);
+                    if (start < 0 || end < start || static_cast<uint64_t>(end) > value.size())
+                        throw std::runtime_error("Slice bounds out of range");
+                    if (end - start > 0x7ffffff) throw std::runtime_error("Slice size out of range");
+                    return Value{value.substr(static_cast<std::size_t>(start), static_cast<std::size_t>(end - start))};
+                }
+                if (std::holds_alternative<std::shared_ptr<RuntimeArray>>(source.data)) {
+                    const auto& array = std::get<std::shared_ptr<RuntimeArray>>(source.data);
+                    if (!array) throw std::runtime_error("Slice receiver is null");
+                    if (start < 0 || end < start || static_cast<uint64_t>(end) > array->elements.size())
+                        throw std::runtime_error("Slice bounds out of range");
+                    if (end - start > 0x7ffffff) throw std::runtime_error("Slice size out of range");
+                    auto result = std::make_shared<RuntimeArray>();
+                    result->element_type = array->element_type;
+                    result->elements.assign(array->elements.begin() + start, array->elements.begin() + end);
+                    return Value{result};
+                }
+                throw std::runtime_error("Slice receiver is null");
+            }
             case BoundExpressionKind::StringLength: {
                 const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
                 Value string_value = evaluate_expression(*length.string_expression, frame);
@@ -6762,6 +8007,21 @@ private:
             }
             case BoundExpressionKind::Assignment: {
                 const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
+                if (assignment.compound_op != TokenKind::Equals) {
+                    if (assignment.target->kind == BoundExpressionKind::Unary ||
+                        assignment.target->kind == BoundExpressionKind::PointerIndex) {
+                        throw std::runtime_error("Compound assignment to a pointer is unsupported");
+                    }
+                    Value keepalive;
+                    Value& destination = access_assignable(*assignment.target, frame, keepalive);
+                    const int64_t old_value = std::get<int64_t>(destination.data);
+                    const int64_t right_value = std::get<int64_t>(evaluate_expression(*assignment.expression, frame).data);
+                    Value stored{compound_integral_value(old_value, right_value, assignment.compound_op,
+                                                         assignment.target->type)};
+                    destination = stored;
+                    if (assignment.returns_old) return Value{old_value};
+                    return stored;
+                }
                 Value value = evaluate_expression(*assignment.expression, frame);
                 Value stored = copy_value_for_type(value, assignment.target->type);
                 if (assignment.target->kind == BoundExpressionKind::Unary) {
@@ -6779,7 +8039,8 @@ private:
                     store_pointer_value(pointer, index, stored);
                     return stored;
                 }
-                access_assignable(*assignment.target, frame) = stored;
+                Value keepalive;
+                access_assignable(*assignment.target, frame, keepalive) = stored;
                 return stored;
             }
             case BoundExpressionKind::Conversion: {
@@ -6851,13 +8112,39 @@ private:
                         return Value{-std::get<int64_t>(operand.data)};
                     case TokenKind::Plus:
                         return Value{std::get<int64_t>(operand.data)};
+                    case TokenKind::Tilde:
+                        return Value{normalize_integral_bits(~static_cast<uint64_t>(std::get<int64_t>(operand.data)),
+                                                            expression.type)};
                     default:
                         return Value{nullptr};
                 }
             }
+            case BoundExpressionKind::Conditional: {
+                const auto& conditional = static_cast<const BoundConditionalExpression&>(expression);
+                if (std::get<bool>(evaluate_expression(*conditional.condition, frame).data)) {
+                    return evaluate_expression(*conditional.when_true, frame);
+                }
+                return evaluate_expression(*conditional.when_false, frame);
+            }
             case BoundExpressionKind::Binary: {
                 const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
                 Value left = evaluate_expression(*binary.left, frame);
+                if (binary.op == TokenKind::QuestionQuestion) {
+                    bool missing = std::holds_alternative<std::nullptr_t>(left.data);
+                    if (std::holds_alternative<std::shared_ptr<RuntimeObject>>(left.data)) {
+                        missing = !std::get<std::shared_ptr<RuntimeObject>>(left.data);
+                    } else if (std::holds_alternative<std::shared_ptr<RuntimeArray>>(left.data)) {
+                        missing = !std::get<std::shared_ptr<RuntimeArray>>(left.data);
+                    }
+                    if (!missing) return left;
+                    return evaluate_expression(*binary.right, frame);
+                }
+                if (binary.op == TokenKind::AmpAmp && !std::get<bool>(left.data)) {
+                    return Value{false};
+                }
+                if (binary.op == TokenKind::PipePipe && std::get<bool>(left.data)) {
+                    return Value{true};
+                }
                 Value right = evaluate_expression(*binary.right, frame);
                 switch (binary.op) {
                     case TokenKind::Plus:
@@ -6901,9 +8188,49 @@ private:
                     case TokenKind::Star:
                         return Value{std::get<int64_t>(left.data) * std::get<int64_t>(right.data)};
                     case TokenKind::Slash:
+                        if (is_integral_type(binary.left->type) && !is_signed_integral_type(binary.left->type)) {
+                            uint64_t numerator = static_cast<uint64_t>(std::get<int64_t>(left.data));
+                            uint64_t denominator = static_cast<uint64_t>(std::get<int64_t>(right.data));
+                            const int width = integral_type_size_bytes(binary.left->type) * 8;
+                            if (width < 64) {
+                                const uint64_t mask = (uint64_t{1} << width) - 1;
+                                numerator &= mask;
+                                denominator &= mask;
+                            }
+                            return Value{std::bit_cast<int64_t>(numerator / denominator)};
+                        }
                         return Value{std::get<int64_t>(left.data) / std::get<int64_t>(right.data)};
                     case TokenKind::Percent:
+                        if (is_integral_type(binary.left->type) && !is_signed_integral_type(binary.left->type)) {
+                            uint64_t numerator = static_cast<uint64_t>(std::get<int64_t>(left.data));
+                            uint64_t denominator = static_cast<uint64_t>(std::get<int64_t>(right.data));
+                            const int width = integral_type_size_bytes(binary.left->type) * 8;
+                            if (width < 64) {
+                                const uint64_t mask = (uint64_t{1} << width) - 1;
+                                numerator &= mask;
+                                denominator &= mask;
+                            }
+                            return Value{std::bit_cast<int64_t>(numerator % denominator)};
+                        }
                         return Value{std::get<int64_t>(left.data) % std::get<int64_t>(right.data)};
+                    case TokenKind::Ampersand:
+                        return Value{normalize_integral_bits(static_cast<uint64_t>(std::get<int64_t>(left.data)) &
+                                                             static_cast<uint64_t>(std::get<int64_t>(right.data)),
+                                                             expression.type)};
+                    case TokenKind::Pipe:
+                        return Value{normalize_integral_bits(static_cast<uint64_t>(std::get<int64_t>(left.data)) |
+                                                             static_cast<uint64_t>(std::get<int64_t>(right.data)),
+                                                             expression.type)};
+                    case TokenKind::Caret:
+                        return Value{normalize_integral_bits(static_cast<uint64_t>(std::get<int64_t>(left.data)) ^
+                                                             static_cast<uint64_t>(std::get<int64_t>(right.data)),
+                                                             expression.type)};
+                    case TokenKind::ShiftLeft:
+                        return Value{shift_integral_bits(std::get<int64_t>(left.data),
+                                                         std::get<int64_t>(right.data), expression.type, false)};
+                    case TokenKind::ShiftRight:
+                        return Value{shift_integral_bits(std::get<int64_t>(left.data),
+                                                         std::get<int64_t>(right.data), expression.type, true)};
                     case TokenKind::AmpAmp:
                         return Value{std::get<bool>(left.data) && std::get<bool>(right.data)};
                     case TokenKind::PipePipe:
@@ -6946,12 +8273,18 @@ private:
             }
             case BoundExpressionKind::Call: {
                 const auto& call = static_cast<const BoundCallExpression&>(expression);
+                std::shared_ptr<RuntimeObject> receiver;
+                if (call.null_conditional) {
+                    Value receiver_value = evaluate_expression(*call.receiver, frame);
+                    if (std::holds_alternative<std::nullptr_t>(receiver_value.data)) return Value{nullptr};
+                    receiver = std::get<std::shared_ptr<RuntimeObject>>(receiver_value.data);
+                    if (!receiver) return Value{nullptr};
+                }
                 vector<Value> arguments;
                 for (const auto& argument : call.arguments) {
                     arguments.push_back(evaluate_expression(*argument, frame));
                 }
-                std::shared_ptr<RuntimeObject> receiver;
-                if (call.receiver != nullptr) {
+                if (call.receiver != nullptr && !call.null_conditional) {
                     receiver = std::get<std::shared_ptr<RuntimeObject>>(evaluate_expression(*call.receiver, frame).data);
                 }
                 vector<const TypeSymbol*> argument_types;
@@ -7224,6 +8557,131 @@ private:
         out << "#include <stdio.h>\n";
         out << "#include <stdlib.h>\n";
         out << "#include <string.h>\n\n";
+        out << "#ifdef _WIN32\n#include <io.h>\n#include <windows.h>\n#else\n#include <sys/ioctl.h>\n#include <unistd.h>\n#endif\n\n";
+        out << "static int32_t hy_wrap_i32(uint32_t bits) { int32_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n";
+        out << "static int64_t hy_wrap_i64(uint64_t bits) { int64_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n\n";
+        out << "static int8_t hy_wrap_i8(uint8_t bits) { int8_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n";
+        out << "static int16_t hy_wrap_i16(uint16_t bits) { int16_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n";
+        out << "static uint64_t hy_shift_bits(uint64_t bits, int64_t count, int width, int right, int sign) {\n";
+        out << "    uint64_t mask = width == 64 ? UINT64_MAX : (UINT64_C(1) << width) - 1;\n";
+        out << "    bits &= mask; unsigned amount = (unsigned)count & (unsigned)(width - 1);\n";
+        out << "    uint64_t result = right ? bits >> amount : bits << amount;\n";
+        out << "    if (right && sign && amount && (bits & (UINT64_C(1) << (width - 1))))\n";
+        out << "        result |= UINT64_MAX << (width - amount);\n";
+        out << "    return result & mask;\n";
+        out << "}\n\n";
+        out << R"HY(static void hy_runtime_fail(const char* message);
+typedef struct hy_compound_frame {
+    void* location;
+    uint64_t old;
+    int storage_bytes;
+    struct hy_compound_frame* previous;
+} hy_compound_frame;
+#if defined(_MSC_VER)
+static __declspec(thread) hy_compound_frame* hy_compound_top;
+#else
+static _Thread_local hy_compound_frame* hy_compound_top;
+#endif
+static void hy_compound_begin(void* location, int storage_bytes) {
+    hy_compound_frame* frame = (hy_compound_frame*)malloc(sizeof(hy_compound_frame));
+    if (!frame) hy_runtime_fail("Compound assignment allocation failed");
+    frame->location = location;
+    frame->storage_bytes = storage_bytes;
+    frame->previous = hy_compound_top;
+    frame->old = 0;
+    if (storage_bytes == 1) { uint8_t value; memcpy(&value, location, 1); frame->old = value; }
+    else if (storage_bytes == 2) { uint16_t value; memcpy(&value, location, 2); frame->old = value; }
+    else if (storage_bytes == 4) { uint32_t value; memcpy(&value, location, 4); frame->old = value; }
+    else { memcpy(&frame->old, location, 8); }
+    hy_compound_top = frame;
+}
+static void hy_compound_unwind(hy_compound_frame* marker) {
+    while (hy_compound_top != marker) {
+        if (!hy_compound_top) hy_runtime_fail("Compound assignment frame mismatch");
+        hy_compound_frame* frame = hy_compound_top;
+        hy_compound_top = frame->previous;
+        free(frame);
+    }
+}
+static int64_t hy_compound_integer(int64_t rhs, int op, int bits, int is_signed, int return_old) {
+    hy_compound_frame* frame = hy_compound_top;
+    if (!frame) hy_runtime_fail("Compound assignment frame missing");
+    hy_compound_top = frame->previous;
+    void* location = frame->location;
+    int storage_bytes = frame->storage_bytes;
+    uint64_t old = frame->old;
+    free(frame);
+    uint64_t mask = bits == 64 ? UINT64_MAX : (UINT64_C(1) << bits) - 1;
+    uint64_t left = old & mask;
+    uint64_t right = (uint64_t)rhs & mask;
+    uint64_t result = 0;
+    if (op == 1) result = left + right;
+    else if (op == 2) result = left - right;
+    else if (op == 3) result = left * right;
+    else if (op == 6) result = left & right;
+    else if (op == 7) result = left | right;
+    else if (op == 8) result = left ^ right;
+    else if (op == 9 || op == 10) result = hy_shift_bits(left, rhs, bits, op == 10, is_signed);
+    else if (op == 4 || op == 5) {
+        if (right == 0) hy_runtime_fail("Division by zero");
+        if (is_signed) {
+            uint64_t sign_bit = UINT64_C(1) << (bits - 1);
+            int64_t signed_left = hy_wrap_i64((left & sign_bit) ? left | ~mask : left);
+            int64_t signed_right = hy_wrap_i64((right & sign_bit) ? right | ~mask : right);
+            if (signed_left == INT64_MIN && signed_right == -1)
+                hy_runtime_fail("Integer division overflow");
+            result = (uint64_t)(op == 4 ? signed_left / signed_right : signed_left % signed_right);
+        } else {
+            result = op == 4 ? left / right : left % right;
+        }
+    } else hy_runtime_fail("Unsupported compound assignment operator");
+    result &= mask;
+    uint64_t stored = result;
+    if (is_signed && (result & (UINT64_C(1) << (bits - 1)))) stored |= ~mask;
+    if (storage_bytes == 1) { uint8_t value = (uint8_t)stored; memcpy(location, &value, 1); }
+    else if (storage_bytes == 2) { uint16_t value = (uint16_t)stored; memcpy(location, &value, 2); }
+    else if (storage_bytes == 4) { uint32_t value = (uint32_t)stored; memcpy(location, &value, 4); }
+    else memcpy(location, &stored, 8);
+    uint64_t previous = left;
+    if (is_signed && (previous & (UINT64_C(1) << (bits - 1)))) previous |= ~mask;
+    return hy_wrap_i64(return_old ? previous : stored);
+}
+
+typedef struct hy_coalesce_frame {
+    void* value;
+    struct hy_coalesce_frame* previous;
+} hy_coalesce_frame;
+#if defined(_MSC_VER)
+static __declspec(thread) hy_coalesce_frame* hy_coalesce_top;
+#else
+static _Thread_local hy_coalesce_frame* hy_coalesce_top;
+#endif
+static int hy_coalesce_begin(void* value) {
+    hy_coalesce_frame* frame = (hy_coalesce_frame*)malloc(sizeof(hy_coalesce_frame));
+    if (!frame) hy_runtime_fail("Null coalescing allocation failed");
+    frame->value = value;
+    frame->previous = hy_coalesce_top;
+    hy_coalesce_top = frame;
+    return value != NULL;
+}
+static void* hy_coalesce_finish(void* fallback, int use_fallback) {
+    hy_coalesce_frame* frame = hy_coalesce_top;
+    if (!frame) hy_runtime_fail("Null coalescing frame missing");
+    hy_coalesce_top = frame->previous;
+    void* value = use_fallback ? fallback : frame->value;
+    free(frame);
+    return value;
+}
+static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
+    while (hy_coalesce_top != marker) {
+        if (!hy_coalesce_top) hy_runtime_fail("Null coalescing frame mismatch");
+        hy_coalesce_frame* frame = hy_coalesce_top;
+        hy_coalesce_top = frame->previous;
+        free(frame);
+    }
+}
+
+)HY";
 
         // --- Type ID constants ---
         out << "#define HY_TYPE_ID_STRING (-1)\n";
@@ -7530,6 +8988,10 @@ private:
         out << "        }\n";
         out << "    }\n";
         out << "}\n\n";
+        out << "static void hy_gc_mark_coalesce_values(void) {\n";
+        out << "    for (hy_coalesce_frame* frame = hy_coalesce_top; frame != NULL; frame = frame->previous)\n";
+        out << "        hy_gc_try_mark(frame->value);\n";
+        out << "}\n\n";
 
         // --- trace object ---
         out << "static void hy_gc_trace_object(void* obj) {\n";
@@ -7558,6 +9020,24 @@ private:
         out << "    hy_gc_trace_object(obj);\n";
         out << "}\n\n";
 
+        out << "static void hy_gc_mark_compound_targets(void) {\n";
+        out << "    for (hy_compound_frame* frame = hy_compound_top; frame != NULL; frame = frame->previous) {\n";
+        out << "        uintptr_t address = (uintptr_t)frame->location;\n";
+        out << "        for (size_t i = 0; i < hy_gc_heap_count; ++i) {\n";
+        out << "            HyObjectHeader* obj = (HyObjectHeader*)hy_gc_heap[i];\n";
+        out << "            uintptr_t base = (uintptr_t)obj;\n";
+        out << "            int inside = address >= base && address - base < obj->gc_size;\n";
+        out << "            if (!inside && obj->type_id == HY_TYPE_ID_ARRAY) {\n";
+        out << "                HyArray* arr = (HyArray*)obj;\n";
+        out << "                uintptr_t elements = (uintptr_t)arr->elements;\n";
+        out << "                inside = arr->elements != NULL && address >= elements &&\n";
+        out << "                    (address - elements) / sizeof(int64_t) < (size_t)arr->length;\n";
+        out << "            }\n";
+        out << "            if (inside) { hy_gc_mark_object(obj); break; }\n";
+        out << "        }\n";
+        out << "    }\n";
+        out << "}\n\n";
+
         // --- GC collect ---
         out << "static void hy_gc_collect(void) {\n";
         out << "    hy_gc_index_heap();\n";
@@ -7566,6 +9046,8 @@ private:
         out << "    }\n";
         out << "    hy_gc_mark_statics();\n";
         out << "    hy_gc_mark_roots();\n";
+        out << "    hy_gc_mark_coalesce_values();\n";
+        out << "    hy_gc_mark_compound_targets();\n";
         out << "    size_t live = 0;\n";
         out << "    size_t live_bytes = 0;\n";
         out << "    for (size_t i = 0; i < hy_gc_heap_count; i++) {\n";
@@ -7682,6 +9164,15 @@ private:
         out << "    }\n";
         out << "    return arr;\n";
         out << "}\n\n";
+        out << "static HyArray* hy_array_slice(HyArray* source, int64_t start, int64_t end) {\n";
+        out << "    if (source == NULL) hy_runtime_fail(\"Slice receiver is null\");\n";
+        out << "    if (start < 0 || end < start || end > source->length) hy_runtime_fail(\"Slice bounds out of range\");\n";
+        out << "    int64_t count = end - start;\n";
+        out << "    if (count > 0x7ffffff) hy_runtime_fail(\"Slice size out of range\");\n";
+        out << "    HyArray* result = hy_array_new(count, source->element_is_ref);\n";
+        out << "    if (count > 0) memcpy(result->elements, (int64_t*)source->elements + start, (size_t)count * sizeof(int64_t));\n";
+        out << "    return result;\n";
+        out << "}\n\n";
 
         // --- Managed string helpers ---
         out << "static HyString* hy_string_new(const char* cstr, int64_t length) {\n";
@@ -7699,6 +9190,13 @@ private:
         out << "    }\n";
         out << "    hy_gc_account_payload(length > 0 ? (size_t)length + 1 : 1);\n";
         out << "    return s;\n";
+        out << "}\n\n";
+        out << "static HyString* hy_string_slice(HyString* source, int64_t start, int64_t end) {\n";
+        out << "    if (source == NULL) hy_runtime_fail(\"Slice receiver is null\");\n";
+        out << "    if (start < 0 || end < start || end > source->length) hy_runtime_fail(\"Slice bounds out of range\");\n";
+        out << "    int64_t count = end - start;\n";
+        out << "    if (count > 0x7ffffff) hy_runtime_fail(\"Slice size out of range\");\n";
+        out << "    return hy_string_new(source->bytes + start, count);\n";
         out << "}\n\n";
         out << "static HyString* hy_string_literal(const char* cstr) {\n";
         out << "    int64_t length = (int64_t)strlen(cstr);\n";
@@ -7754,6 +9252,35 @@ private:
         // --- Console helpers ---
         out << "static void hy_console_write_string(HyString* value) {\n";
         out << "    if (value != NULL && value->bytes != NULL) fwrite(value->bytes, 1, (size_t)value->length, stdout);\n";
+        out << "    fflush(stdout);\n";
+        out << "}\n";
+        out << "static void hy_console_write_bytes(HyArray* value) {\n";
+        out << "    if (value == NULL) return;\n";
+        out << "    for (int64_t i = 0; i < value->length; ++i) {\n";
+        out << "        unsigned char byte = (unsigned char)(((int64_t*)value->elements)[i] & 0xFF);\n";
+        out << "        fwrite(&byte, 1, 1, stdout);\n";
+        out << "    }\n";
+        out << "    fflush(stdout);\n";
+        out << "}\n";
+        out << "static bool hy_console_is_terminal(void) {\n";
+        out << "#ifdef _WIN32\n    return _isatty(_fileno(stdout)) != 0;\n";
+        out << "#else\n    return isatty(1) != 0;\n#endif\n";
+        out << "}\n";
+        out << "static int64_t hy_console_terminal_width(void) {\n";
+        out << "#ifdef _WIN32\n";
+        out << "    CONSOLE_SCREEN_BUFFER_INFO info;\n";
+        out << "    HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);\n";
+        out << "    if (handle != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(handle, &info))\n";
+        out << "        return (int64_t)(info.srWindow.Right - info.srWindow.Left + 1);\n";
+        out << "#else\n";
+        out << "    struct winsize size;\n";
+        out << "    if (ioctl(1, TIOCGWINSZ, &size) == 0 && size.ws_col > 0) return (int64_t)size.ws_col;\n";
+        out << "#endif\n";
+        out << "    return 0;\n";
+        out << "}\n";
+        out << "static int32_t hy_console_utf8_byte_at(HyString* value, int32_t index) {\n";
+        out << "    if (value == NULL || index < 0 || (int64_t)index >= value->length) hy_runtime_fail(\"String index out of range\");\n";
+        out << "    return (unsigned char)value->bytes[index];\n";
         out << "}\n";
         out << "static void hy_console_write_int(int64_t value) {\n";
         out << "    printf(\"%lld\", (long long)value);\n";
@@ -7764,12 +9291,15 @@ private:
         out << "static void hy_console_writeline_string(HyString* value) {\n";
         out << "    if (value != NULL && value->bytes != NULL) fwrite(value->bytes, 1, (size_t)value->length, stdout);\n";
         out << "    putchar('\\n');\n";
+        out << "    fflush(stdout);\n";
         out << "}\n";
         out << "static void hy_console_writeline_int(int64_t value) {\n";
         out << "    printf(\"%lld\\n\", (long long)value);\n";
+        out << "    fflush(stdout);\n";
         out << "}\n";
         out << "static void hy_console_writeline_bool(bool value) {\n";
         out << "    printf(\"%s\\n\", value ? \"true\" : \"false\");\n";
+        out << "    fflush(stdout);\n";
         out << "}\n\n";
 
         // --- File helpers ---
@@ -7787,11 +9317,14 @@ private:
         out << "    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return NULL; }\n";
         out << "    long size = ftell(file);\n";
         out << "    if (size < 0) { fclose(file); return NULL; }\n";
-        out << "    rewind(file);\n";
+        out << "    if (size > 16777216) { fclose(file); hy_runtime_fail(\"File text read exceeds 16 MiB\"); }\n";
+        out << "    if (fseek(file, 0, SEEK_SET) != 0) { fclose(file); return NULL; }\n";
         out << "    char* buf = (char*)malloc((size_t)size + 1);\n";
         out << "    if (!buf) { fclose(file); hy_runtime_fail(\"File read allocation failed\"); }\n";
         out << "    size_t read_count = fread(buf, 1, (size_t)size, file);\n";
-        out << "    fclose(file);\n";
+        out << "    if (read_count != (size_t)size) { free(buf); fclose(file); hy_runtime_fail(\"File read failed\"); }\n";
+        out << "    if (fgetc(file) != EOF || ferror(file)) { free(buf); fclose(file); hy_runtime_fail(\"File changed during read\"); }\n";
+        out << "    if (fclose(file) != 0) { free(buf); hy_runtime_fail(\"File close failed\"); }\n";
         out << "    buf[read_count] = '\\0';\n";
         out << "    HyString* result = (HyString*)hy_gc_alloc(sizeof(HyString));\n";
         out << "    result->__header.type_id = HY_TYPE_ID_STRING;\n";
@@ -7820,14 +9353,23 @@ private:
         out << "    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return NULL; }\n";
         out << "    long size = ftell(file);\n";
         out << "    if (size < 0) { fclose(file); return NULL; }\n";
-        out << "    rewind(file);\n";
+        out << "    if (fseek(file, 0, SEEK_SET) != 0) { fclose(file); return NULL; }\n";
         out << "    HyArray* result = hy_array_new((int64_t)size, 0);\n";
-        out << "    for (long i = 0; i < size; ++i) {\n";
-        out << "        int ch = fgetc(file);\n";
-        out << "        if (ch == EOF) break;\n";
-        out << "        ((int64_t*)result->elements)[i] = (int64_t)(unsigned char)ch;\n";
+        out << "    unsigned char buffer[4096];\n";
+        out << "    for (long offset = 0; offset < size;) {\n";
+        out << "        size_t chunk = (size_t)(size - offset);\n";
+        out << "        if (chunk > sizeof(buffer)) chunk = sizeof(buffer);\n";
+        out << "        size_t count = fread(buffer, 1, chunk, file);\n";
+        out << "        if (count != chunk) {\n";
+        out << "            int ended = feof(file);\n";
+        out << "            fclose(file);\n";
+        out << "            hy_runtime_fail(ended ? \"File truncated during read\" : \"File read failed\");\n";
+        out << "        }\n";
+        out << "        for (size_t i = 0; i < count; ++i)\n";
+        out << "            ((int64_t*)result->elements)[offset + (long)i] = (int64_t)buffer[i];\n";
+        out << "        offset += (long)count;\n";
         out << "    }\n";
-        out << "    fclose(file);\n";
+        out << "    if (fclose(file) != 0) hy_runtime_fail(\"File close failed\");\n";
         out << "    return result;\n";
         out << "}\n";
         out << "static void hy_file_write_all_bytes(HyString* path, HyArray* content) {\n";
@@ -7835,9 +9377,17 @@ private:
         out << "    FILE* file = fopen(path->bytes, \"wb\");\n";
         out << "    if (file == NULL) hy_runtime_fail(\"File write failed\");\n";
         out << "    if (content != NULL) {\n";
-        out << "        for (int64_t i = 0; i < content->length; ++i) {\n";
-        out << "            unsigned char byte = (unsigned char)(((int64_t*)content->elements)[i] & 0xFF);\n";
-        out << "            fwrite(&byte, 1, 1, file);\n";
+        out << "        unsigned char buffer[4096];\n";
+        out << "        for (int64_t offset = 0; offset < content->length;) {\n";
+        out << "            size_t chunk = (size_t)(content->length - offset);\n";
+        out << "            if (chunk > sizeof(buffer)) chunk = sizeof(buffer);\n";
+        out << "            for (size_t i = 0; i < chunk; ++i)\n";
+        out << "                buffer[i] = (unsigned char)(((int64_t*)content->elements)[offset + (int64_t)i] & 0xFF);\n";
+        out << "            if (fwrite(buffer, 1, chunk, file) != chunk) {\n";
+        out << "                fclose(file);\n";
+        out << "                hy_runtime_fail(\"File write failed\");\n";
+        out << "            }\n";
+        out << "            offset += (int64_t)chunk;\n";
         out << "        }\n";
         out << "    }\n";
         out << "    if (fclose(file) != 0) hy_runtime_fail(\"File close failed\");\n";
@@ -8610,6 +10160,10 @@ private:
                 indent(out, level + 1);
                 out << "jmp_buf* hy__prev_catch_" << id << " = hy_exception_target;\n";
                 indent(out, level + 1);
+                out << "hy_compound_frame* hy__prev_compound_" << id << " = hy_compound_top;\n";
+                indent(out, level + 1);
+                out << "hy_coalesce_frame* hy__prev_coalesce_" << id << " = hy_coalesce_top;\n";
+                indent(out, level + 1);
                 out << "hy_exception_target = &hy__catch_" << id << ";\n";
                 indent(out, level + 1);
                 out << "if (setjmp(hy__catch_" << id << ") == 0) {\n";
@@ -8620,6 +10174,10 @@ private:
                 out << "} else {\n";
                 indent(out, level + 2);
                 out << "hy_exception_target = hy__prev_catch_" << id << ";\n";
+                indent(out, level + 2);
+                out << "hy_compound_unwind(hy__prev_compound_" << id << ");\n";
+                indent(out, level + 2);
+                out << "hy_coalesce_unwind(hy__prev_coalesce_" << id << ");\n";
                 if (try_statement.catch_variable != nullptr) {
                     indent(out, level + 2);
                     out << local_name(*try_statement.catch_variable)
@@ -8781,7 +10339,38 @@ private:
         return result;
     }
 
+    string emit_optional_expression(const BoundExpression& expression, const BoundExpression& receiver) {
+        const string source = emit_expression(receiver);
+        const BoundExpression* previous_receiver = optional_receiver_override_;
+        const BoundExpression* previous_root = optional_expression_root_;
+        optional_receiver_override_ = &receiver;
+        optional_expression_root_ = &expression;
+        const string body = emit_expression(expression);
+        optional_receiver_override_ = previous_receiver;
+        optional_expression_root_ = previous_root;
+        return "((" + c_type_name(expression.type) + ")(hy_coalesce_begin((void*)(" + source +
+               ")) ? hy_coalesce_finish((void*)(" + body + "), 1) : hy_coalesce_finish(NULL, 1)))";
+    }
+
     string emit_expression(const BoundExpression& expression) {
+        if (&expression == optional_receiver_override_) {
+            return "((" + c_type_name(expression.type) + ")hy_coalesce_top->value)";
+        }
+        if (&expression != optional_expression_root_) {
+            if (expression.kind == BoundExpressionKind::Field) {
+                const auto& field = static_cast<const BoundFieldExpression&>(expression);
+                if (field.null_conditional) return emit_optional_expression(expression, *field.receiver);
+            } else if (expression.kind == BoundExpressionKind::ArrayIndex) {
+                const auto& access = static_cast<const BoundArrayIndexExpression&>(expression);
+                if (access.null_conditional) return emit_optional_expression(expression, *access.array_expression);
+            } else if (expression.kind == BoundExpressionKind::StringIndex) {
+                const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
+                if (access.null_conditional) return emit_optional_expression(expression, *access.string_expression);
+            } else if (expression.kind == BoundExpressionKind::Call) {
+                const auto& call = static_cast<const BoundCallExpression&>(expression);
+                if (call.null_conditional) return emit_optional_expression(expression, *call.receiver);
+            }
+        }
         switch (expression.kind) {
             case BoundExpressionKind::Literal: {
                 const auto& literal = static_cast<const BoundLiteralExpression&>(expression);
@@ -8844,12 +10433,41 @@ private:
                 return "hy_string_index(" + emit_expression(*access.string_expression) + ", " +
                        emit_expression(*access.index_expression) + ")";
             }
+            case BoundExpressionKind::Slice: {
+                const auto& slice = static_cast<const BoundSliceExpression&>(expression);
+                const bool is_string = slice.type == &program_.semantic_model.string_type;
+                const string source_type = is_string ? "HyString*" : "HyArray*";
+                const string helper = is_string ? "hy_string_slice" : "hy_array_slice";
+                return "({ " + source_type + " hy__slice_source = " + emit_expression(*slice.target) +
+                       "; int64_t hy__slice_start = " + emit_expression(*slice.start) +
+                       "; int64_t hy__slice_end = " + emit_expression(*slice.end) +
+                       "; " + helper + "(hy__slice_source, hy__slice_start, hy__slice_end); })";
+            }
             case BoundExpressionKind::StringLength: {
                 const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
                 return "hy_string_length(" + emit_expression(*length.string_expression) + ")";
             }
             case BoundExpressionKind::Assignment: {
                 const auto& assignment = static_cast<const BoundAssignmentExpression&>(expression);
+                if (assignment.compound_op != TokenKind::Equals) {
+                    string location;
+                    int storage_bytes = integral_type_size_bytes(assignment.target->type);
+                    if (assignment.target->kind == BoundExpressionKind::ArrayIndex) {
+                        const auto& access = static_cast<const BoundArrayIndexExpression&>(*assignment.target);
+                        location = "hy_array_ptr(" + emit_expression(*access.array_expression) + ", " +
+                                   emit_expression(*access.index_expression) + ")";
+                        storage_bytes = 8;
+                    } else {
+                        location = "&(" + emit_expression(*assignment.target) + ")";
+                    }
+                    return "((" + c_type_name(assignment.type) + ")(hy_compound_begin(" + location + ", " +
+                           std::to_string(storage_bytes) + "), hy_compound_integer((int64_t)(" +
+                           emit_expression(*assignment.expression) + "), " +
+                           std::to_string(compound_operator_code(assignment.compound_op)) + ", " +
+                           std::to_string(integral_type_size_bytes(assignment.type) * 8) + ", " +
+                           std::to_string(is_signed_integral_type(assignment.type) ? 1 : 0) + ", " +
+                           std::to_string(assignment.returns_old ? 1 : 0) + ")))";
+                }
                 // Array index assignment requires storing into int64_t element storage
                 if (assignment.target->kind == BoundExpressionKind::ArrayIndex) {
                     const auto& access = static_cast<const BoundArrayIndexExpression&>(*assignment.target);
@@ -8947,10 +10565,37 @@ private:
                 if (unary.op == TokenKind::Star) {
                     return emit_pointer_load(emit_expression(*unary.operand), expression.type, "0");
                 }
+                if (unary.op == TokenKind::Tilde) {
+                    const string result_type = c_type_name(expression.type);
+                    const string unsigned_type = result_type == "int32_t" ? "uint32_t" : "uint64_t";
+                    if (result_type == "int32_t" || result_type == "int64_t") {
+                        const string helper = result_type == "int32_t" ? "hy_wrap_i32" : "hy_wrap_i64";
+                        return helper + "(~(" + unsigned_type + ")(" + emit_expression(*unary.operand) + "))";
+                    }
+                    if (result_type == "int8_t") {
+                        return "hy_wrap_i8((uint8_t)(~(uint8_t)(" + emit_expression(*unary.operand) + ")))";
+                    }
+                    if (result_type == "int16_t") {
+                        return "hy_wrap_i16((uint16_t)(~(uint16_t)(" + emit_expression(*unary.operand) + ")))";
+                    }
+                    return "((" + result_type + ")(~(" + result_type + ")(" +
+                           emit_expression(*unary.operand) + ")))";
+                }
                 return "(" + token_text(unary.op) + emit_expression(*unary.operand) + ")";
+            }
+            case BoundExpressionKind::Conditional: {
+                const auto& conditional = static_cast<const BoundConditionalExpression&>(expression);
+                return "((" + emit_expression(*conditional.condition) + ") ? (" +
+                       emit_expression(*conditional.when_true) + ") : (" +
+                       emit_expression(*conditional.when_false) + "))";
             }
             case BoundExpressionKind::Binary: {
                 const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
+                if (binary.op == TokenKind::QuestionQuestion) {
+                    return "((" + c_type_name(binary.type) + ")(hy_coalesce_begin((void*)(" +
+                           emit_expression(*binary.left) + ")) ? hy_coalesce_finish(NULL, 0) : " +
+                           "hy_coalesce_finish((void*)(" + emit_expression(*binary.right) + "), 1)))";
+                }
                 if (binary.op == TokenKind::Plus && binary.type == &program_.semantic_model.string_type) {
                     return "hy_string_concat(" + emit_string_operand(*binary.left) + ", " + emit_string_operand(*binary.right) + ")";
                 }
@@ -8991,11 +10636,46 @@ private:
                     }
                     return binary.op == TokenKind::EqualsEquals ? comparison : "(!" + comparison + ")";
                 }
+                if (binary.op == TokenKind::Plus || binary.op == TokenKind::Minus ||
+                    binary.op == TokenKind::Star || binary.op == TokenKind::Ampersand ||
+                    binary.op == TokenKind::Pipe || binary.op == TokenKind::Caret) {
+                    const string result_type = c_type_name(binary.type);
+                    if (result_type == "int32_t" || result_type == "int64_t") {
+                        const string unsigned_type = result_type == "int32_t" ? "uint32_t" : "uint64_t";
+                        const string helper = result_type == "int32_t" ? "hy_wrap_i32" : "hy_wrap_i64";
+                        return helper + "((" + unsigned_type + ")(" + emit_expression(*binary.left) + ") " +
+                               token_text(binary.op) + " (" + unsigned_type + ")(" +
+                               emit_expression(*binary.right) + "))";
+                    }
+                }
+                if (binary.op == TokenKind::ShiftLeft || binary.op == TokenKind::ShiftRight) {
+                    const string result_type = c_type_name(expression.type);
+                    const string shifted = "hy_shift_bits((uint64_t)(" + emit_expression(*binary.left) +
+                                           "), (int64_t)(" + emit_expression(*binary.right) + "), " +
+                                           std::to_string(integral_type_size_bytes(expression.type) * 8) + ", " +
+                                           (binary.op == TokenKind::ShiftRight ? "1" : "0") + ", " +
+                                           (is_signed_integral_type(expression.type) ? "1" : "0") + ")";
+                    if (result_type == "int8_t") return "hy_wrap_i8((uint8_t)(" + shifted + "))";
+                    if (result_type == "int16_t") return "hy_wrap_i16((uint16_t)(" + shifted + "))";
+                    if (result_type == "int32_t") return "hy_wrap_i32((uint32_t)(" + shifted + "))";
+                    if (result_type == "int64_t") return "hy_wrap_i64((uint64_t)(" + shifted + "))";
+                    return "((" + result_type + ")(" + shifted + "))";
+                }
                 return "(" + emit_expression(*binary.left) + " " + token_text(binary.op) + " " + emit_expression(*binary.right) + ")";
             }
             case BoundExpressionKind::Call: {
                 const auto& call = static_cast<const BoundCallExpression&>(expression);
                 if (call.method->is_builtin && call.method->owner == program_.semantic_model.console_class) {
+                    if (call.method == program_.semantic_model.console_is_terminal) {
+                        return "hy_console_is_terminal()";
+                    }
+                    if (call.method == program_.semantic_model.console_terminal_width) {
+                        return "hy_console_terminal_width()";
+                    }
+                    if (call.method == program_.semantic_model.console_utf8_byte_at) {
+                        return "hy_console_utf8_byte_at(" + emit_expression(*call.arguments[0]) + ", " +
+                               emit_expression(*call.arguments[1]) + ")";
+                    }
                     if (!call.arguments.empty() &&
                         call.arguments[0]->type != nullptr &&
                         call.arguments[0]->type->kind == TypeKind::Enum &&
@@ -9007,6 +10687,8 @@ private:
                     string function_name = "hy_console_writeline_string";
                     if (call.method == program_.semantic_model.console_write_string) {
                         function_name = "hy_console_write_string";
+                    } else if (call.method == program_.semantic_model.console_write_bytes) {
+                        function_name = "hy_console_write_bytes";
                     } else if (call.method == program_.semantic_model.console_write_int) {
                         function_name = "hy_console_write_int";
                     } else if (call.method == program_.semantic_model.console_write_bool) {
@@ -9064,6 +10746,9 @@ private:
                                emit_expression(*call.arguments[1]) + ", (int64_t)(" + emit_expression(*call.arguments[2]) +
                                "))";
                     }
+                }
+                if (call.method == program_.semantic_model.gc_collect) {
+                    return "hy_gc_collect()";
                 }
                 if ((call.method->is_builtin && call.method->owner == program_.semantic_model.assert_class) ||
                     (call.method->is_builtin && call.method->owner == program_.semantic_model.intrinsics_class)) {
@@ -9251,6 +10936,18 @@ private:
                 return "%";
             case TokenKind::Bang:
                 return "!";
+            case TokenKind::Ampersand:
+                return "&";
+            case TokenKind::Pipe:
+                return "|";
+            case TokenKind::Caret:
+                return "^";
+            case TokenKind::Tilde:
+                return "~";
+            case TokenKind::ShiftLeft:
+                return "<<";
+            case TokenKind::ShiftRight:
+                return ">>";
             case TokenKind::EqualsEquals:
                 return "==";
             case TokenKind::BangEquals:
@@ -9277,6 +10974,8 @@ private:
     const TypeSymbol* current_function_return_type_ = nullptr;
     fs::path current_function_source_file_;
     int next_exception_handler_id_ = 0;
+    const BoundExpression* optional_receiver_override_ = nullptr;
+    const BoundExpression* optional_expression_root_ = nullptr;
 };
 
 struct ProjectManifest {
@@ -9532,11 +11231,16 @@ void validate_manifest_metadata(const fs::path& path, ProjectManifest& manifest,
 }
 
 std::optional<ProjectManifest> load_project_manifest(const fs::path& path, DiagnosticBag& diagnostics) {
-    std::ifstream input(path);
-    if (!input) {
-        diagnostics.add(path, 1, 1, "Could not open project manifest");
+    string manifest_text;
+    const auto read_result = read_bounded_text_file(path, manifest_text);
+    if (read_result != TextReadResult::Ok) {
+        diagnostics.add(path, 1, 1, read_result == TextReadResult::TooLarge
+            ? "Project manifest exceeds 16 MiB"
+            : read_result == TextReadResult::OpenFailed
+                ? "Could not open project manifest" : "Could not read project manifest");
         return std::nullopt;
     }
+    std::istringstream input(manifest_text);
 
     ProjectManifest manifest;
     manifest.manifest_path = path;
@@ -9635,14 +11339,7 @@ std::optional<ProjectManifest> load_project_manifest(const fs::path& path, Diagn
 }
 
 bool read_text_file(const fs::path& path, string& output) {
-    std::ifstream input(path);
-    if (!input) {
-        return false;
-    }
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-    output = buffer.str();
-    return true;
+    return read_bounded_text_file(path, output) == TextReadResult::Ok;
 }
 
 void collect_project_sources(const fs::path& path,
@@ -9706,17 +11403,32 @@ void collect_workspace_projects(const fs::path& path,
     }
 }
 
-vector<CompilationUnitSyntax> parse_units(const vector<fs::path>& source_files, DiagnosticBag& diagnostics) {
+vector<CompilationUnitSyntax> parse_units(const vector<fs::path>& source_files, DiagnosticBag& diagnostics,
+                                          const std::function<void(const fs::path&)>& on_parsed = {},
+                                          const std::function<void(const fs::path&)>& on_parsing = {},
+                                          const std::function<void(std::size_t)>& on_action_progress = {}) {
     vector<CompilationUnitSyntax> units;
     for (const auto& source_file : source_files) {
+        if (on_parsing) on_parsing(source_file);
         string source_text;
-        if (!read_text_file(source_file, source_text)) {
-            diagnostics.add(source_file, 1, 1, "Could not read source file");
+        const auto read_result = read_bounded_text_file(source_file, source_text);
+        if (read_result != TextReadResult::Ok) {
+            diagnostics.add(source_file, 1, 1, read_result == TextReadResult::TooLarge
+                ? "Source file exceeds 16 MiB" : "Could not read source file");
             continue;
         }
         Lexer lexer(source_file, source_text, diagnostics);
+        if (on_action_progress) lexer.set_progress([&](std::size_t done, std::size_t total) {
+            on_action_progress(total == 0 ? 50 : done * 50 / total);
+        });
         Parser parser(source_file, lexer.lex(), diagnostics);
+        if (on_action_progress) parser.set_progress([&](std::size_t done, std::size_t total) {
+            on_action_progress(total == 0 ? 99 : 50 + done * 49 / total);
+        });
         units.push_back(parser.parse());
+        if (on_parsed) {
+            on_parsed(source_file);
+        }
     }
     return units;
 }
@@ -10062,9 +11774,13 @@ vector<fs::path> collect_target_source_files(const fs::path& input_path, Diagnos
     return source_files;
 }
 
-std::unique_ptr<BoundProgram> load_program_from_target(const fs::path& input_path, DiagnosticBag& diagnostics) {
+std::unique_ptr<BoundProgram> load_program_from_target(const fs::path& input_path, DiagnosticBag& diagnostics,
+    const std::function<void(const fs::path&)>& on_parsed = {}, const std::function<void()>& on_bound = {},
+    const std::function<void()>& on_binding = {},
+    const std::function<void(const fs::path&)>& on_parsing = {},
+    const std::function<void(std::size_t)>& on_action_progress = {}) {
     vector<fs::path> source_files = collect_target_source_files(input_path, diagnostics);
-    auto units = parse_units(source_files, diagnostics);
+    auto units = parse_units(source_files, diagnostics, on_parsed, on_parsing, on_action_progress);
     if (diagnostics.has_errors()) {
         return nullptr;
     }
@@ -10075,8 +11791,12 @@ std::unique_ptr<BoundProgram> load_program_from_target(const fs::path& input_pat
         return nullptr;
     }
 
+    if (on_binding) on_binding();
     SemanticBuilder builder(std::move(units), diagnostics);
     auto program = builder.build();
+    if (on_bound && !diagnostics.has_errors()) {
+        on_bound();
+    }
     if (diagnostics.has_errors()) {
         return nullptr;
     }
@@ -10095,21 +11815,98 @@ std::optional<ProjectManifest> manifest_for_target(const fs::path& input_path, D
     return manifest;
 }
 
-string quote(const fs::path& value) {
-    return "\"" + value.string() + "\"";
+// Tool commands are argument vectors throughout the SDK. In particular,
+// project and output paths must never pass through a command shell.
+int run_process(const vector<string>& command) {
+    if (command.empty() || command[0].empty()) return -1;
+    vector<const char*> args;
+    args.reserve(command.size() + 1);
+    for (const string& part : command) args.push_back(part.c_str());
+    args.push_back(nullptr);
+#ifdef _WIN32
+    return static_cast<int>(_spawnvp(_P_WAIT, args[0], args.data()));
+#else
+    vector<char*> mutable_args;
+    mutable_args.reserve(args.size());
+    for (const char* part : args) mutable_args.push_back(const_cast<char*>(part));
+    pid_t child = -1;
+    if (posix_spawnp(&child, args[0], nullptr, nullptr, mutable_args.data(), environ) != 0) return -1;
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno != EINTR) return -1;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return -1;
+#endif
 }
 
 bool command_exists(const string& command) {
 #ifdef _WIN32
-    const string check = "where " + command + " >nul 2>nul";
+    char found[MAX_PATH];
+    return SearchPathA(nullptr, command.c_str(), ".exe", MAX_PATH, found, nullptr) != 0;
 #else
-    const string check = "command -v " + command + " >/dev/null 2>&1";
+    if (command.find('/') != string::npos) {
+        std::error_code error;
+        return fs::is_regular_file(command, error) && access(command.c_str(), X_OK) == 0;
+    }
+    const char* path_value = std::getenv("PATH");
+    if (path_value == nullptr) return false;
+    string path(path_value);
+    std::size_t start = 0;
+    while (start <= path.size()) {
+        const std::size_t end = path.find(':', start);
+        const string directory = path.substr(start, end == string::npos ? string::npos : end - start);
+        const fs::path candidate = fs::path(directory.empty() ? "." : directory) / command;
+        std::error_code error;
+        if (fs::is_regular_file(candidate, error) && access(candidate.c_str(), X_OK) == 0) return true;
+        if (end == string::npos) break;
+        start = end + 1;
+    }
+    return false;
 #endif
-    return std::system(check.c_str()) == 0;
+}
+
+// Accept a quoted executable path and optional flags in CC without allowing
+// shell expansion. A malformed quote makes the requested toolchain unavailable.
+vector<string> parse_tool_command(const string& text) {
+    if (command_exists(text)) return {text};
+    vector<string> parts;
+    string part;
+    char quote_char = 0;
+    bool started = false;
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        const char ch = text[index];
+        if (quote_char != 0) {
+            if (ch == quote_char) { quote_char = 0; continue; }
+            if (ch == '\\' && quote_char == '"' && index + 1 < text.size() &&
+                (text[index + 1] == '"' || text[index + 1] == '\\')) {
+                part += text[++index];
+                continue;
+            }
+            part += ch;
+        } else if (ch == '\'' || ch == '"') {
+            quote_char = ch;
+            started = true;
+        } else if (std::isspace(static_cast<unsigned char>(ch))) {
+            if (started) { parts.push_back(part); part.clear(); started = false; }
+        } else if (ch == '\\' && index + 1 < text.size() &&
+                   (std::isspace(static_cast<unsigned char>(text[index + 1])) ||
+                    text[index + 1] == '\'' || text[index + 1] == '"')) {
+            part += text[++index];
+            started = true;
+        } else {
+            part += ch;
+            started = true;
+        }
+    }
+    if (quote_char != 0) return {};
+    if (started) parts.push_back(part);
+    return parts;
 }
 
 struct HostToolchain {
-    string c_compiler;
+    vector<string> c_compiler;
     string archiver;
     bool uses_msvc = false;
 };
@@ -10118,7 +11915,8 @@ std::optional<HostToolchain> detect_host_toolchain() {
     const char* env_cc = std::getenv("CC");
     if (env_cc != nullptr && *env_cc != '\0') {
         HostToolchain toolchain;
-        toolchain.c_compiler = env_cc;
+        toolchain.c_compiler = parse_tool_command(env_cc);
+        if (toolchain.c_compiler.empty() || !command_exists(toolchain.c_compiler[0])) return std::nullopt;
         toolchain.archiver = command_exists("ar") ? "ar" : "";
         return toolchain;
     }
@@ -10126,7 +11924,7 @@ std::optional<HostToolchain> detect_host_toolchain() {
 #ifdef _WIN32
     if (command_exists("cl")) {
         HostToolchain toolchain;
-        toolchain.c_compiler = "cl";
+        toolchain.c_compiler = {"cl"};
         toolchain.archiver = command_exists("lib") ? "lib" : "";
         toolchain.uses_msvc = true;
         return toolchain;
@@ -10136,7 +11934,7 @@ std::optional<HostToolchain> detect_host_toolchain() {
     for (const string candidate : {"cc", "clang", "gcc"}) {
         if (command_exists(candidate)) {
             HostToolchain toolchain;
-            toolchain.c_compiler = candidate;
+            toolchain.c_compiler = {candidate};
             toolchain.archiver = command_exists("ar") ? "ar" : "";
             return toolchain;
         }
@@ -10345,6 +12143,7 @@ string compute_target_fingerprint(const fs::path& input_path,
     hash = hash_bytes(hash, manifest.version);
     hash = hash_bytes(hash, target_type);
     hash = hash_bytes(hash, debug ? "debug" : "nodebug");
+    hash = hash_bytes(hash, "c-backend-wrap-arithmetic-v3");
     for (const auto& source_file : source_files) {
         string text;
         if (read_text_file(source_file, text)) {
@@ -10434,6 +12233,13 @@ void collect_symbol_usage(const BoundExpression& expression,
             collect_symbol_usage(*access.index_expression, used_locals, used_parameters);
             return;
         }
+        case BoundExpressionKind::Slice: {
+            const auto& slice = static_cast<const BoundSliceExpression&>(expression);
+            collect_symbol_usage(*slice.target, used_locals, used_parameters);
+            collect_symbol_usage(*slice.start, used_locals, used_parameters);
+            collect_symbol_usage(*slice.end, used_locals, used_parameters);
+            return;
+        }
         case BoundExpressionKind::StringLength: {
             const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
             collect_symbol_usage(*length.string_expression, used_locals, used_parameters);
@@ -10461,6 +12267,13 @@ void collect_symbol_usage(const BoundExpression& expression,
             const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
             collect_symbol_usage(*binary.left, used_locals, used_parameters);
             collect_symbol_usage(*binary.right, used_locals, used_parameters);
+            return;
+        }
+        case BoundExpressionKind::Conditional: {
+            const auto& conditional = static_cast<const BoundConditionalExpression&>(expression);
+            collect_symbol_usage(*conditional.condition, used_locals, used_parameters);
+            collect_symbol_usage(*conditional.when_true, used_locals, used_parameters);
+            collect_symbol_usage(*conditional.when_false, used_locals, used_parameters);
             return;
         }
         case BoundExpressionKind::Call: {
@@ -10700,6 +12513,13 @@ void collect_member_usage(const BoundExpression& expression,
             collect_member_usage(*access.index_expression, used_fields, used_methods);
             return;
         }
+        case BoundExpressionKind::Slice: {
+            const auto& slice = static_cast<const BoundSliceExpression&>(expression);
+            collect_member_usage(*slice.target, used_fields, used_methods);
+            collect_member_usage(*slice.start, used_fields, used_methods);
+            collect_member_usage(*slice.end, used_fields, used_methods);
+            return;
+        }
         case BoundExpressionKind::StringLength:
             collect_member_usage(*static_cast<const BoundStringLengthExpression&>(expression).string_expression, used_fields, used_methods);
             return;
@@ -10723,6 +12543,13 @@ void collect_member_usage(const BoundExpression& expression,
             const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
             collect_member_usage(*binary.left, used_fields, used_methods);
             collect_member_usage(*binary.right, used_fields, used_methods);
+            return;
+        }
+        case BoundExpressionKind::Conditional: {
+            const auto& conditional = static_cast<const BoundConditionalExpression&>(expression);
+            collect_member_usage(*conditional.condition, used_fields, used_methods);
+            collect_member_usage(*conditional.when_true, used_fields, used_methods);
+            collect_member_usage(*conditional.when_false, used_fields, used_methods);
             return;
         }
         case BoundExpressionKind::NewObject: {
@@ -10816,6 +12643,13 @@ void lint_expression(const BoundExpression& expression,
             lint_expression(*access.index_expression, freed_buffers, diagnostics, file);
             return;
         }
+        case BoundExpressionKind::Slice: {
+            const auto& slice = static_cast<const BoundSliceExpression&>(expression);
+            lint_expression(*slice.target, freed_buffers, diagnostics, file);
+            lint_expression(*slice.start, freed_buffers, diagnostics, file);
+            lint_expression(*slice.end, freed_buffers, diagnostics, file);
+            return;
+        }
         case BoundExpressionKind::StringLength: {
             const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
             lint_expression(*length.string_expression, freed_buffers, diagnostics, file);
@@ -10843,6 +12677,13 @@ void lint_expression(const BoundExpression& expression,
             const auto& binary = static_cast<const BoundBinaryExpression&>(expression);
             lint_expression(*binary.left, freed_buffers, diagnostics, file);
             lint_expression(*binary.right, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::Conditional: {
+            const auto& conditional = static_cast<const BoundConditionalExpression&>(expression);
+            lint_expression(*conditional.condition, freed_buffers, diagnostics, file);
+            lint_expression(*conditional.when_true, freed_buffers, diagnostics, file);
+            lint_expression(*conditional.when_false, freed_buffers, diagnostics, file);
             return;
         }
         case BoundExpressionKind::Call: {
@@ -11256,7 +13097,20 @@ BuildResult build_target(const BuildOptions& options) {
     }
 
     const vector<fs::path> source_files = collect_target_source_files(options.input_path, diagnostics);
-    const auto program = load_program_from_target(options.input_path, diagnostics);
+    const std::size_t total = source_files.size() + 3;
+    std::size_t completed = 0;
+    const auto status = [&](const string& message) {
+        if (options.progress) options.progress(completed, total, message);
+    };
+    const auto advance = [&](const string& message) {
+        if (options.progress) options.progress(++completed, total, message);
+    };
+    const auto program = load_program_from_target(options.input_path, diagnostics,
+        [&](const fs::path& path) { advance("Parsed " + path.string()); },
+        [&]() { advance("Bound program"); },
+        [&]() { status("Binding program"); },
+        [&](const fs::path& path) { status("Parsing " + path.string()); },
+        options.action_progress);
     if (!program) {
         return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
@@ -11292,10 +13146,12 @@ BuildResult build_target(const BuildOptions& options) {
         if (options.debug) {
             cached.source_map_path = build_dir / (manifest->name + ".hymap.json");
         }
+        if (options.progress) options.progress(total, total, "Cache hit: " + output_path.string());
         return cached;
     }
 
     if (target_type == "uefi-x64") {
+        status("Generating UEFI image");
         string message;
         string failure;
         if (!uefi_hello_message(*program, message, failure)) {
@@ -11306,7 +13162,9 @@ BuildResult build_target(const BuildOptions& options) {
             diagnostics.add(output_path, 1, 1, "Could not write UEFI image");
             return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
         }
+        advance("Generated UEFI image");
         write_text_file(cache_key_path, fingerprint + "\n");
+        advance("Wrote " + output_path.string());
         BuildResult built;
         built.success = true;
         built.output_path = output_path;
@@ -11320,12 +13178,14 @@ BuildResult build_target(const BuildOptions& options) {
     }
 
     CEmitter emitter(*program);
+    status("Generating C source");
     const string c_source = target_type == "lib" ? emitter.emit_library() : emitter.emit_executable();
     const fs::path generated_c = build_dir / (manifest->name + ".generated.c");
     if (!write_text_file(generated_c, c_source)) {
         diagnostics.add(generated_c, 1, 1, "Could not write generated C file");
         return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
+    advance("Generated C: " + generated_c.string());
 
     fs::path source_map_path;
     if (options.debug) {
@@ -11337,34 +13197,41 @@ BuildResult build_target(const BuildOptions& options) {
     }
 
     int result = 0;
+    status("Compiling native output");
     if (target_type == "exe") {
-        string command;
+        vector<string> command = toolchain->c_compiler;
         if (toolchain->uses_msvc) {
-            command = toolchain->c_compiler + " /nologo /std:c11 " + quote(generated_c) + " /Fe:" + quote(output_path);
+            command.insert(command.end(), {"/nologo", "/std:c11", options.debug ? "/Od" : "/O2",
+                                           generated_c.string(), "/Fe:" + output_path.string()});
         } else {
-            command = toolchain->c_compiler + " -std=c11 " + quote(generated_c) + " -o " + quote(output_path);
+            command.insert(command.end(), {"-std=c11", options.debug ? "-O0" : "-O2",
+                                           generated_c.string(), "-o", output_path.string()});
         }
-        result = std::system(command.c_str());
+        result = run_process(command);
     } else {
         const fs::path object_path = build_dir / (manifest->name + ".generated.o");
-        string compile_command;
+        vector<string> compile_command = toolchain->c_compiler;
         if (toolchain->uses_msvc) {
-            compile_command = toolchain->c_compiler + " /nologo /std:c11 /c " + quote(generated_c) + " /Fo:" + quote(object_path);
+            compile_command.insert(compile_command.end(), {"/nologo", "/std:c11", "/c",
+                                                           options.debug ? "/Od" : "/O2",
+                                                           generated_c.string(), "/Fo:" + object_path.string()});
         } else {
-            compile_command = toolchain->c_compiler + " -std=c11 -c " + quote(generated_c) + " -o " + quote(object_path);
+            compile_command.insert(compile_command.end(), {"-std=c11", "-c",
+                                                           options.debug ? "-O0" : "-O2",
+                                                           generated_c.string(), "-o", object_path.string()});
         }
-        result = std::system(compile_command.c_str());
+        result = run_process(compile_command);
         if (result == 0) {
-            string archive_command;
+            vector<string> archive_command;
             if (toolchain->uses_msvc) {
-                archive_command = "lib /nologo /OUT:" + quote(output_path) + " " + quote(object_path);
+                archive_command = {"lib", "/nologo", "/OUT:" + output_path.string(), object_path.string()};
             } else if (!toolchain->archiver.empty()) {
-                archive_command = toolchain->archiver + " rcs " + quote(output_path) + " " + quote(object_path);
+                archive_command = {toolchain->archiver, "rcs", output_path.string(), object_path.string()};
             } else {
                 diagnostics.add(options.input_path, 1, 1, "Could not find a host archiver for static library output");
                 return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
             }
-            result = std::system(archive_command.c_str());
+            result = run_process(archive_command);
         }
     }
 
@@ -11372,6 +13239,7 @@ BuildResult build_target(const BuildOptions& options) {
         diagnostics.add(generated_c, 1, 1, "Host toolchain failed while compiling generated C");
         return BuildResult{false, std::move(diagnostics.items), {}, source_map_path, false};
     }
+    advance("Compiled " + output_path.string());
 
     write_text_file(cache_key_path, fingerprint + "\n");
 
@@ -11420,8 +13288,7 @@ TestResult test_target(const TestOptions& options) {
             continue;
         }
 
-        string command = quote(build.output_path);
-        const int exit_code = std::system(command.c_str());
+        const int exit_code = run_process({build.output_path.string()});
         runs.push_back(TestRun{project_path, exit_code});
         if (exit_code != 0) {
             diagnostics.add(project_path, 1, 1, "Test project exited with code " + std::to_string(exit_code));

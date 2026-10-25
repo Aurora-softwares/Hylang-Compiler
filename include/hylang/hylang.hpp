@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -31,6 +33,10 @@ struct BuildOptions {
     std::optional<std::string> forced_target;
     std::optional<std::filesystem::path> output_path;
     bool debug = false;
+    // Called when a build milestone finishes. The count reflects completed work.
+    std::function<void(std::size_t, std::size_t, const std::string&)> progress;
+    // Percentage of the action currently reported by progress, when measurable.
+    std::function<void(std::size_t)> action_progress;
 };
 
 struct BuildResult {

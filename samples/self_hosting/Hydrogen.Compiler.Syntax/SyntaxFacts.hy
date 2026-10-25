@@ -6,6 +6,11 @@ namespace Hydrogen.Compiler.Syntax {
             if (kind == SyntaxKind.IdentifierToken) { return "Identifier"; }
             if (kind == SyntaxKind.NumberToken) { return "Number"; }
             if (kind == SyntaxKind.StringToken) { return "String"; }
+            if (kind == SyntaxKind.InterpolatedStringToken) { return "InterpolatedString"; }
+            if (kind == SyntaxKind.FatArrowToken) { return "FatArrow"; }
+            if (kind == SyntaxKind.SwitchKeyword) { return "Switch"; }
+            if (kind == SyntaxKind.CaseKeyword) { return "Case"; }
+            if (kind == SyntaxKind.DefaultKeyword) { return "Default"; }
             if (kind == SyntaxKind.OpenParenToken) { return "OpenParen"; }
             if (kind == SyntaxKind.CloseParenToken) { return "CloseParen"; }
             if (kind == SyntaxKind.OpenBraceToken) { return "OpenBrace"; }
@@ -15,9 +20,14 @@ namespace Hydrogen.Compiler.Syntax {
             if (kind == SyntaxKind.SemicolonToken) { return "Semicolon"; }
             if (kind == SyntaxKind.CommaToken) { return "Comma"; }
             if (kind == SyntaxKind.DotToken) { return "Dot"; }
+            if (kind == SyntaxKind.DotDotToken) { return "DotDot"; }
             if (kind == SyntaxKind.ColonToken) { return "Colon"; }
+            if (kind == SyntaxKind.QuestionToken) { return "Question"; }
+            if (kind == SyntaxKind.QuestionQuestionToken) { return "QuestionQuestion"; }
             if (kind == SyntaxKind.PlusToken) { return "Plus"; }
             if (kind == SyntaxKind.MinusToken) { return "Minus"; }
+            if (kind == SyntaxKind.PlusPlusToken) { return "PlusPlus"; }
+            if (kind == SyntaxKind.MinusMinusToken) { return "MinusMinus"; }
             if (kind == SyntaxKind.StarToken) { return "Star"; }
             if (kind == SyntaxKind.SlashToken) { return "Slash"; }
             if (kind == SyntaxKind.PercentToken) { return "Percent"; }
@@ -32,6 +42,21 @@ namespace Hydrogen.Compiler.Syntax {
             if (kind == SyntaxKind.AmpersandToken) { return "Ampersand"; }
             if (kind == SyntaxKind.AmpersandAmpersandToken) { return "AmpersandAmpersand"; }
             if (kind == SyntaxKind.PipePipeToken) { return "PipePipe"; }
+            if (kind == SyntaxKind.PipeToken) { return "Pipe"; }
+            if (kind == SyntaxKind.CaretToken) { return "Caret"; }
+            if (kind == SyntaxKind.TildeToken) { return "Tilde"; }
+            if (kind == SyntaxKind.ShiftLeftToken) { return "ShiftLeft"; }
+            if (kind == SyntaxKind.ShiftRightToken) { return "ShiftRight"; }
+            if (kind == SyntaxKind.PlusEqualsToken) { return "PlusEquals"; }
+            if (kind == SyntaxKind.MinusEqualsToken) { return "MinusEquals"; }
+            if (kind == SyntaxKind.StarEqualsToken) { return "StarEquals"; }
+            if (kind == SyntaxKind.SlashEqualsToken) { return "SlashEquals"; }
+            if (kind == SyntaxKind.PercentEqualsToken) { return "PercentEquals"; }
+            if (kind == SyntaxKind.AmpersandEqualsToken) { return "AmpersandEquals"; }
+            if (kind == SyntaxKind.PipeEqualsToken) { return "PipeEquals"; }
+            if (kind == SyntaxKind.CaretEqualsToken) { return "CaretEquals"; }
+            if (kind == SyntaxKind.ShiftLeftEqualsToken) { return "ShiftLeftEquals"; }
+            if (kind == SyntaxKind.ShiftRightEqualsToken) { return "ShiftRightEquals"; }
             if (kind == SyntaxKind.UsingKeyword) { return "Using"; }
             if (kind == SyntaxKind.NamespaceKeyword) { return "Namespace"; }
             if (kind == SyntaxKind.ClassKeyword) { return "Class"; }
@@ -66,6 +91,8 @@ namespace Hydrogen.Compiler.Syntax {
             if (kind == SyntaxKind.ElseKeyword) { return "Else"; }
             if (kind == SyntaxKind.WhileKeyword) { return "While"; }
             if (kind == SyntaxKind.ForKeyword) { return "For"; }
+            if (kind == SyntaxKind.ForeachKeyword) { return "Foreach"; }
+            if (kind == SyntaxKind.InKeyword) { return "In"; }
             if (kind == SyntaxKind.BreakKeyword) { return "Break"; }
             if (kind == SyntaxKind.ContinueKeyword) { return "Continue"; }
             if (kind == SyntaxKind.ReturnKeyword) { return "Return"; }
@@ -116,6 +143,11 @@ namespace Hydrogen.Compiler.Syntax {
             if (text == "else") { return SyntaxKind.ElseKeyword; }
             if (text == "while") { return SyntaxKind.WhileKeyword; }
             if (text == "for") { return SyntaxKind.ForKeyword; }
+            if (text == "foreach") { return SyntaxKind.ForeachKeyword; }
+            if (text == "switch") { return SyntaxKind.SwitchKeyword; }
+            if (text == "case") { return SyntaxKind.CaseKeyword; }
+            if (text == "default") { return SyntaxKind.DefaultKeyword; }
+            if (text == "in") { return SyntaxKind.InKeyword; }
             if (text == "break") { return SyntaxKind.BreakKeyword; }
             if (text == "continue") { return SyntaxKind.ContinueKeyword; }
             if (text == "return") { return SyntaxKind.ReturnKeyword; }

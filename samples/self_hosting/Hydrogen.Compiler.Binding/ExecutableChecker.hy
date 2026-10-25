@@ -145,6 +145,9 @@ namespace Hydrogen.Compiler.Binding {
                     if (value == "" || value == "void" || value == "null") { Error("var requires a value with a concrete type"); type = "<error>"; } else { type = value; }
                     s.Type().SetName(type);
                 } else { DeclareType(s.Type(), false); type = s.Type().DisplayName(); if (value != "") { Require(value, type, "local initializer type mismatch"); } }
+                if (s.Name() == "__hy_foreach$collection" && type != "<error>" && type != "string" && !module.IsArray(type)) {
+                    Error("foreach requires an array or string collection");
+                }
                 Add(s.Name(), type); return;
             }
             if (k == IrStatement.KindReturnStatement()) {
@@ -306,14 +309,23 @@ namespace Hydrogen.Compiler.Binding {
                 bool typeReceiver = TypeReceiver(e.Receiver()); string receiver = "";
                 if (typeReceiver) { receiver = module.ResolveType(Qualified(e.Receiver()), owner); e.Receiver().SetResultType(receiver); }
                 else { receiver = Expression(e.Receiver()); }
+                if (e.NullConditional() && (typeReceiver || !module.Reference(receiver))) {
+                    Error("null-conditional access requires an instance reference receiver");
+                }
                 e.SetResolvedOwner(receiver);
                 IrEnum en = module.FindEnum(receiver);
                 if (en != null && typeReceiver) { int i = 0; while (i < en.Members().Length) { if (en.Members()[i].Name() == e.MemberName()) { return receiver; } i = i + 1; } }
-                if ((receiver == "string" || module.IsArray(receiver)) && e.MemberName() == "Length") { return "int"; }
+                if ((receiver == "string" || module.IsArray(receiver)) && e.MemberName() == "Length") {
+                    if (e.NullConditional()) { Error("null-conditional access requires a reference result"); }
+                    return "int";
+                }
                 IrField field = Field(receiver, e.MemberName());
                 if (field != null) {
                     if (field.IsPrivate() && receiver != owner) { Error("private field is inaccessible: " + receiver + "." + field.Name()); }
                     if (field.IsStatic() != typeReceiver) { Error("field receiver does not match static or instance declaration"); }
+                    if (e.NullConditional() && !module.Reference(field.Type().DisplayName())) {
+                        Error("null-conditional access requires a reference result");
+                    }
                     return field.Type().DisplayName();
                 }
                 if (receiver != "<error>") { Error("undefined member '" + e.MemberName() + "' on " + receiver); } return "<error>";
@@ -340,13 +352,36 @@ namespace Hydrogen.Compiler.Binding {
             if (k == IrExpression.KindArrayCreation()) { DeclareType(e.Type(), false); string size = Expression(e.Size()); Require(size, "int", "array size must be int"); return e.Type().DisplayName() + "[]"; }
             if (k == IrExpression.KindIndex()) {
                 string type = Expression(e.Receiver()); string index = Expression(e.Index()); Require(index, "int", "index must be int");
-                if (type == "string") { return "string"; } if (module.IsArray(type)) { return module.Element(type); }
+                if (e.NullConditional() && !module.Reference(type)) { Error("null-conditional indexing requires a reference receiver"); }
+                if (type == "string") { return "string"; }
+                if (module.IsArray(type)) {
+                    string element = module.Element(type);
+                    if (e.NullConditional() && !module.Reference(element)) {
+                        Error("null-conditional access requires a reference result");
+                    }
+                    return element;
+                }
                 if (type != "<error>") { Error("indexing requires an array or string"); } return "<error>";
+            }
+            if (k == IrExpression.KindSlice()) {
+                string type = Expression(e.Receiver());
+                string start = Expression(e.Index());
+                string end = Expression(e.SliceEnd());
+                Require(start, "int", "slice start must be int");
+                Require(end, "int", "slice end must be int");
+                if (type == "string" || module.IsArray(type)) { return type; }
+                if (type != "<error>") { Error("slicing requires an array or string"); }
+                return "<error>";
             }
             if (k == IrExpression.KindAssignment()) {
                 string target = Expression(e.Target()); string value = Expression(e.Value());
                 if (!Writable(e.Target())) { Error("assignment target is not writable"); }
-                Require(value, target, "assignment type mismatch"); return target;
+                if (e.AssignmentOperatorKind() != IrOperator.EqualsToken()) {
+                    if ((!module.Numeric(target) || !module.Numeric(value)) && target != "<error>" && value != "<error>") {
+                        Error("compound assignment requires integral operands");
+                    }
+                } else { Require(value, target, "assignment type mismatch"); }
+                return target;
             }
             if (k == IrExpression.KindCast()) {
                 DeclareType(e.CastType(), false); string actual = Expression(e.CastExpression()); string expected = e.CastType().DisplayName();
@@ -363,9 +398,43 @@ namespace Hydrogen.Compiler.Binding {
             if (k == IrExpression.KindUnary()) {
                 string actual = Expression(e.UnaryOperand());
                 if (e.UnaryOperatorKind() == IrOperator.BangToken()) { Require(actual, "bool", "logical operand must be bool"); return "bool"; }
+                if (e.UnaryOperatorKind() == IrOperator.TildeToken()) {
+                    if (!module.Numeric(actual) && actual != "<error>") { Error("bitwise complement requires an integral operand"); }
+                    return actual;
+                }
                 if (!Numeric(actual) && actual != "<error>") { Error("unary arithmetic requires numeric operand"); } return actual;
             }
+            if (k == IrExpression.KindConditional()) {
+                string condition = Expression(e.ConditionalCondition());
+                Require(condition, "bool", "conditional expression requires a bool condition");
+                string whenTrue = Expression(e.TrueValue());
+                string whenFalse = Expression(e.FalseValue());
+                if (Assignable(whenFalse, whenTrue)) { return whenTrue; }
+                if (Assignable(whenTrue, whenFalse)) { return whenFalse; }
+                Error("conditional branches have incompatible types");
+                return "<error>";
+            }
             string left = Expression(e.Left()); string right = Expression(e.Right()); int op = e.OperatorKind();
+            if (op == IrOperator.QuestionQuestionToken()) {
+                if (left == "null" && module.Reference(right)) { return right; }
+                if (module.Reference(left) && Assignable(right, left)) { return left; }
+                if (left != "<error>" && right != "<error>") {
+                    Error("null coalescing requires a reference operand and compatible fallback");
+                }
+                return "<error>";
+            }
+            if (op == IrOperator.AmpersandToken() || op == IrOperator.PipeToken() || op == IrOperator.CaretToken()) {
+                if ((!module.Numeric(left) || left != right) && left != "<error>" && right != "<error>") {
+                    Error("bitwise operators require matching integral operands");
+                }
+                return left;
+            }
+            if (op == IrOperator.ShiftLeftToken() || op == IrOperator.ShiftRightToken()) {
+                if ((!module.Numeric(left) || !module.Numeric(right)) && left != "<error>" && right != "<error>") {
+                    Error("shift operators require integral operands");
+                }
+                return left;
+            }
             if (op == IrOperator.AmpersandAmpersandToken() || op == IrOperator.PipePipeToken()) { Require(left, "bool", "logical operand must be bool"); Require(right, "bool", "logical operand must be bool"); return "bool"; }
             if (op == IrOperator.PlusToken() && (left == "string" || right == "string")) {
                 if (!Printable(left) || !Printable(right)) { Error("string concatenation requires printable values"); } return "string";
@@ -392,6 +461,7 @@ namespace Hydrogen.Compiler.Binding {
         }
         private bool Printable(string type) { return type == "string" || type == "bool" || Numeric(type) || type == "<error>"; }
         private bool Writable(IrExpression e) {
+            if (e.NullConditional()) { return false; }
             if (e.Kind() == IrExpression.KindName()) { return e.Name() != "this"; }
             if (e.Kind() == IrExpression.KindIndex()) { return module.IsArray(e.Receiver().ResultType()); }
             if (e.Kind() == IrExpression.KindMemberAccess()) { return Field(e.ResolvedOwner(), e.MemberName()) != null; }
@@ -413,6 +483,45 @@ namespace Hydrogen.Compiler.Binding {
             int i = 0; while (i < e.Arguments().Length) { string type = Expression(e.Arguments()[i]); string required = first; if (i == 1) { required = second; } if (i < expected) { Require(type, required, "argument type mismatch calling '" + name + "'"); } i = i + 1; }
             e.SetResolvedOwner(module.NamespaceOf(name)); return result;
         }
+        private string Intrinsic3(IrExpression e, string name, string first,
+            string second, string third, string result) {
+            if (e.Arguments().Length != 3) { Error("wrong argument count calling '" + name + "'"); }
+            int i = 0;
+            while (i < e.Arguments().Length) {
+                string type = Expression(e.Arguments()[i]);
+                string required = first;
+                if (i == 1) { required = second; }
+                if (i == 2) { required = third; }
+                if (i < 3) { Require(type, required, "argument type mismatch calling '" + name + "'"); }
+                i = i + 1;
+            }
+            e.SetResolvedOwner(module.NamespaceOf(name)); return result;
+        }
+        private string Intrinsic5Int(IrExpression e, string name) {
+            if (e.Arguments().Length != 5) {
+                Error("wrong argument count calling '" + name + "'");
+            }
+            int i = 0;
+            while (i < e.Arguments().Length) {
+                Require(Expression(e.Arguments()[i]), "int",
+                    "argument type mismatch calling '" + name + "'");
+                i = i + 1;
+            }
+            e.SetResolvedOwner(module.NamespaceOf(name)); return "int";
+        }
+        private string IntrinsicNInt(IrExpression e, string name,
+            int expected) {
+            if (e.Arguments().Length != expected) {
+                Error("wrong argument count calling '" + name + "'");
+            }
+            int i = 0;
+            while (i < e.Arguments().Length) {
+                Require(Expression(e.Arguments()[i]), "int",
+                    "argument type mismatch calling '" + name + "'");
+                i = i + 1;
+            }
+            e.SetResolvedOwner(module.NamespaceOf(name)); return "int";
+        }
         private string Call(IrExpression e) {
             string qualified = Qualified(e.Target());
             if (qualified == "System.Kernel.Managed.Release") {
@@ -431,7 +540,31 @@ namespace Hydrogen.Compiler.Binding {
                 int i = 0; while (i < n) { if (!Printable(Expression(e.Arguments()[i]))) { Error("console output requires a printable value"); } i = i + 1; }
                 e.SetResolvedOwner("System.Console"); return "void";
             }
+            if (qualified == "System.Console.WriteBytes") {
+                return Intrinsic(e, qualified, "byte[]", "", "void");
+            }
+            if (qualified == "System.Console.IsTerminal") {
+                return Intrinsic(e, qualified, "", "", "bool");
+            }
+            if (qualified == "System.Console.TerminalWidth") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Console.Utf8ByteAt") {
+                return Intrinsic(e, qualified, "string", "int", "int");
+            }
+            if (qualified == "System.Text.Buffer.FromBytes") {
+                return Intrinsic(e, qualified, "byte[]", "int", "string");
+            }
             if (qualified == "System.Console.ReadLine") { return Intrinsic(e, qualified, "", "", "string"); }
+            if (qualified == "System.Australis.Terminal.EndOfInput") {
+                return Intrinsic(e, qualified, "", "", "bool");
+            }
+            if (qualified == "System.Australis.Terminal.ReadKey") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Terminal.MoveCursor") {
+                return Intrinsic(e, qualified, "int", "int", "void");
+            }
             if (qualified == "System.Australis.Terminal.Write" ||
                 qualified == "System.Australis.Terminal.WriteLine") {
                 return Intrinsic(e, qualified, "string", "", "void");
@@ -440,6 +573,9 @@ namespace Hydrogen.Compiler.Binding {
                 return Intrinsic(e, qualified, "int", "", "void");
             }
             if (qualified == "System.Australis.Terminal.WriteResult") {
+                return Intrinsic(e, qualified, "", "", "void");
+            }
+            if (qualified == "System.Australis.Terminal.Clear") {
                 return Intrinsic(e, qualified, "", "", "void");
             }
             if (qualified == "System.Australis.Files.Open") {
@@ -452,12 +588,253 @@ namespace Hydrogen.Compiler.Binding {
                 qualified == "System.Australis.Process.Yield") {
                 return Intrinsic(e, qualified, "", "", "void");
             }
+            if (qualified == "System.Australis.Process.Run") {
+                if (e.Arguments().Length == 3) {
+                    return Intrinsic3(e, qualified, "string", "byte[]", "byte[]", "int");
+                }
+                if (e.Arguments().Length == 2) {
+                    return Intrinsic(e, qualified, "string", "byte[]", "int");
+                }
+                return Intrinsic(e, qualified, "string", "", "int");
+            }
+            if (qualified == "System.Australis.Process.Spawn") {
+                return Intrinsic(e, qualified, "string", "", "int");
+            }
+            if (qualified == "System.Australis.Process.Wait") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Process.Ready") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Process.WaitReady") {
+                return Intrinsic(e, qualified, "int", "int", "int");
+            }
+            if (qualified == "System.Australis.Process.Terminate") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Process.Sleep") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Channel.Open" ||
+                qualified == "System.Australis.Channel.Wait") {
+                return Intrinsic(e, qualified, "int", "int", "int");
+            }
+            if (qualified == "System.Australis.Channel.Accept" ||
+                qualified == "System.Australis.Channel.Peer" ||
+                qualified == "System.Australis.Channel.Close") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Channel.Send") {
+                return Intrinsic3(e, qualified, "int", "int", "byte[]", "int");
+            }
+            if (qualified == "System.Australis.Channel.Receive") {
+                return Intrinsic(e, qualified, "int", "byte[]", "int");
+            }
+            if (qualified == "System.Australis.Process.EnvironmentCount") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Process.EnvironmentEntry") {
+                return Intrinsic(e, qualified, "int", "", "string");
+            }
+            if (qualified == "System.Australis.Process.WorkingDirectory") {
+                return Intrinsic(e, qualified, "", "", "string");
+            }
+            if (qualified == "System.Australis.Text.ByteAt") {
+                return Intrinsic(e, qualified, "string", "int", "int");
+            }
+            if (qualified == "System.Australis.Text.FromBytes") {
+                return Intrinsic(e, qualified, "byte[]", "int", "string");
+            }
+            if (qualified == "System.Australis.SystemInfo.Query") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Display.Acquire" ||
+                qualified == "System.Australis.Display.Release" ||
+                qualified == "System.Australis.Display.BeginFrame" ||
+                qualified == "System.Australis.Display.PresentFrame") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Display.Stats") {
+                return Intrinsic(e, qualified, "byte[]", "", "int");
+            }
+            if (qualified == "System.Australis.Display.SetMode") {
+                return Intrinsic(e, qualified, "int", "int", "int");
+            }
+            if (qualified == "System.Australis.Display.FillRect") {
+                return Intrinsic5Int(e, qualified);
+            }
+			if (qualified == "System.Australis.Display.RetainedClose" || qualified == "System.Australis.Display.RetainedMinimize" || qualified == "System.Australis.Display.RetainedRestore") {
+				return Intrinsic(e, qualified, "int", "", "int");
+			}
+			if (qualified == "System.Australis.Display.RetainedEnable") {
+				return Intrinsic(e, qualified, "int", "", "int");
+			}
+			if (qualified == "System.Australis.Display.RetainedOpen") {
+				return IntrinsicNInt(e, qualified, 4);
+			}
+			if (qualified == "System.Australis.Display.RetainedFocus") {
+				return Intrinsic(e, qualified, "int", "", "int");
+			}
+			if (qualified == "System.Australis.Display.RetainedMove") {
+				return IntrinsicNInt(e, qualified, 3);
+			}
+			if (qualified == "System.Australis.Display.RetainedHover") {
+				return Intrinsic(e, qualified, "int", "int", "int");
+			}
+			if (qualified == "System.Australis.Display.RetainedComposeRect") {
+				return IntrinsicNInt(e, qualified, 4);
+			}
+			if (qualified == "System.Australis.Display.RetainedSubmitGpu") {
+				return Intrinsic(e, qualified, "int", "int", "int");
+			}
+
+			if (qualified == "System.Australis.Display.RetainedMaximize" || qualified == "System.Australis.Display.RetainedUnmaximize") {
+				return Intrinsic(e, qualified, "int", "", "int");
+			}
+
+			if (qualified == "System.Australis.Display.RetainedResize") {
+				return IntrinsicNInt(e, qualified, 3);
+			}
+
+            if (qualified == "System.Australis.Display.PollMouse") {
+                return Intrinsic(e, qualified, "byte[]", "", "int");
+            }
+            if (qualified == "System.Australis.Display.CaptureKeyboard") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Display.PollKey") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Display.AllocateBuffer") {
+                return IntrinsicNInt(e, qualified, 4);
+            }
+            if (qualified == "System.Australis.Display.DestroyBuffer" ||
+                qualified == "System.Australis.Display.BeginBuffer" ||
+                qualified == "System.Australis.Display.SubmitBuffer") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Display.FillBufferRect") {
+                return IntrinsicNInt(e, qualified, 6);
+            }
+            if (qualified == "System.Australis.Display.BufferCompletion" ||
+                qualified == "System.Australis.Display.ReleaseBuffer") {
+                return Intrinsic(e, qualified, "int", "int", "int");
+            }
+            if (qualified == "System.Australis.Gpu.Create" ||
+                qualified == "System.Australis.Gpu.Clear") {
+                return IntrinsicNInt(e, qualified, 2);
+            }
+            if (qualified == "System.Australis.Gpu.Destroy") {
+                return IntrinsicNInt(e, qualified, 1);
+            }
+            if (qualified == "System.Australis.Gpu.FillRect") {
+                return IntrinsicNInt(e, qualified, 6);
+            }
+            if (qualified == "System.Australis.Gpu.ReadPixel" ||
+                qualified == "System.Australis.Gpu.Blit") {
+                return IntrinsicNInt(e, qualified, 3);
+            }
+            if (qualified == "System.Australis.Gpu.BlitRegion") {
+                return IntrinsicNInt(e, qualified, 7);
+            }
+            if (qualified == "System.Australis.Gpu.CopyRegion") {
+                return IntrinsicNInt(e, qualified, 8);
+            }
+
+            if (qualified == "System.Australis.Gpu.BeginFrame") {
+                return IntrinsicNInt(e, qualified, 1);
+            }
+
+            if (qualified == "System.Australis.Gpu.DrawWindow") {
+                return IntrinsicNInt(e, qualified, 3);
+            }
+
+            if (qualified == "System.Australis.Gpu.EndFrame") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Gpu.PresentFrame" ||
+                qualified == "System.Australis.Gpu.RestoreFrame") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Gpu.FramePixel") {
+                return IntrinsicNInt(e, qualified, 2);
+            }
+            if (qualified == "System.Australis.Gpu.FillFrameRect") {
+                return IntrinsicNInt(e, qualified, 5);
+            }
+
+            if (qualified == "System.Australis.Files.StatKind" ||
+                qualified == "System.Australis.Files.StatTimeFlags" ||
+                qualified == "System.Australis.Files.DirectoryCount" ||
+                qualified == "System.Australis.Files.Delete" ||
+                qualified == "System.Australis.Files.Mkdir" ||
+                qualified == "System.Australis.Files.Rmdir" ||
+                qualified == "System.Australis.Files.OpenRead" ||
+                qualified == "System.Australis.Files.OpenWrite") {
+                return Intrinsic(e, qualified, "string", "", "int");
+            }
+            if (qualified == "System.Australis.Files.StatSize" ||
+                qualified == "System.Australis.Files.StatId" ||
+                qualified == "System.Australis.Files.StatCreated" ||
+                qualified == "System.Australis.Files.StatModified" ||
+                qualified == "System.Australis.Files.StatAttributes") {
+                return Intrinsic(e, qualified, "string", "", "long");
+            }
+            if (qualified == "System.Australis.Files.DirectoryName") {
+                return Intrinsic(e, qualified, "string", "int", "int");
+            }
+            if (qualified == "System.Australis.Files.DirectoryNameInto") {
+                return Intrinsic3(e, qualified, "string", "int", "byte[]", "int");
+            }
+            if (qualified == "System.Australis.Files.OpenReadHandle" ||
+                qualified == "System.Australis.Files.OpenWriteHandle") {
+                return Intrinsic(e, qualified, "string", "", "int");
+            }
+            if (qualified == "System.Australis.Files.ReadHandle" ||
+                qualified == "System.Australis.Files.WriteHandle") {
+                return Intrinsic3(e, qualified, "int", "byte[]", "int", "int");
+            }
+            if (qualified == "System.Australis.Files.CloseHandle") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Files.TruncateHandle") {
+                return Intrinsic(e, qualified, "int", "int", "int");
+            }
+            if (qualified == "System.Australis.Files.Create" ||
+                qualified == "System.Australis.Files.Rename") {
+                return Intrinsic(e, qualified, "string", "string", "int");
+            }
+            if (qualified == "System.Australis.Files.Replace" ||
+                qualified == "System.Australis.Files.Append") {
+                return Intrinsic(e, qualified, "string", "", "int");
+            }
+            if (qualified == "System.Australis.Files.Truncate") {
+                return Intrinsic(e, qualified, "long", "", "int");
+            }
+            if (qualified == "System.Australis.Files.ReadChecked") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Files.ResultByte") {
+                return Intrinsic(e, qualified, "int", "", "int");
+            }
+            if (qualified == "System.Australis.Files.ResultU32") {
+                return Intrinsic(e, qualified, "int", "", "long");
+            }
+            if (qualified == "System.Australis.Files.Status" ||
+                qualified == "System.Australis.Files.CloseChecked" ||
+                qualified == "System.Australis.Files.ApiVersion") {
+                return Intrinsic(e, qualified, "", "", "int");
+            }
+            if (qualified == "System.Australis.Files.WriteResult") {
+                return Intrinsic(e, qualified, "", "", "void");
+            }
             if (qualified == "System.Australis.Memory.StoreByte") {
                 return Intrinsic(e, qualified, "long", "int", "void");
             }
             if (qualified == "System.Uefi.StartImage") { return Intrinsic(e, qualified, "string", "", "void"); }
             if (qualified == "System.Kernel.Boot.Load") { return Intrinsic(e, qualified, "string", "", "void"); }
             if (qualified == "System.Kernel.Cpu.EnableInterrupts") { return Intrinsic(e, qualified, "", "", "void"); }
+            if (qualified == "System.Kernel.Cpu.DisableInterrupts") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.Uefi.ClearScreen") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.Uefi.Await") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.Uefi.ExitBootServices") { return Intrinsic(e, qualified, "", "", "void"); }
@@ -503,7 +880,17 @@ namespace Hydrogen.Compiler.Binding {
                 return Intrinsic(e, qualified, "", "", "void");
             }
             if (qualified == "System.Kernel.Cpu.Timestamp") { return Intrinsic(e, qualified, "", "", "long"); }
+            if (qualified == "System.Kernel.Cpu.ReadStackPointer" ||
+                qualified == "System.Kernel.Cpu.ReadBasePointer" ||
+                qualified == "System.Kernel.Cpu.ReadFlags" ||
+                qualified == "System.Kernel.Cpu.ReadCr3" ||
+                qualified == "System.Kernel.Cpu.ReadInstructionPointer") {
+                return Intrinsic(e, qualified, "", "", "long");
+            }
             if (qualified == "System.Kernel.Cpu.InvalidatePage") { return Intrinsic(e, qualified, "long", "", "void"); }
+            if (qualified == "System.Kernel.Cpu.CallKernel") {
+                return Intrinsic(e, qualified, "long", "long", "long");
+            }
             if (qualified == "System.IO.File.Exists") { return Intrinsic(e, qualified, "string", "", "bool"); }
             if (qualified == "System.IO.File.ReadAllText") { return Intrinsic(e, qualified, "string", "", "string"); }
             if (qualified == "System.IO.File.ReadAllBytes") { return Intrinsic(e, qualified, "string", "", "byte[]"); }
@@ -511,7 +898,10 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.IO.File.WriteAllBytes") { return Intrinsic(e, qualified, "string", "byte[]", "void"); }
             if (qualified == "System.Convert.ToInt32") { return Intrinsic(e, qualified, "string", "", "int"); }
             if (qualified == "System.Runtime.GC.Collect") { return Intrinsic(e, qualified, "", "", "void"); }
-            if (qualified == "System.Runtime.GC.GetAllocatedBytes") { return Intrinsic(e, qualified, "", "", "int"); }
+            if (qualified == "System.Runtime.GC.GetAllocatedBytes") {
+				return Intrinsic(e, qualified, "", "", "int");
+			}
+
             string type = owner; string name = ""; bool typeReceiver = false; bool explicitReceiver = false;
             IrExpression target = e.Target();
             if (target.Kind() == IrExpression.KindName()) { name = target.Name(); }
@@ -519,6 +909,9 @@ namespace Hydrogen.Compiler.Binding {
                 explicitReceiver = true; typeReceiver = TypeReceiver(target.Receiver()); name = target.MemberName();
                 if (typeReceiver) { type = module.ResolveType(Qualified(target.Receiver()), owner); target.Receiver().SetResultType(type); }
                 else { type = Expression(target.Receiver()); }
+                if (target.NullConditional() && (typeReceiver || !module.Reference(type))) {
+                    Error("null-conditional invocation requires an instance reference receiver");
+                }
             } else { Error("invalid call target"); Arguments(e.Arguments()); return "<error>"; }
             string[] actualTypes = ArgumentTypes(e.Arguments());
             IrMethod callee = Method(type, name, actualTypes);
@@ -531,7 +924,10 @@ namespace Hydrogen.Compiler.Binding {
             }
             if (callee.IsPrivate() && type != owner) { Error("private method is inaccessible: " + type + "." + name); }
             if (explicitReceiver) { if (callee.IsStatic() != typeReceiver) { Error("method receiver does not match static or instance declaration"); } }
-            else if (!callee.IsStatic() && method.IsStatic()) { Error("instance method requires an object receiver"); }
+            if (target.NullConditional() && !module.Reference(callee.ReturnType().DisplayName())) {
+                Error("null-conditional access requires a reference result");
+            }
+            if (!explicitReceiver && !callee.IsStatic() && method.IsStatic()) { Error("instance method requires an object receiver"); }
             e.SetResolvedOwner(type); e.SetResolvedSignature(Signature(callee)); target.SetResolvedOwner(type); target.SetResultType(callee.ReturnType().DisplayName());
             return callee.ReturnType().DisplayName();
         }

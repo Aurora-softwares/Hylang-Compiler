@@ -1,4 +1,5 @@
 #include "hylang/hylang.hpp"
+#include "build_display.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -770,37 +771,16 @@ int scaffold_project(const string& kind, const fs::path& destination) {
 
 int handle_build(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "usage: hy build <file.hy|project.hyproj> [--target exe|lib|uefi-x64] [-o output] [--debug]\n";
+        std::cerr << "usage: hy build <file.hy|project.hyproj> [--target exe|lib|uefi-x64] [-o output] [--debug] [--hide-progress] [--hide-spinner] [--hide-log]\n";
         return 1;
     }
 
     const fs::path target = argv[2];
-    if (target.extension() == ".hyproj" && is_workspace_manifest(target)) {
-        vector<fs::path> members;
-        collect_workspace_members(target, members);
-        int status = 0;
-        for (const auto& member : members) {
-            hylang::BuildOptions options;
-            options.input_path = member;
-            for (int index = 3; index < argc; ++index) {
-                const string argument = argv[index];
-                if (argument == "--debug") {
-                    options.debug = true;
-                }
-            }
-            const auto result = hylang::build_target(options);
-            if (!result.success) {
-                std::cerr << hylang::format_diagnostics(result.diagnostics);
-                status = 1;
-                continue;
-            }
-            std::cout << result.output_path.string() << "\n";
-        }
-        return status;
-    }
-
     hylang::BuildOptions options;
     options.input_path = target;
+    bool hide_progress = false;
+    bool hide_spinner = false;
+    bool hide_log = false;
     for (int index = 3; index < argc; ++index) {
         const string argument = argv[index];
         if (argument == "--target") {
@@ -817,13 +797,54 @@ int handle_build(int argc, char** argv) {
             options.output_path = fs::path(argv[++index]);
         } else if (argument == "--debug") {
             options.debug = true;
+        } else if (argument == "--hide-progress") {
+            hide_progress = true;
+        } else if (argument == "--hide-spinner") {
+            hide_spinner = true;
+        } else if (argument == "--hide-log") {
+            hide_log = true;
         } else {
             std::cerr << "unknown argument: " << argument << "\n";
             return 1;
         }
     }
 
+    if (target.extension() == ".hyproj" && is_workspace_manifest(target)) {
+        if (options.forced_target || options.output_path) {
+            std::cerr << "--target and -o are not supported for workspace builds\n";
+            return 1;
+        }
+        vector<fs::path> members;
+        collect_workspace_members(target, members);
+        int status = 0;
+        for (const auto& member : members) {
+            options.input_path = member;
+            BuildDisplay display(hide_progress, hide_spinner, hide_log);
+            options.progress = [&](std::size_t done, std::size_t total, const string& message) {
+                display.update(done, total, message);
+            };
+            options.action_progress = [&](std::size_t percent) { display.action_progress(percent); };
+            display.begin(member.string());
+            const auto result = hylang::build_target(options);
+            display.finish();
+            if (!result.success) {
+                std::cerr << hylang::format_diagnostics(result.diagnostics);
+                status = 1;
+                continue;
+            }
+            std::cout << result.output_path.string() << "\n";
+        }
+        return status;
+    }
+
+    BuildDisplay display(hide_progress, hide_spinner, hide_log);
+    options.progress = [&](std::size_t done, std::size_t total, const string& message) {
+        display.update(done, total, message);
+    };
+    options.action_progress = [&](std::size_t percent) { display.action_progress(percent); };
+    display.begin(target.string());
     const auto result = hylang::build_target(options);
+    display.finish();
     if (!result.success) {
         std::cerr << hylang::format_diagnostics(result.diagnostics);
         return 1;
@@ -1496,7 +1517,7 @@ int handle_lsp() {
 void print_usage() {
     std::cerr << "usage:\n";
     std::cerr << "  hy new app|lib|tool|test|workspace <name>\n";
-    std::cerr << "  hy build <file.hy|project.hyproj> [--target exe|lib|uefi-x64] [-o output] [--debug]\n";
+    std::cerr << "  hy build <file.hy|project.hyproj> [--target exe|lib|uefi-x64] [-o output] [--debug] [--hide-progress] [--hide-spinner] [--hide-log]\n";
     std::cerr << "  hy run <file.hy|project.hyproj> [-- args...]\n";
     std::cerr << "  hy test [project.hyproj]\n";
     std::cerr << "  hy fmt <path...> [--check]\n";
