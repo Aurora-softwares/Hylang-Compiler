@@ -76,6 +76,15 @@ include binary hashes and output checks. These changes reduce allocation and
 collection cost, but the native node case is still well above the C++ result;
 [#130](https://github.com/Aurora-softwares/Hylang-Compiler/issues/130) remains
 in progress while root scans and span sweeping are investigated.
+An additional 100,000-node diagnostic drops the whole list before an explicit
+full collection. In 30 paired runs, the no-collection path took 15.08 ms
+median and the collection path 32.00 ms; the difference estimates 16.92 ms
+for collection plus its call overhead. Live managed bytes fell from
+13,217,792 to 8,192. `strace` observed 3,230 `munmap` calls in the explicit
+collection; that traced call count identifies page release as a likely sweep
+cost, but traced syscall times are not comparable to untraced wall times.
+The [fixture and raw samples](benchmarks/runtime/results-2026-10-25-dead-gc.json)
+are retained. Root scanning still needs an independent phase measurement.
 
 For [#127](https://github.com/Aurora-softwares/Hylang-Compiler/issues/127),
 commutative integer operations now load a right-hand local directly into
