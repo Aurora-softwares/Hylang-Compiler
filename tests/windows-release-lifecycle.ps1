@@ -61,8 +61,15 @@ if ($env:MOCK_FORCE -eq '1') {
     function Run-Action([string]$action, [bool]$force) {
         $env:MOCK_ACTION = $action
         $env:MOCK_FORCE = if ($force) { '1' } else { '0' }
-        $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper 2>&1 | Out-String
-        return @{ Code = $LASTEXITCODE; Output = $output }
+        $priorPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper 2>&1 | Out-String
+            $code = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $priorPreference
+        }
+        return @{ Code = $code; Output = $output }
     }
     function Install-Old {
         $stage = Join-Path $work ([IO.Path]::GetRandomFileName())
