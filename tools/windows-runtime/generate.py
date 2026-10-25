@@ -12,6 +12,23 @@ import tempfile
 root = Path(__file__).resolve().parents[2]
 linux = (root / 'tools/native-runtime/runtime.S').read_text()
 shim = (root / 'tools/windows-runtime/shim.S').read_text()
+# VirtualFree releases a whole VirtualAlloc reservation. Keep one page per
+# reservation on Windows while Linux parcels pages from a larger mmap batch.
+span_start = linux.index('rt_span_page:\n')
+span_end = linux.index('rt_page_hash:\n', span_start)
+linux = linux[:span_start] + '''rt_span_page:
+ mov eax,9
+ xor edi,edi
+ mov esi,4096
+ mov edx,3
+ mov r10d,0x22
+ mov r8,-1
+ xor r9d,r9d
+ syscall
+ cmp rax,-4095
+ jae rt_oom
+ ret
+''' + linux[span_end:]
 # GNU as dot labels are file scoped, so prefix shim labels before appending.
 for label in set(re.findall(r'(?m)^(\.[A-Za-z_]\w*):', shim)):
     shim = re.sub(r'(?<!\w)' + re.escape(label) + r'\b', '.win_' + label[1:], shim)

@@ -10,7 +10,8 @@
 # header, making conservative membership checks independent of heap size.
 # State+56 is a recycled-page list; +4160/+4168 are its bytes/limit (after
 # the immutable byte-string table). +4200 holds four small-span class lists;
-# +4232 holds their available-span heads.
+# +4232 holds their available-span heads. +4264/+4272 track the next and end
+# of the current Linux small-span page batch.
 # A span page has a 64-byte header: next, reserved, slot size, bump offset,
 # free slot, live slots, next available. Small object headers keep mapping bytes zero; a tagged
 # index entry points at their span. Cached pages are outside the active heap.
@@ -105,16 +106,7 @@ rt_alloc:
  mov qword ptr [r13+48],0
  jmp .small_find
 .small_map:
- mov eax,9
- xor edi,edi
- mov esi,4096
- mov edx,3
- mov r10d,0x22
- mov r8,-1
- xor r9d,r9d
- syscall
- cmp rax,-4095
- jae rt_oom
+ call rt_span_page
  mov r13,rax
  mov rcx,[rbx]
  mov [r13],rcx
@@ -206,6 +198,28 @@ rt_alloc:
  pop r12
  pop rbx
  ret
+rt_span_page:
+ # Reserve sixteen contiguous span pages with one Linux mmap. Each page is
+ # still indexed and reclaimed independently by the collector.
+ mov rax,[r15+4264]
+ cmp rax,[r15+4272]
+ jb .span_ready
+ mov eax,9
+ xor edi,edi
+ mov esi,65536
+ mov edx,3
+ mov r10d,0x22
+ mov r8,-1
+ xor r9d,r9d
+ syscall
+ cmp rax,-4095
+ jae rt_oom
+ lea rdx,[rax+65536]
+ mov [r15+4272],rdx
+.span_ready:
+ lea rdx,[rax+4096]
+ mov [r15+4264],rdx
+ ret
 # Mix page addresses before masking: adjacent mmap pages must not form long
 # clusters that make scanning zero-filled arrays degenerate into linear searches.
 rt_page_hash:
@@ -226,6 +240,10 @@ rt_page_hash:
  ret
 # Mark managed and interior pointers conservatively (field/index lvalues are roots).
 rt_mark:
+ # Nulls, type tags and small scalar fields cannot be mapped managed roots.
+ # Skip their hash probes while retaining arbitrary interior heap pointers.
+ cmp rdi,4096
+ jb .mark_done
  mov rsi,rdi
  and rsi,-4096
  mov rax,rsi

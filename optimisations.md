@@ -63,6 +63,20 @@ retain 30 timed runs and three warmups for each comparison, with source and
 input hashes. Hardware performance counters were unavailable here
 (`perf_event_paranoid=4`), so these are whole-process measurements.
 
+On 25 October, Linux small-object span pages were drawn from 16-page mmap
+batches; the Windows runtime kept page-wise VirtualAlloc reservations so each
+page can still be released independently. The collector also skips hash
+lookups for values below 4096, which cannot be managed pointers. On this host,
+100,000 live linked nodes made 207 mmap calls instead of 3,232. Twenty-one
+paired whole-process runs fell from 21.60 to 18.50 ms median (14.4%). With
+one extra full collection of those live nodes, a separate paired check fell
+from 27.56 to 26.23 ms after the mark-path change (4.8%). The
+[raw samples](benchmarks/runtime/results-2026-10-25-small-span-gc.json)
+include binary hashes and output checks. These changes reduce allocation and
+collection cost, but the native node case is still well above the C++ result;
+[#130](https://github.com/Aurora-softwares/Hylang-Compiler/issues/130) remains
+in progress while root scans and span sweeping are investigated.
+
 The Development project tracks further code-generation and string-index work
 in [#127](https://github.com/Aurora-softwares/Hylang-Compiler/issues/127)
 and [#128](https://github.com/Aurora-softwares/Hylang-Compiler/issues/128),
