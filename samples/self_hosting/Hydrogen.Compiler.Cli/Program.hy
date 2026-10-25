@@ -17,6 +17,9 @@ namespace Hydrogen.Compiler.Cli {
             if (command == "new") {
                 return New(args);
             }
+            if (command == "package") {
+                return Package(args);
+            }
 
 			// From here the commands need a second argument
             if (args.Length < 2) {
@@ -122,6 +125,625 @@ namespace Hydrogen.Compiler.Cli {
             string sourceText = RenderSource(kind, name);
             System.IO.File.WriteAllText(sourcePath, sourceText);
             return 0;
+        }
+
+        private static int Package(string[] args) {
+            if (args.Length >= 3 && args[1] == "search") {
+                return PackageSearch(args);
+            }
+            if (args.Length >= 3 && args[1] == "restore") {
+                return PackageRestore(args);
+            }
+            if (args.Length >= 4 && args[1] == "upgrade") {
+                return PackageUpgrade(args);
+            }
+            if (args.Length >= 4 && args[1] == "add" && Find(args[3], "@", 0) > 0) {
+                return PackageRemoteAdd(args);
+            }
+            if (args.Length == 5 && args[1] == "pack" && args[3] == "-o") {
+                return PackagePack(args);
+            }
+            if (args.Length == 4 && args[1] == "add") {
+                return PackageAdd(args);
+            }
+            if (args.Length == 4 && args[1] == "remove") {
+                return PackageRemove(args);
+            }
+            if (args.Length == 3 && args[1] == "hash") {
+                if (!System.IO.File.Exists(args[2])) {
+                    System.Console.WriteLine("error: file not found");
+                    return 1;
+                }
+                System.Console.WriteLine(Sha256.Hex(System.IO.File.ReadAllBytes(args[2])));
+                return 0;
+            }
+            if (args.Length == 3 && args[1] == "lock") {
+                if (!System.IO.File.Exists(args[2]) || !EndsWith(args[2], ".hyproj")) {
+                    System.Console.WriteLine("error: project file not found");
+                    return 1;
+                }
+                ProjectClosure closure = ProjectClosure.Collect(args[2]);
+                if (closure.Error() != "") {
+                    System.Console.WriteLine("error: " + closure.Error());
+                    return 1;
+                }
+                string lockText = PackageLock.Render(args[2], closure);
+                if (lockText == "") {
+                    System.Console.WriteLine("error: package archives or sources are missing");
+                    return 1;
+                }
+                System.IO.File.WriteAllText(PathUtils.Join(PathUtils.DirName(args[2]), "hy.lock"), lockText);
+                System.Console.WriteLine("wrote hy.lock");
+                return 0;
+            }
+            System.Console.WriteLine("usage: hy package pack <library.hyproj> -o <output.hypkg>");
+            System.Console.WriteLine("usage: hy package add <project.hyproj> <source.hypkg>");
+            System.Console.WriteLine("usage: hy package remove <project.hyproj> <package-id>");
+            System.Console.WriteLine("usage: hy package hash <file>");
+            System.Console.WriteLine("usage: hy package lock <project.hyproj>");
+            System.Console.WriteLine("usage: hy package search <term> [--registry <HTTPS-origin>]");
+            System.Console.WriteLine("usage: hy package add <project.hyproj> <id@version> [--registry <HTTPS-origin>]");
+            System.Console.WriteLine("usage: hy package restore <project.hyproj> [--registry <HTTPS-origin>]");
+            System.Console.WriteLine("usage: hy package upgrade <project.hyproj> <id@version> [--registry <HTTPS-origin>]");
+            return 1;
+        }
+
+        private static string RegistryOrigin(string[] args, int optionalAt) {
+            if (args.Length == optionalAt) { return "https://hylang.co.uk/registry/v1"; }
+            if (args.Length == optionalAt + 2 && args[optionalAt] == "--registry" &&
+                ValidRegistryOrigin(args[optionalAt + 1])) { return args[optionalAt + 1]; }
+            return "";
+        }
+
+        private static bool ValidRegistryOrigin(string origin) {
+            if (!StartsWith(origin, "https://") && !StartsWith(origin, "file://")) { return false; }
+            if (Find(origin, "..", 0) >= 0 || origin.Length > 512) { return false; }
+            int i = 0;
+            while (i < origin.Length) {
+                if (Find("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:/._-", origin[i], 0) < 0) {
+                    return false;
+                }
+                i = i + 1;
+            }
+            return true;
+        }
+
+        private static string QuoteCommandPath(string path) {
+            if (System.Host.Process.IsWindows()) {
+                if (Find(path, "\"", 0) >= 0 || Find(path, "\n", 0) >= 0) { return ""; }
+                return "\"" + path + "\"";
+            }
+            string quoted = "'";
+            int i = 0;
+            while (i < path.Length) {
+                if (path[i] == "'") { quoted = quoted + "'\\''"; }
+                else { quoted = quoted + path[i]; }
+                i = i + 1;
+            }
+            return quoted + "'";
+        }
+
+        private static bool DownloadRegistryFile(string origin, string relative, string output) {
+            string destination = QuoteCommandPath(output);
+            if (destination == "") { return false; }
+            string url = origin + "/" + relative;
+            string protocol = StartsWith(origin, "file://") ? "=file" : "=https";
+            string command = "curl --fail --silent --show-error --location --max-time 30 " +
+                "--max-filesize 16777216 --proto '" + protocol + "' --proto-redir '" + protocol + "' " +
+                "--output " + destination + " " + url;
+            if (System.Host.Process.IsWindows()) {
+                command = "curl.exe --fail --silent --show-error --location --max-time 30 " +
+                    "--max-filesize 16777216 --proto \"" + protocol + "\" --proto-redir \"" + protocol + "\" " +
+                    "--output " + destination + " \"" + url + "\"";
+            }
+            return System.Host.Process.Run(command) == 0 && System.IO.File.Exists(output);
+        }
+
+        private static PackageRegistry LoadRegistry(string origin, string baseDir) {
+            string path = PathUtils.Join(baseDir, ".hylang/registry-index.txt");
+            System.IO.File.WriteAllText(path, "");
+            if (!DownloadRegistryFile(origin, "index.txt", path)) {
+                System.Console.WriteLine("error: cannot download package registry index");
+                return PackageRegistry.Parse("");
+            }
+            PackageRegistry index = PackageRegistry.Parse(System.IO.File.ReadAllText(path));
+            if (!index.Valid()) { System.Console.WriteLine("error: invalid package registry index"); }
+            return index;
+        }
+
+        private static int PackageSearch(string[] args) {
+            string origin = RegistryOrigin(args, 3);
+            if (origin == "") { System.Console.WriteLine("error: invalid registry arguments"); return 1; }
+            PackageRegistry index = LoadRegistry(origin, ".");
+            if (!index.Valid()) { return 1; }
+            int i = 0;
+            while (i < index.Count()) {
+                if (args[2] == "*" || Find(index.Id(i), args[2], 0) >= 0) {
+                    System.Console.WriteLine(index.Id(i) + "@" + index.Version(i));
+                }
+                i = i + 1;
+            }
+            return 0;
+        }
+
+        private static bool ParsePackageSpec(string spec) {
+            int at = Find(spec, "@", 0);
+            if (at < 1 || Find(spec, "@", at + 1) >= 0) { return false; }
+            return HyprojManifest.ValidPackagePart(Slice(spec, 0, at)) &&
+                HyprojManifest.ValidPackagePart(Slice(spec, at + 1, spec.Length - at - 1));
+        }
+
+        private static string SpecId(string spec) { return Slice(spec, 0, Find(spec, "@", 0)); }
+        private static string SpecVersion(string spec) {
+            int at = Find(spec, "@", 0);
+            return Slice(spec, at + 1, spec.Length - at - 1);
+        }
+
+        private static string FetchArchive(string projectPath, string id, string version,
+            string origin, PackageRegistry index, string expectedHash) {
+            string hash = index.FindHash(id, version);
+            if (hash == "" || (expectedHash != "" && expectedHash != hash)) { return ""; }
+            string relative = "packages/" + id + "/" + version + "/" + id + "-" + version + ".hypkg";
+            string output = PathUtils.Join(PathUtils.DirName(projectPath),
+                ".hylang/downloads/" + id + "-" + version + ".hypkg");
+            System.IO.File.WriteAllText(output, "");
+            if (!DownloadRegistryFile(origin, relative, output) ||
+                Sha256.Hex(System.IO.File.ReadAllBytes(output)) != hash) { return ""; }
+            return output;
+        }
+
+        private static int FetchPackageGraph(string projectPath, string id, string version,
+            string origin, PackageRegistry index, string[] stack) {
+            if (ContainsString(stack, id)) {
+                System.Console.WriteLine("error: package dependency cycle at " + id);
+                return 1;
+            }
+            string archive = FetchArchive(projectPath, id, version, origin, index, "");
+            if (archive == "" || InstallArchive(projectPath, archive, false) != 0) {
+                System.Console.WriteLine("error: cannot fetch verified package " + id + "@" + version);
+                return 1;
+            }
+            string manifestPath = PathUtils.Join(PathUtils.DirName(projectPath),
+                ".hylang/packages/" + id + "/" + version + "/" + id + ".hyproj");
+            HyprojManifest manifest = HyprojManifest.Load(manifestPath);
+            if (manifest.PackageId() != id || manifest.Version() != version ||
+                !manifest.ValidDependencies()) { return 1; }
+            string[] nextStack = AppendString(stack, id);
+            string[] deps = manifest.DependencyIds();
+            string[] versions = manifest.DependencyVersions();
+            int i = 0;
+            while (i < deps.Length) {
+                if (FetchPackageGraph(projectPath, deps[i], versions[i], origin, index, nextStack) != 0) {
+                    return 1;
+                }
+                i = i + 1;
+            }
+            return 0;
+        }
+
+        private static int PackageRemoteAdd(string[] args) {
+            string origin = RegistryOrigin(args, 4);
+            if (origin == "" || !ParsePackageSpec(args[3]) || !System.IO.File.Exists(args[2])) {
+                System.Console.WriteLine("error: invalid package, project, or registry");
+                return 1;
+            }
+            ProjectClosure prior = ProjectClosure.Collect(args[2]);
+            if (prior.Error() != "" || !PackageLock.Verify(args[2], prior)) {
+                System.Console.WriteLine("error: existing package graph or hy.lock is invalid");
+                return 1;
+            }
+            string id = SpecId(args[3]);
+            string version = SpecVersion(args[3]);
+            PackageRegistry index = LoadRegistry(origin, PathUtils.DirName(args[2]));
+            if (!index.Valid() || FetchPackageGraph(args[2], id, version, origin, index, new string[0]) != 0) {
+                return 1;
+            }
+            string archive = PathUtils.Join(PathUtils.DirName(args[2]),
+                ".hylang/downloads/" + id + "-" + version + ".hypkg");
+            return InstallArchive(args[2], archive, true);
+        }
+
+        private static int PackageRestore(string[] args) {
+            string origin = RegistryOrigin(args, 3);
+            if (origin == "" || !System.IO.File.Exists(args[2])) {
+                System.Console.WriteLine("error: invalid project or registry"); return 1;
+            }
+            string lockPath = PathUtils.Join(PathUtils.DirName(args[2]), "hy.lock");
+            if (!System.IO.File.Exists(lockPath)) { System.Console.WriteLine("error: hy.lock is missing"); return 1; }
+            string lockText = System.IO.File.ReadAllText(lockPath);
+            if (!StartsWith(lockText, "hydrogen-lock-v1\n")) { return 1; }
+            PackageRegistry index = LoadRegistry(origin, PathUtils.DirName(args[2]));
+            if (!index.Valid()) { return 1; }
+            int at = Find(lockText, "\n", 0) + 1;
+            while (at < lockText.Length) {
+                int end = Find(lockText, "\n", at);
+                if (end < 0) { return 1; }
+                string line = Slice(lockText, at, end - at);
+                if (StartsWith(line, "package ")) {
+                    int a = Find(line, " ", 8);
+                    int b = a < 0 ? -1 : Find(line, " ", a + 1);
+                    if (a < 0 || b < 0) { return 1; }
+                    string id = Slice(line, 8, a - 8);
+                    string version = Slice(line, a + 1, b - a - 1);
+                    string hash = Slice(line, b + 1, line.Length - b - 1);
+                    if (!HyprojManifest.ValidPackagePart(id) || !HyprojManifest.ValidPackagePart(version)) { return 1; }
+                    string archive = FetchArchive(args[2], id, version, origin, index, hash);
+                    if (archive == "" || InstallArchive(args[2], archive, false) != 0) {
+                        System.Console.WriteLine("error: cannot restore verified package " + id + "@" + version);
+                        return 1;
+                    }
+                }
+                at = end + 1;
+            }
+            ProjectClosure closure = ProjectClosure.Collect(args[2]);
+            if (closure.Error() != "" || !PackageLock.Verify(args[2], closure)) {
+                System.Console.WriteLine("error: restored packages do not match hy.lock"); return 1;
+            }
+            System.Console.WriteLine("restored exact packages from hy.lock");
+            return 0;
+        }
+
+        private static int PackageUpgrade(string[] args) {
+            string origin = RegistryOrigin(args, 4);
+            if (origin == "" || !ParsePackageSpec(args[3]) || !System.IO.File.Exists(args[2])) {
+                System.Console.WriteLine("error: invalid package, project, or registry"); return 1;
+            }
+            string original = System.IO.File.ReadAllText(args[2]);
+            string lockPath = PathUtils.Join(PathUtils.DirName(args[2]), "hy.lock");
+            string originalLock = System.IO.File.Exists(lockPath) ? System.IO.File.ReadAllText(lockPath) : "";
+            HyprojManifest project = HyprojManifest.Parse(original);
+            string id = SpecId(args[3]);
+            if (!ContainsString(project.DependencyIds(), id)) {
+                System.Console.WriteLine("error: package is not a direct dependency: " + id); return 1;
+            }
+            string[] removeArgs = new string[4];
+            removeArgs[0] = "package"; removeArgs[1] = "remove";
+            removeArgs[2] = args[2]; removeArgs[3] = id;
+            if (PackageRemove(removeArgs) != 0 || PackageRemoteAdd(args) != 0) {
+                System.IO.File.WriteAllText(args[2], original);
+                if (originalLock != "") { System.IO.File.WriteAllText(lockPath, originalLock); }
+                System.Console.WriteLine("error: upgrade rolled back");
+                return 1;
+            }
+            System.Console.WriteLine("upgraded " + id + " to " + SpecVersion(args[3]));
+            return 0;
+        }
+
+        private static int PackagePack(string[] args) {
+            string path = args[2];
+            if (!System.IO.File.Exists(path) || !EndsWith(path, ".hyproj")) {
+                System.Console.WriteLine("error: package project file not found");
+                return 1;
+            }
+            HyprojManifest manifest = HyprojManifest.Load(path);
+            if (manifest.Format() != 2 || manifest.Type() != "lib" ||
+                !manifest.ValidDependencies() || manifest.ProjectReferences().Length != 0 ||
+                !HyprojManifest.ValidPackagePart(manifest.PackageId()) ||
+                !HyprojManifest.ValidPackagePart(manifest.Version()) ||
+                PathUtils.BaseName(path) != manifest.PackageId() + ".hyproj") {
+                System.Console.WriteLine("error: package must be a valid format 2 library");
+                return 1;
+            }
+            string[] sources = manifest.Sources();
+            string text = "HYLANG_PACKAGE_V1\n";
+            string name = PathUtils.BaseName(path);
+            if (!SafePackageFilename(name)) {
+                System.Console.WriteLine("error: unsafe package project filename");
+                return 1;
+            }
+            string projectText = System.IO.File.ReadAllText(path);
+            text = text + "FILE " + name + " " + projectText.Length + "\n" + projectText + "\n";
+            int i = 0;
+            while (i < sources.Length) {
+                if (!SafePackageFilename(sources[i]) || !EndsWith(sources[i], ".hy")) {
+                    System.Console.WriteLine("error: package sources must be flat .hy files");
+                    return 1;
+                }
+                string sourcePath = PathUtils.Join(PathUtils.DirName(path), sources[i]);
+                if (!System.IO.File.Exists(sourcePath)) {
+                    System.Console.WriteLine("error: package source not found: " + sourcePath);
+                    return 1;
+                }
+                string sourceText = System.IO.File.ReadAllText(sourcePath);
+                text = text + "FILE " + sources[i] + " " + sourceText.Length + "\n" + sourceText + "\n";
+                i = i + 1;
+            }
+            System.IO.File.WriteAllText(args[4], text);
+            System.Console.WriteLine(args[4]);
+            return 0;
+        }
+
+        private static int PackageAdd(string[] args) {
+            return InstallArchive(args[2], args[3], true);
+        }
+
+        private static int InstallArchive(string projectPath, string archivePath, bool direct) {
+            if (!System.IO.File.Exists(projectPath) || !EndsWith(projectPath, ".hyproj") ||
+                !System.IO.File.Exists(archivePath) || !EndsWith(archivePath, ".hypkg")) {
+                System.Console.WriteLine("error: project or source package not found");
+                return 1;
+            }
+            string original = System.IO.File.ReadAllText(projectPath);
+            HyprojManifest project = HyprojManifest.Parse(original);
+            if (project.Format() != 2 || !project.ValidDependencies()) {
+                System.Console.WriteLine("error: project must be a valid format 2 manifest");
+                return 1;
+            }
+            if (direct) {
+                ProjectClosure previous = ProjectClosure.Collect(projectPath);
+                if (previous.Error() != "" || !PackageLock.Verify(projectPath, previous)) {
+                    System.Console.WriteLine("error: existing package graph or hy.lock is invalid");
+                    return 1;
+                }
+            }
+            string archive = System.IO.File.ReadAllText(archivePath);
+            string header = "HYLANG_PACKAGE_V1\n";
+            if (!StartsWith(archive, header) || archive.Length > 16777216) {
+                System.Console.WriteLine("error: invalid or oversized source package");
+                return 1;
+            }
+            string[] names = new string[0];
+            string[] contents = new string[0];
+            int at = header.Length;
+            while (at < archive.Length) {
+                if (names.Length >= 64 || !StartsWithAt(archive, "FILE ", at)) {
+                    System.Console.WriteLine("error: invalid source package entry");
+                    return 1;
+                }
+                int lineEnd = Find(archive, "\n", at);
+                if (lineEnd < 0) {
+                    System.Console.WriteLine("error: incomplete source package header");
+                    return 1;
+                }
+                string line = Slice(archive, at + 5, lineEnd - at - 5);
+                int separator = Find(line, " ", 0);
+                if (separator < 1) {
+                    System.Console.WriteLine("error: invalid source package filename");
+                    return 1;
+                }
+                string name = Slice(line, 0, separator);
+                int length = PackageLength(Slice(line, separator + 1, line.Length - separator - 1));
+                if (!SafePackageFilename(name) || ContainsString(names, name) || length < 0 ||
+                    length > 1048576 || lineEnd + 1 + length >= archive.Length ||
+                    archive[lineEnd + 1 + length] != "\n") {
+                    System.Console.WriteLine("error: unsafe source package entry");
+                    return 1;
+                }
+                names = AppendString(names, name);
+                contents = AppendString(contents, Slice(archive, lineEnd + 1, length));
+                at = lineEnd + 2 + length;
+            }
+            if (names.Length < 2 || !EndsWith(names[0], ".hyproj")) {
+                System.Console.WriteLine("error: source package has no project and sources");
+                return 1;
+            }
+            HyprojManifest package = HyprojManifest.Parse(contents[0]);
+            string id = package.PackageId();
+            string version = package.Version();
+            if (package.Format() != 2 || package.Type() != "lib" ||
+                !package.ValidDependencies() || package.ProjectReferences().Length != 0 ||
+                !HyprojManifest.ValidPackagePart(id) ||
+                !HyprojManifest.ValidPackagePart(version) || names[0] != id + ".hyproj" ||
+                package.Sources().Length != names.Length - 1) {
+                System.Console.WriteLine("error: source package manifest does not match archive");
+                return 1;
+            }
+            string[] sourceNames = package.Sources();
+            int s = 0;
+            while (s < sourceNames.Length) {
+                if (names[s + 1] != sourceNames[s] || !EndsWith(names[s + 1], ".hy")) {
+                    System.Console.WriteLine("error: source package file list does not match manifest");
+                    return 1;
+                }
+                s = s + 1;
+            }
+            if (direct && ContainsString(project.DependencyIds(), id)) {
+                System.Console.WriteLine("error: project already declares package " + id);
+                return 1;
+            }
+            string baseDir = PathUtils.DirName(projectPath);
+            string packageDir = PathUtils.Join(PathUtils.Join(PathUtils.Join(
+                baseDir, ".hylang/packages"), id), version);
+            bool cached = System.IO.File.Exists(PathUtils.Join(packageDir, names[0]));
+            if (cached && (!System.IO.File.Exists(PathUtils.Join(packageDir, "package.hypkg")) ||
+                Sha256.Hex(System.IO.File.ReadAllBytes(PathUtils.Join(packageDir, "package.hypkg"))) !=
+                    Sha256.Hex(System.IO.File.ReadAllBytes(archivePath)))) {
+                System.Console.WriteLine("error: cached package differs from source archive");
+                return 1;
+            }
+            if (!cached) {
+                int f = 0;
+                while (f < names.Length) {
+                    System.IO.File.WriteAllText(PathUtils.Join(packageDir, names[f]), contents[f]);
+                    f = f + 1;
+                }
+                System.IO.File.WriteAllBytes(PathUtils.Join(packageDir, "package.hypkg"),
+                    System.IO.File.ReadAllBytes(archivePath));
+            }
+            if (!direct) { return 0; }
+            string updated = InsertDependency(original, id, version);
+            if (updated == "") {
+                System.Console.WriteLine("error: cannot update project dependencies");
+                return 1;
+            }
+            System.IO.File.WriteAllText(projectPath, updated);
+            ProjectClosure closure = ProjectClosure.Collect(projectPath);
+            if (closure.Error() != "") {
+                System.IO.File.WriteAllText(projectPath, original);
+                System.Console.WriteLine("error: " + closure.Error());
+                return 1;
+            }
+            string lockText = PackageLock.Render(projectPath, closure);
+            if (lockText == "") {
+                System.IO.File.WriteAllText(projectPath, original);
+                System.Console.WriteLine("error: cannot lock installed package files");
+                return 1;
+            }
+            System.IO.File.WriteAllText(PathUtils.Join(baseDir, "hy.lock"), lockText);
+            System.Console.WriteLine("added " + id + " " + version);
+            return 0;
+        }
+
+        private static string InsertDependency(string manifest, string id, string version) {
+            string entry = id + " = \"" + version + "\"\n";
+            int section = Find(manifest, "[dependencies]", 0);
+            if (section < 0) { return manifest + "\n[dependencies]\n" + entry; }
+            int newline = Find(manifest, "\n", section);
+            if (newline < 0) { return manifest + "\n" + entry; }
+            return Slice(manifest, 0, newline + 1) + entry +
+                Slice(manifest, newline + 1, manifest.Length - newline - 1);
+        }
+
+        private static int PackageRemove(string[] args) {
+            string projectPath = args[2];
+            string id = args[3];
+            if (!System.IO.File.Exists(projectPath) || !EndsWith(projectPath, ".hyproj") ||
+                !HyprojManifest.ValidPackagePart(id)) {
+                System.Console.WriteLine("error: project or package ID invalid");
+                return 1;
+            }
+            string original = System.IO.File.ReadAllText(projectPath);
+            HyprojManifest project = HyprojManifest.Parse(original);
+            if (project.Format() != 2 || !project.ValidDependencies() ||
+                !ContainsString(project.DependencyIds(), id)) {
+                System.Console.WriteLine("error: project does not declare package " + id);
+                return 1;
+            }
+            ProjectClosure previous = ProjectClosure.Collect(projectPath);
+            if (previous.Error() != "" || !PackageLock.Verify(projectPath, previous)) {
+                System.Console.WriteLine("error: existing package graph or hy.lock is invalid");
+                return 1;
+            }
+            string updated = "";
+            string section = "";
+            int at = 0;
+            bool removed = false;
+            while (at < original.Length) {
+                int end = Find(original, "\n", at);
+                if (end < 0) { end = original.Length; }
+                string line = Slice(original, at, end - at);
+                string trimmed = TrimSpaces(line);
+                if (StartsWith(trimmed, "[") && EndsWith(trimmed, "]")) {
+                    section = trimmed;
+                }
+                bool skip = false;
+                if (section == "[dependencies]") {
+                    int eq = Find(trimmed, "=", 0);
+                    if (eq >= 0 && TrimSpaces(Slice(trimmed, 0, eq)) == id) {
+                        skip = true;
+                        removed = true;
+                    }
+                }
+                if (!skip) {
+                    updated = updated + line;
+                    if (end < original.Length) { updated = updated + "\n"; }
+                }
+                at = end + 1;
+            }
+            if (!removed) {
+                System.Console.WriteLine("error: could not find dependency entry for " + id);
+                return 1;
+            }
+            System.IO.File.WriteAllText(projectPath, updated);
+            ProjectClosure closure = ProjectClosure.Collect(projectPath);
+            if (closure.Error() != "") {
+                System.IO.File.WriteAllText(projectPath, original);
+                System.Console.WriteLine("error: " + closure.Error());
+                return 1;
+            }
+            string lockText = PackageLock.Render(projectPath, closure);
+            if (lockText == "") {
+                System.IO.File.WriteAllText(projectPath, original);
+                System.Console.WriteLine("error: cannot lock remaining package files");
+                return 1;
+            }
+            System.IO.File.WriteAllText(PathUtils.Join(PathUtils.DirName(projectPath), "hy.lock"), lockText);
+            System.Console.WriteLine("removed " + id + " from project");
+            return 0;
+        }
+
+        private static string TrimSpaces(string value) {
+            int begin = 0;
+            int end = value.Length;
+            while (begin < end && (value[begin] == " " || value[begin] == "\t" || value[begin] == "\r")) {
+                begin = begin + 1;
+            }
+            while (end > begin && (value[end - 1] == " " || value[end - 1] == "\t" || value[end - 1] == "\r")) {
+                end = end - 1;
+            }
+            return Slice(value, begin, end - begin);
+        }
+
+        private static int PackageLength(string digits) {
+            if (digits.Length == 0 || digits.Length > 8) { return -1; }
+            int value = 0;
+            int i = 0;
+            while (i < digits.Length) {
+                int digit = Find("0123456789", digits[i], 0);
+                if (digit < 0) { return -1; }
+                value = value * 10 + digit;
+                i = i + 1;
+            }
+            return value;
+        }
+
+        private static bool StartsWithAt(string value, string prefix, int at) {
+            if (at < 0 || at + prefix.Length > value.Length) { return false; }
+            int i = 0;
+            while (i < prefix.Length) {
+                if (value[at + i] != prefix[i]) { return false; }
+                i = i + 1;
+            }
+            return true;
+        }
+
+        private static int Find(string value, string needle, int start) {
+            int i = start;
+            while (i <= value.Length - needle.Length) {
+                if (StartsWithAt(value, needle, i)) { return i; }
+                i = i + 1;
+            }
+            return -1;
+        }
+
+        private static string Slice(string value, int start, int length) {
+            string result = "";
+            int i = 0;
+            while (i < length) {
+                result = result + value[start + i];
+                i = i + 1;
+            }
+            return result;
+        }
+
+        private static bool ContainsString(string[] values, string value) {
+            int i = 0;
+            while (i < values.Length) {
+                if (values[i] == value) { return true; }
+                i = i + 1;
+            }
+            return false;
+        }
+
+        private static string[] AppendString(string[] values, string value) {
+            string[] next = new string[values.Length + 1];
+            int i = 0;
+            while (i < values.Length) { next[i] = values[i]; i = i + 1; }
+            next[values.Length] = value;
+            return next;
+        }
+
+        private static bool SafePackageFilename(string filename) {
+            if (filename == "" || filename == "." || filename == "..") { return false; }
+            string letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            if (Find(letters, filename[0], 0) < 0) { return false; }
+            int i = 0;
+            while (i < filename.Length) {
+                string ch = filename[i];
+                if (Find(letters + "._-", ch, 0) < 0) { return false; }
+                i = i + 1;
+            }
+            return true;
         }
 
         private static string RenderManifest(string name, string type, string source, bool workspace) {
@@ -533,6 +1155,11 @@ namespace Hydrogen.Compiler.Cli {
             System.Console.WriteLine("usage: hy compile <file.hy> --target windows-x64 -o <output.exe>");
             System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--hide-progress] [--hide-spinner] [--hide-log]");
             System.Console.WriteLine("usage: hy stage-compare <project.hyproj> --stage1 <path> --stage2 <path>");
+            System.Console.WriteLine("usage: hy package pack <library.hyproj> -o <output.hypkg>");
+            System.Console.WriteLine("usage: hy package add <project.hyproj> <source.hypkg>");
+            System.Console.WriteLine("usage: hy package remove <project.hyproj> <package-id>");
+            System.Console.WriteLine("usage: hy package hash <file>");
+            System.Console.WriteLine("usage: hy package lock <project.hyproj>");
             System.Console.WriteLine("installed Linux release commands:");
             System.Console.WriteLine("  hy update-check");
             System.Console.WriteLine("  hy update [--force]");

@@ -1265,6 +1265,77 @@ rt_args:
  pop r12
  pop rbx
  ret
+# Run a trusted, prequoted host command and return its process exit status.
+# The native CLI validates identifiers and quotes paths before calling this.
+rt_process_run:
+ test rdi,rdi
+ jz rt_null_error
+ push r12
+ push r13
+ mov r12,rdi
+ mov eax,57
+ syscall
+ test rax,rax
+ js .run_failed
+ jz .run_child
+ mov r13,rax
+ sub rsp,16
+.run_wait:
+ mov rdi,r13
+ mov rsi,rsp
+ xor edx,edx
+ xor r10d,r10d
+ mov eax,61
+ syscall
+ cmp rax,-4
+ je .run_wait
+ test rax,rax
+ js .run_wait_failed
+ mov eax,[rsp]
+ mov edx,eax
+ and edx,127
+ jnz .run_signaled
+ shr eax,8
+ and eax,255
+ jmp .run_done
+.run_signaled:
+ lea eax,[rdx+128]
+ jmp .run_done
+.run_wait_failed:
+ mov eax,-1
+.run_done:
+ add rsp,16
+ pop r13
+ pop r12
+ ret
+.run_failed:
+ mov eax,-1
+ pop r13
+ pop r12
+ ret
+.run_child:
+ sub rsp,32
+ lea rax,[rip+.run_shell]
+ mov [rsp],rax
+ lea rax,[rip+.run_dash_c]
+ mov [rsp+8],rax
+ lea rax,[r12+8]
+ mov [rsp+16],rax
+ mov qword ptr [rsp+24],0
+ mov rdi,[rsp]
+ mov rsi,rsp
+ mov rdx,[r14]
+ lea rdx,[r14+rdx*8+16]
+ mov eax,59
+ syscall
+ mov edi,127
+ mov eax,60
+ syscall
+ ud2
+.run_shell:
+ .asciz "/bin/sh"
+.run_dash_c:
+ .asciz "-c"
 rt_null_error:
  lea rsi,[rip+.null_message]
  mov edx,.null_end-.null_message
@@ -1311,3 +1382,7 @@ rt_error:
 .io_end:
 .convert_message: .ascii "runtime error: invalid integer string\n"
 .convert_end:
+.global rt_is_windows
+rt_is_windows:
+    xor eax, eax
+    ret

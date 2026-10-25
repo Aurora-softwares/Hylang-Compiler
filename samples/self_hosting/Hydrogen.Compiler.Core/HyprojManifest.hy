@@ -4,31 +4,55 @@ namespace Hydrogen.Compiler.Core {
     public class HyprojManifest {
         private int format;
         private string type;
+        private string version;
+        private string packageId;
         private string output;
         private string[] sources;
         private string[] projectReferences;
+        private string[] dependencyIds;
+        private string[] dependencyVersions;
+        private bool validDependencies;
 
-        public HyprojManifest(int inputFormat, string inputType, string inputOutput, string[] inputSources, string[] inputProjectReferences) {
+        public HyprojManifest(int inputFormat, string inputType, string inputVersion, string inputPackageId, string inputOutput, string[] inputSources, string[] inputProjectReferences, string[] inputDependencyIds, string[] inputDependencyVersions, bool inputValidDependencies) {
             format = inputFormat;
             type = inputType;
+            version = inputVersion;
+            packageId = inputPackageId;
             output = inputOutput;
             sources = inputSources;
             projectReferences = inputProjectReferences;
+            dependencyIds = inputDependencyIds;
+            dependencyVersions = inputDependencyVersions;
+            validDependencies = inputValidDependencies;
         }
 
         public int Format() { return format; }
         public string Type() { return type; }
+        public string Version() { return version; }
+        public string PackageId() { return packageId; }
         public string Output() { return output; }
         public string[] Sources() { return sources; }
         public string[] ProjectReferences() { return projectReferences; }
+        public string[] DependencyIds() { return dependencyIds; }
+        public string[] DependencyVersions() { return dependencyVersions; }
+        public bool ValidDependencies() { return validDependencies; }
 
         public static HyprojManifest Load(string path) {
-            string text = System.IO.File.ReadAllText(path);
+            return Parse(System.IO.File.ReadAllText(path));
+        }
+
+        public static HyprojManifest Parse(string text) {
             int format = 0;
             string type = "";
+            string version = "";
+            string packageId = "";
             string output = "";
             string[] sources = new string[0];
             string[] projectReferences = new string[0];
+            string[] dependencyIds = new string[0];
+            string[] dependencyVersions = new string[0];
+            bool validDependencies = true;
+            string section = "";
 
             string[] lines = SplitLines(text);
             int i = 0;
@@ -39,7 +63,7 @@ namespace Hydrogen.Compiler.Core {
                     continue;
                 }
                 if (StartsWith(line, "[")) {
-                    // ignore sections
+                    section = line;
                     i = i + 1;
                     continue;
                 }
@@ -50,10 +74,26 @@ namespace Hydrogen.Compiler.Core {
                 }
                 string key = Trim(Slice(line, 0, eq));
                 string value = Trim(Slice(line, eq + 1, line.Length - (eq + 1)));
-                if (key == "format") {
+                if (section == "[package]") {
+                    if (key == "id") { packageId = Unquote(value); }
+                } else if (section == "[dependencies]") {
+                    string version = Unquote(value);
+                    if (!ValidPackagePart(key) || !ValidPackagePart(version) ||
+                        value.Length < 2 || value[0] != "\"" ||
+                        value[value.Length - 1] != "\"" || Contains(dependencyIds, key)) {
+                        validDependencies = false;
+                    } else {
+                        dependencyIds = Append(dependencyIds, dependencyIds.Length, key);
+                        dependencyVersions = Append(dependencyVersions, dependencyVersions.Length, version);
+                    }
+                } else if (section != "") {
+                    // Package metadata and future sections do not change root fields.
+                } else if (key == "format") {
                     format = ParseInt(value);
                 } else if (key == "type") {
                     type = Unquote(value);
+                } else if (key == "version") {
+                    version = Unquote(value);
                 } else if (key == "output") {
                     output = Unquote(value);
                 } else if (key == "sources") {
@@ -64,7 +104,29 @@ namespace Hydrogen.Compiler.Core {
                 i = i + 1;
             }
 
-            return new HyprojManifest(format, type, output, sources, projectReferences);
+            return new HyprojManifest(format, type, version, packageId, output, sources, projectReferences,
+                dependencyIds, dependencyVersions, validDependencies);
+        }
+
+        private static bool Contains(string[] values, string needle) {
+            int i = 0;
+            while (i < values.Length) {
+                if (values[i] == needle) { return true; }
+                i = i + 1;
+            }
+            return false;
+        }
+
+        public static bool ValidPackagePart(string value) {
+            if (value.Length == 0 || value == "." || value == "..") { return false; }
+            if (IndexOf("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", value[0]) < 0) { return false; }
+            int i = 0;
+            while (i < value.Length) {
+                string ch = value[i];
+                if (IndexOf("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-", ch) < 0) { return false; }
+                i = i + 1;
+            }
+            return true;
         }
 
         private static string[] SplitLines(string text) {
