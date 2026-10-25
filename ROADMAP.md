@@ -36,7 +36,7 @@ Linux executables do not establish support for these targets.
 
 ## Tooling and packages
 
-Improve LSP navigation/completion/indexing, debugger integration, and diagnostic fidelity. Native source archive packing, project-local exact dependency loading, a SHA-256 lockfile, static-registry downloads, and exact restore/upgrade are in development. Registry signing, version-range solving, native install lifecycle commands, published installer-ready release assets, and real Windows-host validation remain open.
+Improve LSP navigation/completion/indexing, debugger integration, and diagnostic fidelity. Native source archive packing, project-local exact dependency loading, a SHA-256 lockfile, static-registry downloads, and exact restore/upgrade are in development. Linux install lifecycle and Windows release layout are implemented in development. Registry signing, version-range solving, Windows lifecycle verification, published installer-ready release assets, and real Windows-host validation remain open.
 
 ## Development history
 

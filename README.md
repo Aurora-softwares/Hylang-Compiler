@@ -47,8 +47,9 @@ dependencies, resolves exact transitive dependencies from `.hylang/packages`,
 and verifies the SHA-256 hashes in `hy.lock` during builds. It can search the
 curated static registry, fetch a pinned package and its transitive dependencies,
 restore a project from its lockfile, and upgrade a direct dependency to an
-explicit version. Native install lifecycle commands, published installer-ready
-release assets, and real Windows-host validation remain open gates.
+explicit version. Windows release packaging and the `hy.cmd` launcher now
+have a Wine-checked candidate. PowerShell lifecycle validation, published
+installer-ready assets, and real Windows-host validation remain open gates.
 
 ## Build output
 
@@ -78,8 +79,12 @@ file manifest and GitHub Releases checksums/digests; they refuse to touch any
 unmanaged files. `--force` skips prompts, but never disables safety checks.
 
 This is available in newly packaged releases, not in old standalone compiler
-binaries. See [release installation details](release/README.md). The isolated
-lifecycle checks run with `ctest -R hy_release_lifecycle --output-on-failure`.
+binaries. See [Linux release installation details](release/README.md) and
+[Windows release installation details](release/README-windows.md). The isolated
+Linux lifecycle checks run with `ctest -R hy_release_lifecycle --output-on-failure`.
+The Windows ZIP layout, `hy.cmd` launcher, and compiler delegation run under
+Wine with `ctest -R hy_stage1_windows_release --output-on-failure`. Windows
+PowerShell lifecycle commands still require validation on a real Windows host.
 
 ## Native source packages in development
 
@@ -126,6 +131,21 @@ If CMake is already configured, the equivalent target is:
 cmake -S . -B build -DHYDROGEN_RELEASE_VERSION="$RELEASE_VERSION"
 cmake --build build --target hydrogen_package_release
 ```
+
+To package a verified Windows x64 compiler image, build
+`samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Windows.hyproj`
+with the native compiler, then run:
+
+```bash
+cmake -DSOURCE_DIR="$PWD" -DINPUT_BINARY="/path/to/hydrogen-windows.exe" \
+  -DVERSION="$RELEASE_VERSION" -DRELEASES_DIR="$PWD/releases" \
+  -P cmake/PackageHydrogenWindowsRelease.cmake
+```
+
+The ZIP contains `bin/hy.cmd`, `libexec/hy-core.exe`, a PowerShell lifecycle
+helper, and the same manifest/checksum contract as the Linux archive. Keep
+both platform archives and their sidecars together for an installer-compatible
+GitHub release.
 
 ## Build the tools
 

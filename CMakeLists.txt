@@ -1750,6 +1750,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
         LABELS "windows;crosscompile")
 
     if(HYDROGEN_WINE_BINARY)
+        add_test(NAME hy_stage1_windows_release
+            COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test-windows-release.sh
+                ${CMAKE_CURRENT_SOURCE_DIR}
+                ${stage1_test_dir}/hydrogen-stage1
+                ${HYDROGEN_WINE_BINARY})
+        set_tests_properties(hy_stage1_windows_release PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 240 RUN_SERIAL TRUE
+            LABELS "windows;release")
         add_test(NAME hy_stage1_windows_bootstrap
             COMMAND ${CMAKE_COMMAND}
                 -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
