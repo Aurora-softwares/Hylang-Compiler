@@ -73,6 +73,12 @@ foreach(case IN ITEMS slice_negative_start slice_reversed_bounds slice_past_end 
     if(NOT status STREQUAL "0")
         message(FATAL_ERROR "Linux native compile failed for ${case}: ${stdout}${stderr}")
     endif()
+    # Direct native outputs are emitted without execute permission. CTest must
+    # grant it before running the binary, just like other Stage 1 tests do.
+    file(CHMOD "${output}" PERMISSIONS
+        OWNER_READ OWNER_WRITE OWNER_EXECUTE
+        GROUP_READ GROUP_EXECUTE
+        WORLD_READ WORLD_EXECUTE)
     execute_process(COMMAND "${output}"
         RESULT_VARIABLE status OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr)
     if(case STREQUAL "slice_null_receiver")
