@@ -114,3 +114,9 @@ records 30 paired before/after runs after constant-remainder and conditional
 branch improvements. Its matching checksums and compiler/executable hashes
 are retained alongside the raw timings. See [optimisations.md](../../optimisations.md)
 for the diagnosis and remaining bounds-check work.
+
+The [proven packed-array bounds comparison](results-2026-10-25-proven-array-bounds.json)
+records the narrow loop optimisation and its array improvement. A
+[longer byte confirmation](results-2026-10-25-proven-array-bounds-byte-confirm.json)
+did not establish a byte-checksum speedup; see the corresponding notes in
+[optimisations.md](../../optimisations.md).

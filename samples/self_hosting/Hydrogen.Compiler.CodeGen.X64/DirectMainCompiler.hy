@@ -69,6 +69,14 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private int callPatchCount;
         private IrModule module;
         private string[] localTypes;
+        // A packed array made with new T[n] keeps its immutable length equal
+        // to n until either local is assigned again.
+        private int[] arrayLengthSourceSlots;
+        private int provenIndexSlot;
+        private int provenArraySlot;
+        private int provenBoundSlot;
+        private bool provenNonNegative;
+        private bool loopStartsAtZero;
         private int maxLocalCount;
         private int scopeStart;
         private string valueType;
@@ -141,7 +149,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xed); // xor r13d, r13d
             }
             currentFunction = mainFunction;
-            localNames = new string[0]; localTypes = new string[0]; localCount = 0; scopeStart = 0; loopStart = -1;
+            localNames = new string[0]; localTypes = new string[0]; arrayLengthSourceSlots = new int[0];
+            localCount = 0; scopeStart = 0; loopStart = -1;
+            provenIndexSlot = -1; provenArraySlot = -1; provenBoundSlot = -1;
+            provenNonNegative = false; loopStartsAtZero = false;
             int si = 0;
             while (si < staticCount) {
                 IrField staticField = StaticDeclaration(si);
@@ -497,10 +508,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             function.SetPosition(code.Position());
             localNames = new string[0];
             localTypes = new string[0];
+            arrayLengthSourceSlots = new int[0];
             localCount = 0;
             maxLocalCount = 0;
             scopeStart = 0;
             loopStart = -1;
+            provenIndexSlot = -1; provenArraySlot = -1; provenBoundSlot = -1;
+            provenNonNegative = false; loopStartsAtZero = false;
             breakPatches = new int[0];
             breakCount = 0;
             code.EmitByte(0x55); // push rbp (callee preserves caller's frame)
@@ -606,7 +620,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 IrStatement[] items = statement.Statements();
                 int i = 0;
                 while (i < items.Length) {
+                    bool previousZero = loopStartsAtZero;
+                    loopStartsAtZero = false;
+                    if (i > 0 && items[i].Kind() == IrStatement.KindWhileStatement()) {
+                        IrExpression condition = items[i].Condition();
+                        if (condition != null && condition.Kind() == IrExpression.KindBinary() &&
+                            condition.Left().Kind() == IrExpression.KindName()) {
+                            loopStartsAtZero = ZeroSetter(items[i - 1], condition.Left().Name());
+                        }
+                    }
                     if (!CompileStatement(items[i])) { return false; }
+                    loopStartsAtZero = previousZero;
                     i = i + 1;
                 }
                 i = savedCount;
@@ -634,6 +658,15 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 int slot = AddLocal(statement.Name(), type);
                 if (slot < 0) { return false; }
                 EmitStoreLocal(slot);
+                IrExpression initializer = statement.Initializer();
+                if ((type == "byte[]" || type == "int[]") && initializer != null &&
+                    initializer.Kind() == IrExpression.KindArrayCreation() &&
+                    initializer.Size().Kind() == IrExpression.KindName()) {
+                    int lengthSlot = FindLocal(initializer.Size().Name());
+                    if (lengthSlot >= 0 && localTypes[lengthSlot] == "int") {
+                        arrayLengthSourceSlots[slot] = lengthSlot;
+                    }
+                }
                 return true;
             }
             if (kind == IrStatement.KindExpressionStatement()) {
@@ -671,7 +704,14 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 loopStart = conditionPosition;
                 int exitPatch = CompileConditionJumpFalse(statement.Condition());
                 if (exitPatch < 0) { return false; }
+                int previousIndex = provenIndexSlot;
+                int previousArray = provenArraySlot;
+                int previousBound = provenBoundSlot;
+                bool previousNonNegative = provenNonNegative;
+                ActivateProvenLoop(statement.Condition(), statement.Body(), null, loopStartsAtZero);
                 if (!CompileStatement(statement.Body())) { return false; }
+                provenIndexSlot = previousIndex; provenArraySlot = previousArray; provenBoundSlot = previousBound;
+                provenNonNegative = previousNonNegative;
                 int backPatch = EmitJump();
                 PatchRelative(backPatch, conditionPosition);
                 PatchRelative(exitPatch, code.Position());
@@ -694,7 +734,19 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 loopStart = -2;
                 int exitPatch = CompileConditionJumpFalse(statement.Condition());
                 if (exitPatch < 0) { return false; }
+                int previousIndex = provenIndexSlot;
+                int previousArray = provenArraySlot;
+                int previousBound = provenBoundSlot;
+                bool previousNonNegative = provenNonNegative;
+                bool forStartsZero = false;
+                if (statement.Condition() != null && statement.Condition().Kind() == IrExpression.KindBinary() &&
+                    statement.Condition().Left().Kind() == IrExpression.KindName()) {
+                    forStartsZero = ZeroSetter(statement.ForInitializer(), statement.Condition().Left().Name());
+                }
+                ActivateProvenLoop(statement.Condition(), statement.Body(), statement.ForIncrement(), forStartsZero);
                 if (!CompileStatement(statement.Body())) { return false; }
+                provenIndexSlot = previousIndex; provenArraySlot = previousArray; provenBoundSlot = previousBound;
+                provenNonNegative = previousNonNegative;
 
                 int incrementPosition = code.Position();
                 int ci = savedContinues;
@@ -729,6 +781,118 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             failure = "unsupported statement in direct native backend";
             return false;
+        }
+
+        // Only a strict less-than loop with a stable index and immutable
+        // array length can establish an upper bound for indexed accesses.
+        // The final increment is excluded from the guarded body. Negative
+        // indexes remain checked at each access, including after int wrap.
+        private void ActivateProvenLoop(IrExpression condition, IrStatement body, IrExpression forIncrement, bool startsZero) {
+            provenIndexSlot = -1; provenArraySlot = -1; provenBoundSlot = -1;
+            provenNonNegative = false;
+            if (condition == null || condition.Kind() != IrExpression.KindBinary() ||
+                condition.OperatorKind() != IrOperator.LessToken() ||
+                condition.Left().Kind() != IrExpression.KindName() ||
+                body == null || body.Kind() != IrStatement.KindBlock()) { return; }
+            int indexSlot = FindLocal(condition.Left().Name());
+            if (indexSlot < 0 || localTypes[indexSlot] != "int") { return; }
+            IrExpression right = condition.Right();
+            int arraySlot = -1;
+            int boundSlot = -1;
+            if (right.Kind() == IrExpression.KindMemberAccess() && !right.NullConditional() &&
+                right.MemberName() == "Length" &&
+                right.Receiver() != null && right.Receiver().Kind() == IrExpression.KindName()) {
+                arraySlot = FindLocal(right.Receiver().Name());
+                if (arraySlot < 0 || (localTypes[arraySlot] != "byte[]" && localTypes[arraySlot] != "int[]")) { return; }
+            } else if (right.Kind() == IrExpression.KindName()) {
+                boundSlot = FindLocal(right.Name());
+                if (boundSlot < 0 || localTypes[boundSlot] != "int" || boundSlot == indexSlot) { return; }
+            } else { return; }
+            IrStatement[] items = body.Statements();
+            int prefixCount = items.Length;
+            if (forIncrement == null) {
+                if (prefixCount == 0 || items[prefixCount - 1].Kind() != IrStatement.KindExpressionStatement() ||
+                    !CanonicalIncrement(items[prefixCount - 1].Expression(), indexSlot)) { return; }
+                prefixCount = prefixCount - 1;
+            } else if (!CanonicalIncrement(forIncrement, indexSlot)) { return; }
+            int i = 0;
+            while (i < prefixCount) {
+                if (items[i].Kind() != IrStatement.KindExpressionStatement() ||
+                    !GuardedExpressionSafe(items[i].Expression(), indexSlot, arraySlot, boundSlot)) { return; }
+                i = i + 1;
+            }
+            provenIndexSlot = indexSlot;
+            provenArraySlot = arraySlot;
+            provenBoundSlot = boundSlot;
+            provenNonNegative = startsZero;
+        }
+
+        private bool ZeroSetter(IrStatement statement, string name) {
+            if (statement == null) { return false; }
+            IrExpression value = null;
+            if (statement.Kind() == IrStatement.KindVariableDeclaration() && statement.Name() == name) {
+                value = statement.Initializer();
+            } else if (statement.Kind() == IrStatement.KindExpressionStatement()) {
+                IrExpression expression = statement.Expression();
+                if (expression != null && expression.Kind() == IrExpression.KindAssignment() &&
+                    expression.AssignmentOperatorKind() == IrOperator.EqualsToken() &&
+                    expression.Target().Kind() == IrExpression.KindName() && expression.Target().Name() == name) {
+                    value = expression.Value();
+                }
+            }
+            return value != null && value.Kind() == IrExpression.KindLiteral() &&
+                value.LiteralKind() == "number" && value.LiteralText() == "0";
+        }
+
+        private bool CanonicalIncrement(IrExpression expression, int indexSlot) {
+            if (expression == null || expression.Kind() != IrExpression.KindAssignment() ||
+                expression.AssignmentOperatorKind() != IrOperator.EqualsToken() ||
+                expression.Target().Kind() != IrExpression.KindName() ||
+                FindLocal(expression.Target().Name()) != indexSlot) { return false; }
+            IrExpression value = expression.Value();
+            return value.Kind() == IrExpression.KindBinary() && value.OperatorKind() == IrOperator.PlusToken() &&
+                value.Left().Kind() == IrExpression.KindName() && FindLocal(value.Left().Name()) == indexSlot &&
+                value.Right().Kind() == IrExpression.KindLiteral() &&
+                value.Right().LiteralKind() == "number" && value.Right().LiteralText() == "1";
+        }
+
+        private bool GuardedExpressionSafe(IrExpression expression, int indexSlot, int arraySlot, int boundSlot) {
+            if (expression == null) { return true; }
+            int kind = expression.Kind();
+            if (kind == IrExpression.KindName() || kind == IrExpression.KindLiteral()) { return true; }
+            if (kind == IrExpression.KindBinary()) {
+                return GuardedExpressionSafe(expression.Left(), indexSlot, arraySlot, boundSlot) &&
+                    GuardedExpressionSafe(expression.Right(), indexSlot, arraySlot, boundSlot);
+            }
+            if (kind == IrExpression.KindIndex()) {
+                return GuardedExpressionSafe(expression.Receiver(), indexSlot, arraySlot, boundSlot) &&
+                    GuardedExpressionSafe(expression.Index(), indexSlot, arraySlot, boundSlot);
+            }
+            if (kind == IrExpression.KindMemberAccess()) {
+                return GuardedExpressionSafe(expression.Receiver(), indexSlot, arraySlot, boundSlot);
+            }
+            if (kind == IrExpression.KindCast()) {
+                return GuardedExpressionSafe(expression.CastExpression(), indexSlot, arraySlot, boundSlot);
+            }
+            if (kind == IrExpression.KindAssignment()) {
+                IrExpression target = expression.Target();
+                if (target.Kind() == IrExpression.KindName()) {
+                    int slot = FindLocal(target.Name());
+                    if (slot == indexSlot || slot == arraySlot || slot == boundSlot ||
+                        (slot >= 0 && (localTypes[slot] == "byte[]" || localTypes[slot] == "int[]"))) { return false; }
+                } else if (target.Kind() != IrExpression.KindIndex()) { return false; }
+                return GuardedExpressionSafe(target, indexSlot, arraySlot, boundSlot) &&
+                    GuardedExpressionSafe(expression.Value(), indexSlot, arraySlot, boundSlot);
+            }
+            return false;
+        }
+
+        private bool ProvenPackedAccess(IrExpression receiver, IrExpression index) {
+            if (provenIndexSlot < 0 || receiver.Kind() != IrExpression.KindName() ||
+                index.Kind() != IrExpression.KindName() || FindLocal(index.Name()) != provenIndexSlot) { return false; }
+            int arraySlot = FindLocal(receiver.Name());
+            return arraySlot >= 0 && (arraySlot == provenArraySlot ||
+                (provenBoundSlot >= 0 && arrayLengthSourceSlots[arraySlot] == provenBoundSlot));
         }
 
         // A branch can consume comparison flags directly. Materialising a
@@ -858,10 +1022,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (receiverType == "string") { EmitRuntime("rt_char"); valueType = "string"; }
                 else if (!IsArray(receiverType)) { failure = "native indexing requires array or string"; return false; }
                 else if (!freestanding && receiverType == "byte[]") {
-                    EmitCheckedPackedIndex(1);
+                    if (ProvenPackedAccess(expression.Receiver(), expression.Index())) { EmitProvenPackedIndex(1); }
+                    else { EmitCheckedPackedIndex(1); }
                     code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0x00); // movzx eax, byte [rax]
                 } else if (!freestanding && receiverType == "int[]") {
-                    EmitCheckedPackedIndex(4);
+                    if (ProvenPackedAccess(expression.Receiver(), expression.Index())) { EmitProvenPackedIndex(4); }
+                    else { EmitCheckedPackedIndex(4); }
                     code.EmitByte(0x48); code.EmitByte(0x63); code.EmitByte(0x00); // movsxd rax, dword [rax]
                 } else {
                     EmitRuntime("rt_index");
@@ -1703,6 +1869,21 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.EmitByte(8); // lea rax, [rdi + rsi * elementBytes + 8]
         }
 
+        // The loop comparison proves the upper bound and the array reference
+        // stays stable. A signed negative index can still enter i < Length.
+        private void EmitProvenPackedIndex(int elementBytes) {
+            if (!provenNonNegative) {
+                code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xf6); // test rsi, rsi
+                code.EmitByte(0x0f); code.EmitByte(0x89); int nonnegative = code.Position(); code.Emit32(0); // jns
+                EmitRuntime("rt_index_error");
+                PatchRelative(nonnegative, code.Position());
+            }
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x44);
+            if (elementBytes == 1) { code.EmitByte(0x37); }
+            else { code.EmitByte(0xb7); }
+            code.EmitByte(8);
+        }
+
         private void MoveRdiRax() { code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc7); }
         private void DropSlots(int slots) {
             if (slots != 0) { code.EmitByte(0x48); code.EmitByte(0x81); code.EmitByte(0xc4); code.Emit32(slots * 8); }
@@ -1996,8 +2177,14 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     packedIntTarget = !freestanding && valueType == "int[]";
                     expected = ElementType(valueType);
                     if (!CompileIndexOperands(target.Index())) { return false; }
-                    if (packedByteTarget) { EmitCheckedPackedIndex(1); }
-                    else if (packedIntTarget) { EmitCheckedPackedIndex(4); }
+                    if (packedByteTarget) {
+                        if (ProvenPackedAccess(target.Receiver(), target.Index())) { EmitProvenPackedIndex(1); }
+                        else { EmitCheckedPackedIndex(1); }
+                    }
+                    else if (packedIntTarget) {
+                        if (ProvenPackedAccess(target.Receiver(), target.Index())) { EmitProvenPackedIndex(4); }
+                        else { EmitCheckedPackedIndex(4); }
+                    }
                     else { EmitRuntime("rt_index"); }
                     valueType = expected;
                 } else { failure = "unsupported native assignment target"; return false; }
@@ -2077,6 +2264,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (!normalizedBinary) { PrepareValue(expected); }
             if (slot >= 0) {
                 EmitStoreLocal(slot);
+                InvalidateArrayLengthSource(slot);
                 if (returnsOld) { code.EmitByte(0x58); } // pop original value into rax
             }
             else {
@@ -2205,6 +2393,16 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             else { code.EmitByte(0x0f); code.EmitByte(0x05); } // Linux syscall
         }
 
+        private void InvalidateArrayLengthSource(int changedSlot) {
+            int i = 0;
+            while (i < localCount) {
+                if (i == changedSlot || arrayLengthSourceSlots[i] == changedSlot) {
+                    arrayLengthSourceSlots[i] = -1;
+                }
+                i = i + 1;
+            }
+        }
+
         private int AddLocal(string name, string type) {
             int i = scopeStart;
             while (i < localCount) {
@@ -2213,6 +2411,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             localNames = AppendString(localNames, localCount, name);
             localTypes = AppendString(localTypes, localCount, type);
+            arrayLengthSourceSlots = AppendInt(arrayLengthSourceSlots, localCount, -1);
             int result = localCount;
             localCount = localCount + 1;
             if (localCount > maxLocalCount) { maxLocalCount = localCount; }

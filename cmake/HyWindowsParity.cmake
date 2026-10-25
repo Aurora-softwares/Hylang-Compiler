@@ -100,7 +100,7 @@ foreach(name native_runtime_gc native_inheritance native_interfaces
              native_static_fields native_integral_widths
              native_runtime_packed_bytes native_runtime_packed_ints
              native_runtime_literals native_runtime_small_spans native_overloads
-             native_condition_branches)
+             native_condition_branches native_proven_bounds)
     set(image "${TEMP_DIR}/${name}.exe")
     execute_process(COMMAND "${NATIVE_BINARY}" compile
         "${SOURCE_DIR}/tests/phase6/${name}.hy" --target windows-x64 -o "${image}"
@@ -109,5 +109,25 @@ foreach(name native_runtime_gc native_inheritance native_interfaces
         message(FATAL_ERROR "Windows compilation failed for ${name}: ${output}\n${errors}")
     endif()
     run_windows("${image}" 42 ".+")
+endforeach()
+set(bounds_negative "byte[] values = new byte[2]; int i = -1; int sum = 0; while (i < values.Length) { sum = sum + values[i]; i = i + 1; } return sum;")
+set(bounds_mutated "int n = 2; int[] values = new int[n]; n = 3; int i = 0; while (i < n) { values[i] = i; i = i + 1; } return 0;")
+foreach(name bounds_negative bounds_mutated)
+    set(source "${TEMP_DIR}/${name}.hy")
+    set(image "${TEMP_DIR}/${name}.exe")
+    file(WRITE "${source}" "public class Program { public static int Main() { ${${name}} } }\n")
+    execute_process(COMMAND "${NATIVE_BINARY}" compile "${source}"
+        --target windows-x64 -o "${image}"
+        RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 60)
+    if(NOT status STREQUAL "0" OR NOT errors STREQUAL "")
+        message(FATAL_ERROR "Windows bounds fixture compilation failed: ${name}: ${output}\n${errors}")
+    endif()
+    execute_process(COMMAND "${CMAKE_COMMAND}" -E env "WINEDEBUG=-all"
+        "${WINE_BINARY}" "${image}"
+        RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 90)
+    if(NOT status STREQUAL "1" OR NOT output STREQUAL "" OR
+       NOT errors MATCHES "runtime error: index out of range")
+        message(FATAL_ERROR "Windows bounds failure mismatch: ${name}: ${status}\n${output}\n${errors}")
+    endif()
 endforeach()
 message(STATUS "Windows x64 language, runtime, console, file, argv, and GC parity passed")

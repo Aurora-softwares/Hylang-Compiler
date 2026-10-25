@@ -139,10 +139,30 @@ the standard loop at 82.22 to 68.82 ms (16.3% faster), array fill/scan at
 (14.3%). The [raw samples](benchmarks/runtime/results-2026-10-25-loop-array-byte-codegen.json)
 include source, compiler, executable, and byte-input hashes. Native runtime
 and Windows parity tests cover signed/unsigned branch conditions and constant
-division edge cases. Array accesses still need safe bounds-check elimination
-in loops where the index range can be proven; this is tracked in
-[#167](https://github.com/Aurora-softwares/Hylang-Compiler/issues/167) as
-remaining 0.8.0 performance work.
+division edge cases. Redundant packed-array bounds checks are tracked in
+[#167](https://github.com/Aurora-softwares/Hylang-Compiler/issues/167) for
+the current 0.8.0 optimisation target.
+
+For #167, the native compiler now recognises a strict `i < array.Length`
+loop, or `i < n` when that array was created as `new T[n]` and the length
+relationship remains valid. The body must leave the index and bound unchanged
+until a final `i = i + 1`; assignments to the array or bound invalidate the
+proof. A preceding `i = 0` also proves the index stays nonnegative because
+native packed-array lengths are capped below `int.MaxValue`. Otherwise a
+negative-index check remains. Unproven accesses retain the original null and
+unsigned bounds checks. Linux and Windows regression fixtures cover the
+proven read/write paths, negative starts, changed indexes/bounds, a shortened
+array alias, and null arrays.
+
+The [50-pair comparison](benchmarks/runtime/results-2026-10-25-proven-array-bounds.json)
+measured the standard 10-million-element array at 120.28 to 119.04 ms median
+(1.0% faster) with 35 of 50 matched pairs faster. The 1.6 MB byte checksum
+was 14.60 versus 14.50 ms, but a separate
+[150-pair byte confirmation](benchmarks/runtime/results-2026-10-25-proven-array-bounds-byte-confirm.json)
+measured 13.63 versus 13.79 ms, with only 68 of 150 pairs faster. Each run
+checked output and exit status; the files retain input, source, compiler, and
+binary hashes. The byte workload's dependent remainder arithmetic remains the
+larger cost, so #167 stays In Progress until its byte benchmark gate is met.
 
 For [#129](https://github.com/Aurora-softwares/Hylang-Compiler/issues/129),
 the [native text builder](samples/native_text_builder/README.md) appends UTF-8

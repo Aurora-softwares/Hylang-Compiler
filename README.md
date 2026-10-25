@@ -42,6 +42,31 @@ The native collector now groups adjacent dead-span releases on Linux; the
 
 Use `--hide-progress`, `--hide-spinner`, or `--hide-log` to remove individual parts. For example, `hy build MyApp/MyApp.hyproj --hide-progress` keeps the spinner and messages. Using all three flags leaves the normal output path or `wrote` result, plus any errors.
 
+## Manage a released Hydrogen installation
+
+The **packaged native compiler** for Linux x86-64 includes a shell launcher and
+safe lifecycle commands. These are not commands of the C++ development SDK
+binary (`./build/hy`) or an unbundled `hydrogen-stage1` binary.
+
+```bash
+hy --version
+hy update-check
+hy update
+hy update --force
+hy uninstall
+hy uninstall --force
+hy remove --force # alias for uninstall
+```
+
+The launcher detects APT/dpkg, DNF/YUM/RPM, Pacman and Homebrew ownership and
+delegates package-management operations. Manual installations use an included
+file manifest and GitHub Releases checksums/digests; they refuse to touch any
+unmanaged files. `--force` skips prompts, but never disables safety checks.
+
+This is available in newly packaged releases, not in old standalone compiler
+binaries. See [release installation details](release/README.md). The isolated
+lifecycle checks run with `ctest -R hy_release_lifecycle --output-on-failure`.
+
 ## Package a self-hosted release
 
 After you have verified and renamed the final self-hosted compiler to `safe/hy`,

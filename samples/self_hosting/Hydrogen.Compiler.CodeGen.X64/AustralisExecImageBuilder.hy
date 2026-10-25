@@ -471,8 +471,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     valueType != "byte[]") { return false; }
                 code.Byte(90); valueType = "void"; return code.IsValid();
             }
-            if (name == "System.Australis.Terminal.Write" ||
-                name == "System.Australis.Terminal.WriteLine") {
+            if (name == "System.Australis.Terminal.Write" || name == "System.Australis.Terminal.WriteLine") {
                 if (args.Length != 1 || args[0].Kind() != IrExpression.KindLiteral() ||
                     args[0].LiteralKind() != "string") { return false; }
                 if (!EmitLiteralWrite(args[0].LiteralText(),
@@ -530,8 +529,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     !Numeric(valueType)) { return false; }
                 code.Byte(96); valueType = "int"; return code.IsValid();
             }
-            if (name == "System.Australis.Channel.Open" ||
-                name == "System.Australis.Channel.Wait") {
+            if (name == "System.Australis.Channel.Open" || name == "System.Australis.Channel.Wait") {
                 if (args.Length != 2 || !CompileExpression(args[0]) ||
                     !Numeric(valueType) || !CompileExpression(args[1]) ||
                     !Numeric(valueType)) { return false; }
@@ -539,9 +537,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 else { code.Byte(101); }
                 valueType = "int"; return code.IsValid();
             }
-            if (name == "System.Australis.Channel.Accept" ||
-                name == "System.Australis.Channel.Peer" ||
-                name == "System.Australis.Channel.Close") {
+            if (name == "System.Australis.Channel.Accept" || name == "System.Australis.Channel.Peer" || name == "System.Australis.Channel.Close") {
                 if (args.Length != 1 || !CompileExpression(args[0]) ||
                     !Numeric(valueType)) { return false; }
                 if (name == "System.Australis.Channel.Accept") { code.Byte(98); }
@@ -562,10 +558,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     valueType != "byte[]") { return false; }
                 code.Byte(100); valueType = "int"; return code.IsValid();
             }
-            if (name == "System.Australis.Display.Acquire" ||
-                name == "System.Australis.Display.Release" ||
-                name == "System.Australis.Display.BeginFrame" ||
-                name == "System.Australis.Display.PresentFrame") {
+            if (name == "System.Australis.Display.Acquire" || name == "System.Australis.Display.Release" || name == "System.Australis.Display.BeginFrame" || name == "System.Australis.Display.PresentFrame") {
                 if (args.Length != 0) { return false; }
                 if (name == "System.Australis.Display.Acquire") { code.Byte(104); }
                 else if (name == "System.Australis.Display.Release") { code.Byte(105); }
@@ -609,13 +602,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (args.Length != 0) { return false; }
                 code.Byte(110); valueType = "int"; return code.IsValid();
             }
-            if (name == "System.Australis.Display.AllocateBuffer" ||
-                name == "System.Australis.Display.DestroyBuffer" ||
-                name == "System.Australis.Display.BeginBuffer" ||
-                name == "System.Australis.Display.FillBufferRect" ||
-                name == "System.Australis.Display.SubmitBuffer" ||
-                name == "System.Australis.Display.BufferCompletion" ||
-                name == "System.Australis.Display.ReleaseBuffer") {
+            if (name == "System.Australis.Display.AllocateBuffer" || name == "System.Australis.Display.DestroyBuffer" || name == "System.Australis.Display.BeginBuffer" || name == "System.Australis.Display.FillBufferRect" || name == "System.Australis.Display.SubmitBuffer" || name == "System.Australis.Display.BufferCompletion" || name == "System.Australis.Display.ReleaseBuffer") {
                 int expected = 1; int opcode = 115;
                 if (name == "System.Australis.Display.AllocateBuffer") {
                     expected = 4; opcode = 114;
@@ -640,9 +627,37 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 code.Byte(opcode); valueType = "int"; return code.IsValid();
             }
-            if (name == "System.Australis.Gpu.BeginFrame" ||
-                name == "System.Australis.Gpu.DrawWindow" ||
-                name == "System.Australis.Gpu.EndFrame") {
+
+			if (name == "System.Australis.Display.RetainedEnable" || name == "System.Australis.Display.RetainedOpen") {
+				int expected = 1;
+				int opcode = 136;
+				if (name == "System.Australis.Display.RetainedOpen") {
+					expected = 4;
+					opcode = 137;
+				}
+
+				if (args.Length != expected) {
+					return false;
+				}
+
+				int i = 0;
+
+				while (i < expected) {
+					if (!CompileExpression(args[i]) ||
+						!Numeric(valueType)) {
+						return false;
+					}
+
+					i = i + 1;
+				}
+
+				code.Byte(opcode);
+				valueType = "int";
+
+				return code.IsValid();
+			}
+
+			if (name == "System.Australis.Gpu.BeginFrame" || name == "System.Australis.Gpu.DrawWindow" || name == "System.Australis.Gpu.EndFrame") {
 
                 int expected = 1;
                 int opcode = 129;
@@ -676,8 +691,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return code.IsValid();
             }
 
-            if (name == "System.Australis.Gpu.PresentFrame" ||
-                name == "System.Australis.Gpu.RestoreFrame") {
+			if (name == "System.Australis.Gpu.PresentFrame" || name == "System.Australis.Gpu.RestoreFrame") {
 
                 if (args.Length != 0) {
                     return false;
@@ -734,14 +748,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return code.IsValid();
             }
 
-            if (name == "System.Australis.Gpu.Create" ||
-                name == "System.Australis.Gpu.Destroy" ||
-                name == "System.Australis.Gpu.Clear" ||
-                name == "System.Australis.Gpu.FillRect" ||
-                name == "System.Australis.Gpu.ReadPixel" ||
-                name == "System.Australis.Gpu.Blit" ||
-                name == "System.Australis.Gpu.BlitRegion" ||
-                name == "System.Australis.Gpu.CopyRegion") {
+            if (name == "System.Australis.Gpu.Create" || name == "System.Australis.Gpu.Destroy" || name == "System.Australis.Gpu.Clear" || name == "System.Australis.Gpu.FillRect" || name == "System.Australis.Gpu.ReadPixel" || name == "System.Australis.Gpu.Blit" || name == "System.Australis.Gpu.BlitRegion" || name == "System.Australis.Gpu.CopyRegion") {
                 int expected = 2; int opcode = 121;
                 if (name == "System.Australis.Gpu.Destroy") {
                     expected = 1; opcode = 122;
@@ -924,8 +931,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 valueType = "int"; return code.IsValid();
             }
-            if (name == "System.Australis.Files.OpenRead" ||
-                name == "System.Australis.Files.OpenWrite") {
+            if (name == "System.Australis.Files.OpenRead" || name == "System.Australis.Files.OpenWrite") {
                 if (args.Length != 1) { return false; }
                 int openMode = 0;
                 if (name == "System.Australis.Files.OpenWrite") { openMode = 1; }
@@ -938,8 +944,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 valueType = "int"; return code.IsValid();
             }
-            if (name == "System.Australis.Files.Replace" ||
-                name == "System.Australis.Files.Append") {
+            if (name == "System.Australis.Files.Replace" || name == "System.Australis.Files.Append") {
                 if (!StringArgument(args, 0, 1)) { return false; }
                 code.Byte(38);
                 if (name == "System.Australis.Files.Append") { code.Byte(1); }
@@ -952,9 +957,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     !Numeric(valueType)) { return false; }
                 code.Byte(39); valueType = "int"; return code.IsValid();
             }
-            if (name == "System.Australis.Files.Delete" ||
-                name == "System.Australis.Files.Mkdir" ||
-                name == "System.Australis.Files.Rmdir") {
+            if (name == "System.Australis.Files.Delete" || name == "System.Australis.Files.Mkdir" || name == "System.Australis.Files.Rmdir") {
                 if (args.Length != 1) { return false; }
                 if (StringArgument(args, 0, 1)) { code.Byte(40); }
                 else {
@@ -999,8 +1002,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (checkedCapacity > scratchCapacity) { scratchCapacity = checkedCapacity; }
                 valueType = "int"; return code.IsValid();
             }
-            if (name == "System.Australis.Files.ResultByte" ||
-                name == "System.Australis.Files.ResultU32") {
+            if (name == "System.Australis.Files.ResultByte" || name == "System.Australis.Files.ResultU32") {
                 if (args.Length != 1 || !CompileExpression(args[0]) ||
                     !Numeric(valueType)) { return false; }
                 code.Byte(53);

@@ -1,0 +1,337 @@
+#!/usr/bin/env bash
+# Lifecycle of a distributable Hydrogen release. Never edits compiler projects.
+set -euo pipefail
+umask 077
+
+error() { printf 'hy: %s\n' "$*" >&2; exit 1; }
+info() { printf '%s\n' "$*"; }
+need() { command -v "$1" >/dev/null 2>&1 || error "required command missing: $1"; }
+
+[[ $# -ge 1 ]] || error 'usage: hy update-check|update [--force]|uninstall [--force]'
+action=$1
+shift
+if [[ $action == remove ]]; then action=uninstall; fi
+case $action in update-check|update|uninstall) ;; *) error "unknown command: $action" ;; esac
+force=false
+if [[ $# -gt 0 ]]; then
+    [[ $# -eq 1 && $1 == --force && $action != update-check ]] || error 'only update/uninstall accept --force'
+    force=true
+fi
+
+entry=${HYDROGEN_ENTRY_PATH:-${BASH_SOURCE[0]}}
+if [[ $entry != */* ]]; then entry=$(command -v -- "$entry"); fi
+entry=$(realpath -m -- "$entry")
+resolved=$(readlink -f -- "$entry") || error 'unable to resolve the Hydrogen executable'
+root=$(dirname -- "$(dirname -- "$resolved")")
+[[ -f "$root/libexec/hy-maintenance" && -f "$root/libexec/hy-core" && -f "$root/bin/hy" ]] || error 'release layout not recognized'
+
+# Scope file changes to a known, manifest-bearing install, never a shared prefix.
+safe_root() {
+    case "$root" in
+        /|/usr|/usr/local|/usr/bin|/bin|/opt|/home|/var|/var/lib|/root|/tmp)
+            error "refusing to mutate shared directory: $root" ;;
+    esac
+    [[ ! -L "$root" ]] || error 'installation directory is a symlink'
+}
+
+# Every managed package must own the real entrypoint, not merely a package
+# named 'hydrogen'. Ambiguous ownership is an error, not a manual-install hint.
+manager=''
+package=''
+record_owner() {
+    local candidate_manager=$1 candidate_package=$2
+    [[ -n $candidate_package ]] || return 0
+    [[ $candidate_package =~ ^[a-zA-Z0-9][a-zA-Z0-9.+:_-]*$ ]] || error 'invalid package ownership metadata'
+    if [[ -n $manager && ( $manager != "$candidate_manager" || $package != "$candidate_package" ) ]]; then
+        error "ambiguous package ownership: $manager/$package and $candidate_manager/$candidate_package"
+    fi
+    manager=$candidate_manager; package=$candidate_package
+}
+
+find_ownership() {
+    local p output pkg name cellar
+    if command -v dpkg-query >/dev/null 2>&1; then
+        for p in "$entry" "$resolved"; do
+            output=$(dpkg-query --search -- "$p" 2>/dev/null || true)
+            while IFS= read -r pkg; do
+                [[ -z $pkg ]] || record_owner 'apt' "$pkg"
+            done < <(printf '%s\n' "$output" | sed -n 's/: .*//p' | sort -u)
+        done
+    fi
+    if command -v rpm >/dev/null 2>&1; then
+        output=$(rpm -qf --queryformat '%{NAME}\n' -- "$resolved" 2>/dev/null || true)
+        if [[ $output != *'not owned'* && $output != *'not installed'* ]]; then
+            while IFS= read -r pkg; do [[ -z $pkg ]] || record_owner 'rpm' "$pkg"; done <<< "$output"
+        fi
+    fi
+    if command -v pacman >/dev/null 2>&1; then
+        output=$(pacman -Qqo -- "$resolved" 2>/dev/null || true)
+        while IFS= read -r pkg; do [[ -z $pkg ]] || record_owner 'pacman' "$pkg"; done <<< "$output"
+    fi
+    if command -v brew >/dev/null 2>&1; then
+        cellar=$(brew --cellar 2>/dev/null || true)
+        if [[ -n $cellar && $resolved == "$cellar/"* ]]; then
+            name=${resolved#"$cellar/"}; name=${name%%/*}
+            if brew list --formula --versions "$name" >/dev/null 2>&1; then record_owner 'brew' "$name"; fi
+        fi
+    fi
+    # Other managed stores should never be mistaken for ordinary installations.
+    if [[ -z $manager ]]; then
+        case "$resolved" in
+            /nix/store/*|/snap/*|/var/lib/flatpak/*|/app/*)
+                error "this is a managed install ($resolved); use its package manager" ;;
+        esac
+    fi
+}
+
+as_root() {
+    if [[ $(id -u) == 0 ]]; then "$@"; else need sudo; sudo "$@"; fi
+}
+
+managed_action() {
+    local cmd=${1:-}
+    info "Install method: $manager ($package)"
+    case "$manager:$action" in
+        apt:update-check)
+            need apt-cache
+            local policy installed candidate
+            policy=$(apt-cache policy "$package") || error 'APT cannot determine package policy'
+            printf '%s\n' "$policy"
+            installed=$(sed -n 's/^[[:space:]]*Installed: //p' <<< "$policy" | head -n1)
+            candidate=$(sed -n 's/^[[:space:]]*Candidate: //p' <<< "$policy" | head -n1)
+            if [[ -n $candidate && $candidate != '(none)' && $installed != "$candidate" ]]; then
+                info 'Update available in the configured APT repositories.'
+            elif [[ -n $installed && $installed == "$candidate" ]]; then
+                info 'Already up-to-date according to the local APT index.'
+            fi
+            info 'Candidate information uses the local APT index; refresh it with sudo apt-get update if stale.' ;;
+        apt:update)
+            as_root apt-get update
+            if $force; then as_root apt-get install -y --only-upgrade "$package"
+            else as_root apt-get install --only-upgrade "$package"; fi ;;
+        apt:uninstall)
+            if $force; then as_root apt-get remove -y "$package"
+            else as_root apt-get remove "$package"; fi ;;
+        rpm:update-check)
+            if command -v dnf >/dev/null 2>&1; then
+                dnf check-update "$package" && return 0 || { cmd=$?; [[ $cmd == 100 ]] || return "$cmd"; }
+            elif command -v yum >/dev/null 2>&1; then
+                yum check-update "$package" && return 0 || { cmd=$?; [[ $cmd == 100 ]] || return "$cmd"; }
+            else error 'RPM owner found, but no supported update manager (dnf/yum)'; fi ;;
+        rpm:update)
+            if command -v dnf >/dev/null 2>&1; then cmd=dnf; else cmd=yum; fi
+            need "$cmd"
+            if $force; then as_root "$cmd" -y upgrade "$package"; else as_root "$cmd" upgrade "$package"; fi ;;
+        rpm:uninstall)
+            if command -v dnf >/dev/null 2>&1; then cmd=dnf; else cmd=yum; fi
+            need "$cmd"
+            if $force; then as_root "$cmd" -y remove "$package"; else as_root "$cmd" remove "$package"; fi ;;
+        pacman:update-check) pacman -Qu "$package" || [[ $? == 1 ]] ;;
+        pacman:update)
+            info 'Pacman performs a full repository sync and system upgrade to avoid partial upgrades.'
+            if $force; then as_root pacman --noconfirm -Syu "$package"
+            else as_root pacman -Syu "$package"; fi ;;
+        pacman:uninstall)
+            if $force; then as_root pacman --noconfirm -R "$package"
+            else as_root pacman -R "$package"; fi ;;
+        brew:update-check) brew outdated --formula "$package" ;;
+        brew:update) brew update && brew upgrade "$package" ;;
+        brew:uninstall) brew uninstall "$package" ;;
+        *) error "unsupported package manager: $manager" ;;
+    esac
+}
+
+# The exact list of permitted install-owned files, with no globbing, no parent
+# paths and no user directories. INSTALL-MANIFEST is always part of the archive.
+allowed_files=(bin/hy libexec/hy-core libexec/hy-maintenance BUILD-INFO.txt README.md LICENSE SHA256SUMS INSTALL-MANIFEST)
+allowed_directories=(bin libexec)
+check_manifest() {
+    local directory=$1 path relative allowed item
+    [[ -f "$directory/INSTALL-MANIFEST" && ! -L "$directory/INSTALL-MANIFEST" ]] || error "no trusted installation manifest in $directory"
+    [[ $(head -n 1 "$directory/INSTALL-MANIFEST") == hydrogen-install-manifest-v1 ]] || error 'unknown manifest format'
+    while IFS= read -r relative; do
+        [[ -z $relative || $relative == hydrogen-install-manifest-v1 ]] && continue
+        allowed=false
+        for item in "${allowed_files[@]}"; do [[ $relative != "$item" ]] || allowed=true; done
+        $allowed || error "manifest has unrecognized file: $relative"
+    done < "$directory/INSTALL-MANIFEST"
+    for item in "${allowed_files[@]}"; do
+        if [[ $item == LICENSE && ! -e "$directory/$item" ]]; then continue; fi
+        [[ -f "$directory/$item" && ! -L "$directory/$item" ]] || error "installed file missing or linked: $item"
+        grep -Fxq -- "$item" "$directory/INSTALL-MANIFEST" || error "manifest doesn't own $item"
+    done
+    for item in "${allowed_directories[@]}"; do
+        [[ -d "$directory/$item" && ! -L "$directory/$item" ]] || error "installed directory missing or linked: $item"
+    done
+    while IFS= read -r -d '' path; do
+        relative=${path#"$directory/"}
+        allowed=false
+        for item in "${allowed_files[@]}" "${allowed_directories[@]}"; do
+            [[ $relative != "$item" ]] || allowed=true
+        done
+        $allowed || error "unmanaged content inside installation: $relative (move it before proceeding)"
+    done < <(find "$directory" -mindepth 1 -print0)
+}
+
+remove_manifest_files() {
+    local directory=$1 item
+    for item in "${allowed_files[@]}"; do
+        [[ ! -e "$directory/$item" ]] || rm -- "$directory/$item"
+    done
+    rmdir -- "$directory/bin" "$directory/libexec" "$directory"
+}
+
+confirm() {
+    local message=$1 response
+    $force && return 0
+    [[ -t 0 ]] || error "$message: supply --force for non-interactive use"
+    read -r -p "$message [y/N] " response
+    [[ $response == y || $response == Y || $response == yes ]] || error 'cancelled'
+}
+
+local_version() {
+    local value
+    value=$(sed -n 's/^Hydrogen release: //p' "$root/BUILD-INFO.txt")
+    [[ $value =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || error 'invalid installed version metadata'
+    printf '%s\n' "$value"
+}
+
+release_json='' latest_version='' asset_url='' asset_digest='' checksum_url=''
+lookup_release() {
+    need curl; need jq
+    local channel latest asset expected_url current release_tags
+    current=$(local_version)
+    channel=stable
+    case $current in alpha-*) channel=alpha-;; beta-*) channel=beta-;; rc-*) channel=rc-;; esac
+    release_json=$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --max-time 30 \
+        -H 'Accept: application/vnd.github+json' \
+        'https://api.github.com/repos/Aurora-softwares/Hylang-Compiler/releases?per_page=100') || error 'cannot query official GitHub releases'
+    # GitHub lists releases by creation time, not necessarily semantic version.
+    # Filtering keeps an installed alpha/beta/rc on its existing release channel.
+    release_tags=$(jq -er --arg channel "$channel" '
+        [ .[] | select(.draft == false)
+          | select(if $channel == "stable" then (.prerelease == false and (.tag_name | test("^(alpha|beta|rc)-") | not))
+                   else (.tag_name | startswith($channel)) end)
+          | .tag_name ] | .[]' <<< "$release_json") || error "no published $channel releases available"
+    # Sort version labels rather than publication timestamps; republishing an
+    # older maintenance release must not cause an unintended downgrade.
+    latest_version=$(printf '%s\n' "$release_tags" | LC_ALL=C sort -V | tail -n1)
+    latest=$(jq -cer --arg version "$latest_version" '.[] | select(.tag_name == $version and .draft == false)' <<< "$release_json") || error 'release metadata was inconsistent'
+    [[ $latest_version =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || error 'invalid release tag'
+    local archive="hydrogen-${latest_version}-linux-x86_64.tar.gz"
+    asset=$(jq -cer --arg name "$archive" '.assets[] | select(.name == $name)' <<< "$latest") || error "latest release lacks $archive"
+    asset_url=$(jq -r '.browser_download_url' <<< "$asset")
+    asset_digest=$(jq -r '.digest' <<< "$asset")
+    [[ $asset_digest =~ ^sha256:[a-fA-F0-9]{64}$ ]] || error 'release has no trusted GitHub SHA-256 asset digest'
+    [[ $asset_url == "https://github.com/Aurora-softwares/Hylang-Compiler/releases/download/"*"/$archive" ]] || error 'unexpected release asset URL'
+    checksum_url=$(jq -r --arg name "${archive}.sha256" '.assets[] | select(.name == $name) | .browser_download_url' <<< "$latest")
+    [[ $checksum_url == "https://github.com/Aurora-softwares/Hylang-Compiler/releases/download/"*"/${archive}.sha256" ]] || error 'release checksum asset missing'
+}
+
+newer_available() {
+    local current=$1 target=$2 highest
+    [[ $current == "$target" ]] && return 1
+    highest=$(printf '%s\n%s\n' "$current" "$target" | LC_ALL=C sort -V | tail -n1)
+    [[ $highest == "$target" ]]
+}
+
+validate_archive() {
+    local archive=$1 dirname=$2 item name type
+    local archive_items listing
+    listing=$(tar -tzf "$archive") || error 'invalid release archive'
+    while IFS= read -r name; do
+        [[ -n $name ]] || continue
+        case "$name" in
+            "$dirname/"|"$dirname/bin/"|"$dirname/libexec/"|\
+            "$dirname/bin/hy"|"$dirname/libexec/hy-core"|"$dirname/libexec/hy-maintenance"|\
+            "$dirname/BUILD-INFO.txt"|"$dirname/README.md"|"$dirname/LICENSE"|\
+            "$dirname/SHA256SUMS"|"$dirname/INSTALL-MANIFEST") ;;
+            *) error "unsafe/unexpected archive entry: $name" ;;
+        esac
+    done <<< "$listing"
+    # Refuse symlinks, hardlinks, devices and FIFOs even if their paths look safe.
+    while IFS= read -r item; do
+        type=${item:0:1}
+        [[ $type == d || $type == - ]] || error 'archive contains a non-regular entry'
+    done < <(tar -tvzf "$archive")
+}
+
+find_ownership
+if [[ -n $manager ]]; then managed_action; exit $?; fi
+safe_root
+# Lock the parent directory itself rather than creating a persistent lock file.
+# This prevents two self-updaters from rewriting one installation concurrently.
+if [[ $action != update-check ]]; then
+    need flock
+    exec 9< "$(dirname "$root")" || error 'cannot open installation parent for locking'
+    flock -n 9 || error 'another Hydrogen installation operation is running'
+fi
+check_manifest "$root"
+
+if [[ $action == uninstall ]]; then
+    confirm "Remove the Hydrogen release at $root?"
+    remove_manifest_files "$root"
+    info 'Hydrogen files removed; user projects and configuration were not touched.'
+    [[ "$entry" == "$resolved" ]] || info "External launcher symlink may remain at $entry (not modified)."
+    exit 0
+fi
+
+current=$(local_version)
+lookup_release
+info "Installed Hydrogen: $current"
+info "Available Hydrogen: $latest_version"
+if [[ $action == update-check ]]; then
+    if newer_available "$current" "$latest_version"; then info 'Update available.'
+    else info 'No newer release on this channel.'; fi
+    exit 0
+fi
+
+if ! newer_available "$current" "$latest_version"; then
+    if ! $force; then info 'Already up-to-date; use --force to reinstall this release.'; exit 0; fi
+    [[ $current == "$latest_version" ]] || error 'refusing to downgrade an installed compiler'
+fi
+confirm "Replace Hydrogen $current with $latest_version at $root?"
+need tar; need sha256sum; need mktemp
+[[ -w "$(dirname "$root")" ]] || error 'no write access to installation parent; run with appropriate permissions'
+parent=$(dirname "$root")
+workdir=$(mktemp -d -- "$parent/.hydrogen-update.XXXXXXXX") || error 'cannot create staging directory'
+backup=''
+cleanup() {
+    local status=$?
+    if [[ -n $backup && -d $backup && ! -d $root ]]; then mv -T -- "$backup" "$root" || true; fi
+    if [[ -d $workdir ]]; then rm -rf -- "$workdir"; fi
+    exit "$status"
+}
+trap cleanup EXIT
+archive="hydrogen-${latest_version}-linux-x86_64.tar.gz"
+curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --max-time 180 \
+    --output "$workdir/$archive" "$asset_url" || error 'could not download release'
+curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --max-time 30 \
+    --output "$workdir/$archive.sha256" "$checksum_url" || error 'could not download checksum'
+actual_digest=$(sha256sum "$workdir/$archive"); actual_digest=${actual_digest%% *}
+[[ "sha256:$actual_digest" == "$asset_digest" ]] || error 'GitHub release digest verification failed'
+expected_line="$actual_digest  $archive"
+[[ $(cat "$workdir/$archive.sha256") == "$expected_line" ]] || error 'published checksum does not match release digest'
+dirname="hydrogen-${latest_version}-linux-x86_64"
+validate_archive "$workdir/$archive" "$dirname"
+tar -xzf "$workdir/$archive" -C "$workdir" || error 'cannot unpack verified archive'
+staged="$workdir/$dirname"
+check_manifest "$staged"
+( cd "$staged" && sha256sum -c --status SHA256SUMS ) || error 'internal release checksum verification failed'
+[[ $(sed -n 's/^Hydrogen release: //p' "$staged/BUILD-INFO.txt") == "$latest_version" ]] || error 'installed and downloaded version differ'
+[[ -x "$staged/bin/hy" && -x "$staged/libexec/hy-core" && -x "$staged/libexec/hy-maintenance" ]] || error 'archive executable permissions missing'
+# Preserve the old release for rollback. The updater runs as a separate process,
+# so replacing its parent while executing is supported by Linux.
+backup="$parent/.hydrogen-backup.$(basename "$root").$$"
+[[ ! -e $backup ]] || error 'backup path already exists'
+mv -T -- "$root" "$backup" || error 'could not move old installation'
+if ! mv -T -- "$staged" "$root"; then
+    mv -T -- "$backup" "$root" || error "ROLLBACK REQUIRED: old release remains at $backup"
+    backup=''
+    error 'could not activate update; original installation restored'
+fi
+# At this point new Hydrogen is operational; remove only the known old files.
+check_manifest "$backup"
+remove_manifest_files "$backup"
+backup=''
+info "Updated Hydrogen to $latest_version."

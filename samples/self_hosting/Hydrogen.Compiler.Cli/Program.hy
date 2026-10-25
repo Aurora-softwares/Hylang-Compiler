@@ -533,6 +533,11 @@ namespace Hydrogen.Compiler.Cli {
             System.Console.WriteLine("usage: hy compile <file.hy> --target windows-x64 -o <output.exe>");
             System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--hide-progress] [--hide-spinner] [--hide-log]");
             System.Console.WriteLine("usage: hy stage-compare <project.hyproj> --stage1 <path> --stage2 <path>");
+            System.Console.WriteLine("installed Linux release commands:");
+            System.Console.WriteLine("  hy update-check");
+            System.Console.WriteLine("  hy update [--force]");
+            System.Console.WriteLine("  hy uninstall [--force]");
+            System.Console.WriteLine("  hy remove [--force]");
         }
     }
 }

@@ -34,6 +34,17 @@ target_link_libraries(hy PRIVATE hylang)
 
 enable_testing()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_program(HYDROGEN_BASH_EXECUTABLE bash)
+    if(HYDROGEN_BASH_EXECUTABLE)
+        add_test(NAME hy_release_lifecycle
+            COMMAND "${HYDROGEN_BASH_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-lifecycle.sh"
+                "${CMAKE_CURRENT_SOURCE_DIR}")
+        set_tests_properties(hy_release_lifecycle PROPERTIES TIMEOUT 120)
+    endif()
+endif()
+
 add_test(NAME hy_sdk_bitwise_operators
     COMMAND ${CMAKE_COMMAND}
         -DHY_BINARY=$<TARGET_FILE:hy>

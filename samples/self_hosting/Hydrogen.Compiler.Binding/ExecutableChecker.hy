@@ -663,6 +663,12 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.Australis.Display.FillRect") {
                 return Intrinsic5Int(e, qualified);
             }
+			if (qualified == "System.Australis.Display.RetainedEnable") {
+				return Intrinsic(e, qualified, "int", "", "int");
+			}
+			if (qualified == "System.Australis.Display.RetainedOpen") {
+				return IntrinsicNInt(e, qualified, 4);
+			}
             if (qualified == "System.Australis.Display.PollMouse") {
                 return Intrinsic(e, qualified, "byte[]", "", "int");
             }
