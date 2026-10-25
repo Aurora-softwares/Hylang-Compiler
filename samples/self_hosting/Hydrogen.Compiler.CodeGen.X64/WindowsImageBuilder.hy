@@ -25,7 +25,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             int importRva = Align(dataRva + dataLength, 0x1000);
             int importRaw = dataRaw + dataSize;
 
-            string[] names = new string[18];
+            string[] names = new string[21];
             names[0] = "VirtualAlloc"; names[1] = "VirtualFree";
             names[2] = "GetStdHandle"; names[3] = "WriteFile";
             names[4] = "ReadFile"; names[5] = "CreateFileW";
@@ -36,10 +36,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             names[14] = "WideCharToMultiByte"; names[15] = "LocalFree";
             names[16] = "MultiByteToWideChar";
             names[17] = "GetConsoleScreenBufferInfo";
+            names[18] = "CreateProcessW";
+            names[19] = "WaitForSingleObject";
+            names[20] = "GetExitCodeProcess";
             int kernelLookup = 64;
-            int shellLookup = kernelLookup + 18 * 8;
+            int shellLookup = kernelLookup + 21 * 8;
             int kernelIat = shellLookup + 2 * 8;
-            int shellIat = kernelIat + 18 * 8;
+            int shellIat = kernelIat + 21 * 8;
             int cursor = shellIat + 2 * 8;
             int[] nameOffsets = new int[names.Length];
             i = 0;

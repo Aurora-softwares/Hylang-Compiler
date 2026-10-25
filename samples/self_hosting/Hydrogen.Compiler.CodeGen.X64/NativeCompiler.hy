@@ -69,9 +69,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
         private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel, bool australis, bool nativeUser, bool windows) {
             ProjectClosure closure = ProjectClosure.Collect(projectPath);
-            string[] projects = closure.Projects();
-            if (projects.Length == 1 && StartsWith(projects[0], "<cycle:")) {
-                return new NativeCompilerResult(false, "error: project reference cycle detected at " + projects[0] + "\n");
+            if (closure.Error() != "") {
+                return new NativeCompilerResult(false, "error: " + closure.Error() + "\n");
+            }
+            if (!PackageLock.Verify(projectPath, closure)) {
+                return new NativeCompilerResult(false,
+                    "error: hy.lock is missing or does not match installed package files\n");
             }
 
             string[] sources = closure.Sources();

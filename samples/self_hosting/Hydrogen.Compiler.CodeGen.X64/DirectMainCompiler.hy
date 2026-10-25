@@ -1661,6 +1661,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (intrinsic == "System.IO.File.ReadAllBytes") { return RuntimeCall(expression, "rt_read_bytes", "string", "", "byte[]"); }
             if (intrinsic == "System.IO.File.WriteAllText") { return RuntimeCall(expression, "rt_write_text", "string", "string", "void"); }
             if (intrinsic == "System.IO.File.WriteAllBytes") { return RuntimeCall(expression, "rt_write_bytes", "string", "byte[]", "void"); }
+            if (intrinsic == "System.Host.Process.Run") { return RuntimeCall(expression, "rt_process_run", "string", "", "int"); }
+            if (intrinsic == "System.Host.Process.IsWindows") { return RuntimeCall(expression, "rt_is_windows", "", "", "bool"); }
             if (intrinsic == "System.Convert.ToInt32") { return RuntimeCall(expression, "rt_to_int", "string", "", "int"); }
             if (intrinsic == "System.Runtime.GC.Collect") { return RuntimeCall(expression, "rt_gc", "", "", "void"); }
             if (intrinsic == "System.Runtime.GC.GetAllocatedBytes") { return RuntimeCall(expression, "rt_heapbytes", "", "", "int"); }

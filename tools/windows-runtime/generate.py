@@ -12,6 +12,8 @@ import tempfile
 root = Path(__file__).resolve().parents[2]
 linux = (root / 'tools/native-runtime/runtime.S').read_text()
 shim = (root / 'tools/windows-runtime/shim.S').read_text()
+linux = linux.replace('rt_is_windows:\n    xor eax, eax\n    ret',
+                      'rt_is_windows:\n    mov eax, 1\n    ret')
 # VirtualFree releases a whole VirtualAlloc reservation. Keep one page per
 # reservation on Windows while Linux parcels pages from a larger mmap batch.
 span_start = linux.index('rt_span_page:\n')

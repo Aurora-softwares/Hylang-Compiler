@@ -210,4 +210,11 @@ check 'up-to-date version is detected'
 [[ ! -e $hy ]] || fail 'uninstall did not remove its own files'
 [[ ! -e $work/installation ]] || fail 'uninstall left empty release root'
 check 'remove/uninstall deletes only files from a trusted manifest'
+mkdir -p "$work/home/.local/share/hydrogen" "$work/home/.local/bin"
+( cd "$work/home/.local/share/hydrogen" && tar -xzf "$work/assets/hydrogen-alpha-0.0.2-linux-x86_64.tar.gz" --strip-components=1 )
+ln -s "$work/home/.local/share/hydrogen/bin/hy" "$work/home/.local/bin/hy"
+HOME="$work/home" "$work/home/.local/bin/hy" uninstall --force >/dev/null
+[[ ! -e $work/home/.local/share/hydrogen && ! -L $work/home/.local/bin/hy ]] ||
+    fail 'website installer launcher remained after uninstall'
+check 'standalone uninstall removes the website installer launcher it owns'
 printf 'ALL %d LIFECYCLE CHECKS PASSED\n' "$checks"

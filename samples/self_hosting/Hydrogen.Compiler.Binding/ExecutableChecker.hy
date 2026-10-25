@@ -869,6 +869,8 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.IO.File.ReadAllBytes") { return Intrinsic(e, qualified, "string", "", "byte[]"); }
             if (qualified == "System.IO.File.WriteAllText") { return Intrinsic(e, qualified, "string", "string", "void"); }
             if (qualified == "System.IO.File.WriteAllBytes") { return Intrinsic(e, qualified, "string", "byte[]", "void"); }
+            if (qualified == "System.Host.Process.Run") { return Intrinsic(e, qualified, "string", "", "int"); }
+            if (qualified == "System.Host.Process.IsWindows") { return Intrinsic(e, qualified, "", "", "bool"); }
             if (qualified == "System.Convert.ToInt32") { return Intrinsic(e, qualified, "string", "", "int"); }
             if (qualified == "System.Runtime.GC.Collect") { return Intrinsic(e, qualified, "", "", "void"); }
             if (qualified == "System.Runtime.GC.GetAllocatedBytes") { return Intrinsic(e, qualified, "", "", "int"); }
