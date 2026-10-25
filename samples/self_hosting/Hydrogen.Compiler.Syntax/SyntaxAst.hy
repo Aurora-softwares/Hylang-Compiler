@@ -392,6 +392,7 @@ using Hydrogen.Compiler.Text;
 		public static int KindUnary() { return 11; }
 		public static int KindSizeOf() { return 12; }
 		public static int KindConditional() { return 13; }
+		public static int KindSlice() { return 14; }
 
 		private int kind;
 		private string name;
@@ -412,6 +413,7 @@ using Hydrogen.Compiler.Text;
 		private ExpressionSyntax trueValue;
 		private ExpressionSyntax falseValue;
 		private ExpressionSyntax index;
+		private ExpressionSyntax sliceEnd;
 		private TypeSyntax type;
 		private ExpressionSyntax size;
 		private TypeSyntax castType;
@@ -448,6 +450,7 @@ using Hydrogen.Compiler.Text;
 		public ExpressionSyntax TrueValue() { return trueValue; }
 		public ExpressionSyntax FalseValue() { return falseValue; }
 		public ExpressionSyntax Index() { return index; }
+		public ExpressionSyntax SliceEnd() { return sliceEnd; }
 		public TypeSyntax Type() { return type; }
 		public ExpressionSyntax Size() { return size; }
 		public TypeSyntax CastType() { return castType; }
@@ -517,6 +520,14 @@ using Hydrogen.Compiler.Text;
 			ExpressionSyntax node = new ExpressionSyntax(KindIndex());
 			node.receiver = inputReceiver;
 			node.index = inputIndex;
+			return node;
+		}
+
+		public static ExpressionSyntax SliceExpr(ExpressionSyntax inputReceiver, ExpressionSyntax inputStart, ExpressionSyntax inputEnd) {
+			ExpressionSyntax node = new ExpressionSyntax(KindSlice());
+			node.receiver = inputReceiver;
+			node.index = inputStart;
+			node.sliceEnd = inputEnd;
 			return node;
 		}
 

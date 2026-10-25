@@ -73,7 +73,10 @@ namespace Hydrogen.Compiler.Syntax {
             if (current == "]") { return Token(SyntaxKind.CloseBracketToken, current, startLine, startColumn, start); }
             if (current == ";") { return Token(SyntaxKind.SemicolonToken, current, startLine, startColumn, start); }
             if (current == ",") { return Token(SyntaxKind.CommaToken, current, startLine, startColumn, start); }
-            if (current == ".") { return Token(SyntaxKind.DotToken, current, startLine, startColumn, start); }
+            if (current == ".") {
+                if (Match(".")) { return Token(SyntaxKind.DotDotToken, "..", startLine, startColumn, start); }
+                return Token(SyntaxKind.DotToken, current, startLine, startColumn, start);
+            }
             if (current == ":") { return Token(SyntaxKind.ColonToken, current, startLine, startColumn, start); }
             if (current == "?") {
                 if (Match("?")) { return Token(SyntaxKind.QuestionQuestionToken, "??", startLine, startColumn, start); }

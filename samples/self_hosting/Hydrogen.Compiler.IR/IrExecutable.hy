@@ -410,6 +410,7 @@ namespace Hydrogen.Compiler.IR {
 		public static int KindUnary() { return 11; }
 		public static int KindSizeOf() { return 12; }
 		public static int KindConditional() { return 13; }
+		public static int KindSlice() { return 14; }
 
 		private int kind;
 		private string name;
@@ -430,6 +431,7 @@ namespace Hydrogen.Compiler.IR {
 		private IrExpression trueValue;
 		private IrExpression falseValue;
 		private IrExpression index;
+		private IrExpression sliceEnd;
 		private IrType type;
 		private IrExpression size;
 		private IrType castType;
@@ -466,6 +468,7 @@ namespace Hydrogen.Compiler.IR {
 		public IrExpression TrueValue() { return trueValue; }
 		public IrExpression FalseValue() { return falseValue; }
 		public IrExpression Index() { return index; }
+		public IrExpression SliceEnd() { return sliceEnd; }
 		public IrType Type() { return type; }
 		public IrExpression Size() { return size; }
 		public IrType CastType() { return castType; }
@@ -535,6 +538,14 @@ namespace Hydrogen.Compiler.IR {
 			IrExpression node = new IrExpression(KindIndex());
 			node.receiver = inputReceiver;
 			node.index = inputIndex;
+			return node;
+		}
+
+		public static IrExpression SliceExpr(IrExpression inputReceiver, IrExpression inputStart, IrExpression inputEnd) {
+			IrExpression node = new IrExpression(KindSlice());
+			node.receiver = inputReceiver;
+			node.index = inputStart;
+			node.sliceEnd = inputEnd;
 			return node;
 		}
 

@@ -363,6 +363,16 @@ namespace Hydrogen.Compiler.Binding {
                 }
                 if (type != "<error>") { Error("indexing requires an array or string"); } return "<error>";
             }
+            if (k == IrExpression.KindSlice()) {
+                string type = Expression(e.Receiver());
+                string start = Expression(e.Index());
+                string end = Expression(e.SliceEnd());
+                Require(start, "int", "slice start must be int");
+                Require(end, "int", "slice end must be int");
+                if (type == "string" || module.IsArray(type)) { return type; }
+                if (type != "<error>") { Error("slicing requires an array or string"); }
+                return "<error>";
+            }
             if (k == IrExpression.KindAssignment()) {
                 string target = Expression(e.Target()); string value = Expression(e.Value());
                 if (!Writable(e.Target())) { Error("assignment target is not writable"); }

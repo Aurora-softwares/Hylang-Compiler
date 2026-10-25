@@ -102,6 +102,7 @@ namespace Hydrogen.Compiler.Syntax {
         FatArrowToken,
         SwitchKeyword,
         CaseKeyword,
-        DefaultKeyword
+        DefaultKeyword,
+        DotDotToken
     }
 }

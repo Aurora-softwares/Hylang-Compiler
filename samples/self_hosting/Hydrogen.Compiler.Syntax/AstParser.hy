@@ -916,6 +916,14 @@ namespace Hydrogen.Compiler.Syntax {
                     if (conditional) { Advance(); }
                     Advance();
                     ExpressionSyntax indexExpr = ParseExpression();
+                    if (Check(SyntaxKind.DotDotToken)) {
+                        Advance();
+                        ExpressionSyntax endExpr = ParseExpression();
+                        Consume(SyntaxKind.CloseBracketToken, "Expected ']' after slice bounds");
+                        if (conditional) { diagnostics.Report(Current().Line(), Current().Column(), "Null-conditional slicing is not supported"); }
+                        expr = ExpressionSyntax.SliceExpr(expr, indexExpr, endExpr);
+                        continue;
+                    }
                     Consume(SyntaxKind.CloseBracketToken, "Expected ']'");
                     expr = ExpressionSyntax.IndexExpr(expr, indexExpr);
                     expr.SetNullConditional(conditional);

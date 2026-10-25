@@ -154,6 +154,7 @@ enum class TokenKind {
     Semicolon,
     Comma,
     Dot,
+    DotDot,
     Question,
     QuestionQuestion,
     Plus,
@@ -350,7 +351,8 @@ class Lexer {
 						tokens.push_back(Token{TokenKind::Comma, ",", line, column});
 						break;
 					case '.':
-						tokens.push_back(Token{TokenKind::Dot, ".", line, column});
+						if (match('.')) tokens.push_back(Token{TokenKind::DotDot, "..", line, column});
+						else tokens.push_back(Token{TokenKind::Dot, ".", line, column});
 						break;
 					case ':':
 						tokens.push_back(Token{TokenKind::Colon, ":", line, column});
@@ -778,6 +780,12 @@ struct ElementAccessExpressionSyntax final : ExpressionSyntax {
     unique_ptr<ExpressionSyntax> target;
     unique_ptr<ExpressionSyntax> index;
     bool null_conditional = false;
+};
+
+struct SliceExpressionSyntax final : ExpressionSyntax {
+    unique_ptr<ExpressionSyntax> target;
+    unique_ptr<ExpressionSyntax> start;
+    unique_ptr<ExpressionSyntax> end;
 };
 
 struct InvocationExpressionSyntax final : ExpressionSyntax {
@@ -2197,11 +2205,26 @@ private:
             if (check(TokenKind::OpenBracket) || (check(TokenKind::Question) && peek(1).kind == TokenKind::OpenBracket)) {
                 const bool conditional = match(TokenKind::Question);
                 consume(TokenKind::OpenBracket, "Expected '[' after '?'");
+                const Token bracket = previous();
+                auto start = parse_expression();
+                if (match(TokenKind::DotDot)) {
+                    auto slice = std::make_unique<SliceExpressionSyntax>();
+                    slice->line = bracket.line;
+                    slice->column = bracket.column;
+                    slice->target = std::move(expression);
+                    slice->start = std::move(start);
+                    slice->end = parse_expression();
+                    if (conditional)
+                        diagnostics_.add(file_, bracket.line, bracket.column, "Null-conditional slicing is not supported");
+                    consume(TokenKind::CloseBracket, "Expected ']' after slice bounds");
+                    expression = std::move(slice);
+                    continue;
+                }
                 auto access = std::make_unique<ElementAccessExpressionSyntax>();
-                access->line = previous().line;
-                access->column = previous().column;
+                access->line = bracket.line;
+                access->column = bracket.column;
                 access->target = std::move(expression);
-                access->index = parse_expression();
+                access->index = std::move(start);
                 access->null_conditional = conditional;
                 consume(TokenKind::CloseBracket, "Expected ']' after index expression");
                 expression = std::move(access);
@@ -2831,6 +2854,7 @@ enum class BoundExpressionKind {
     ArrayIndex,
     PointerIndex,
     StringIndex,
+    Slice,
     StringLength,
     Assignment,
     Conversion,
@@ -2904,6 +2928,12 @@ struct BoundStringIndexExpression final : BoundExpression {
     std::unique_ptr<BoundExpression> string_expression;
     std::unique_ptr<BoundExpression> index_expression;
     bool null_conditional = false;
+};
+
+struct BoundSliceExpression final : BoundExpression {
+    std::unique_ptr<BoundExpression> target;
+    std::unique_ptr<BoundExpression> start;
+    std::unique_ptr<BoundExpression> end;
 };
 
 struct BoundStringLengthExpression final : BoundExpression {
@@ -5599,6 +5629,27 @@ private:
             if (const auto* access = dynamic_cast<const ElementAccessExpressionSyntax*>(&expression)) {
                 return bind_element_access(*access);
             }
+            if (const auto* slice = dynamic_cast<const SliceExpressionSyntax*>(&expression)) {
+                auto bound = std::make_unique<BoundSliceExpression>();
+                bound->kind = BoundExpressionKind::Slice;
+                bound->line = expression.line;
+                bound->column = expression.column;
+                bound->target = bind_expression(*slice->target);
+                bound->start = bind_expression(*slice->start);
+                bound->end = bind_expression(*slice->end);
+                if (bound->start->type != &program_.semantic_model.int_type ||
+                    bound->end->type != &program_.semantic_model.int_type) {
+                    diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                     "Slice bounds must be int");
+                }
+                if (bound->target->type != &program_.semantic_model.string_type &&
+                    bound->target->type->kind != TypeKind::Array) {
+                    diagnostics_.add(find_file_for_class(&current_class_), expression.line, expression.column,
+                                     "Slicing requires an array or string");
+                    bound->type = &program_.semantic_model.error_type;
+                } else bound->type = bound->target->type;
+                return bound;
+            }
 
             if (const auto* unary = dynamic_cast<const UnaryExpressionSyntax*>(&expression)) {
                 auto bound = std::make_unique<BoundUnaryExpression>();
@@ -7921,6 +7972,31 @@ private:
                 }
                 return Value{string(1, source[static_cast<std::size_t>(index)])};
             }
+            case BoundExpressionKind::Slice: {
+                const auto& slice = static_cast<const BoundSliceExpression&>(expression);
+                Value source = evaluate_expression(*slice.target, frame);
+                const int64_t start = std::get<int64_t>(evaluate_expression(*slice.start, frame).data);
+                const int64_t end = std::get<int64_t>(evaluate_expression(*slice.end, frame).data);
+                if (std::holds_alternative<string>(source.data)) {
+                    const string& value = std::get<string>(source.data);
+                    if (start < 0 || end < start || static_cast<uint64_t>(end) > value.size())
+                        throw std::runtime_error("Slice bounds out of range");
+                    if (end - start > 0x7ffffff) throw std::runtime_error("Slice size out of range");
+                    return Value{value.substr(static_cast<std::size_t>(start), static_cast<std::size_t>(end - start))};
+                }
+                if (std::holds_alternative<std::shared_ptr<RuntimeArray>>(source.data)) {
+                    const auto& array = std::get<std::shared_ptr<RuntimeArray>>(source.data);
+                    if (!array) throw std::runtime_error("Slice receiver is null");
+                    if (start < 0 || end < start || static_cast<uint64_t>(end) > array->elements.size())
+                        throw std::runtime_error("Slice bounds out of range");
+                    if (end - start > 0x7ffffff) throw std::runtime_error("Slice size out of range");
+                    auto result = std::make_shared<RuntimeArray>();
+                    result->element_type = array->element_type;
+                    result->elements.assign(array->elements.begin() + start, array->elements.begin() + end);
+                    return Value{result};
+                }
+                throw std::runtime_error("Slice receiver is null");
+            }
             case BoundExpressionKind::StringLength: {
                 const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
                 Value string_value = evaluate_expression(*length.string_expression, frame);
@@ -9088,6 +9164,15 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
         out << "    }\n";
         out << "    return arr;\n";
         out << "}\n\n";
+        out << "static HyArray* hy_array_slice(HyArray* source, int64_t start, int64_t end) {\n";
+        out << "    if (source == NULL) hy_runtime_fail(\"Slice receiver is null\");\n";
+        out << "    if (start < 0 || end < start || end > source->length) hy_runtime_fail(\"Slice bounds out of range\");\n";
+        out << "    int64_t count = end - start;\n";
+        out << "    if (count > 0x7ffffff) hy_runtime_fail(\"Slice size out of range\");\n";
+        out << "    HyArray* result = hy_array_new(count, source->element_is_ref);\n";
+        out << "    if (count > 0) memcpy(result->elements, (int64_t*)source->elements + start, (size_t)count * sizeof(int64_t));\n";
+        out << "    return result;\n";
+        out << "}\n\n";
 
         // --- Managed string helpers ---
         out << "static HyString* hy_string_new(const char* cstr, int64_t length) {\n";
@@ -9105,6 +9190,13 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
         out << "    }\n";
         out << "    hy_gc_account_payload(length > 0 ? (size_t)length + 1 : 1);\n";
         out << "    return s;\n";
+        out << "}\n\n";
+        out << "static HyString* hy_string_slice(HyString* source, int64_t start, int64_t end) {\n";
+        out << "    if (source == NULL) hy_runtime_fail(\"Slice receiver is null\");\n";
+        out << "    if (start < 0 || end < start || end > source->length) hy_runtime_fail(\"Slice bounds out of range\");\n";
+        out << "    int64_t count = end - start;\n";
+        out << "    if (count > 0x7ffffff) hy_runtime_fail(\"Slice size out of range\");\n";
+        out << "    return hy_string_new(source->bytes + start, count);\n";
         out << "}\n\n";
         out << "static HyString* hy_string_literal(const char* cstr) {\n";
         out << "    int64_t length = (int64_t)strlen(cstr);\n";
@@ -10340,6 +10432,16 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
                 const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
                 return "hy_string_index(" + emit_expression(*access.string_expression) + ", " +
                        emit_expression(*access.index_expression) + ")";
+            }
+            case BoundExpressionKind::Slice: {
+                const auto& slice = static_cast<const BoundSliceExpression&>(expression);
+                const bool is_string = slice.type == &program_.semantic_model.string_type;
+                const string source_type = is_string ? "HyString*" : "HyArray*";
+                const string helper = is_string ? "hy_string_slice" : "hy_array_slice";
+                return "({ " + source_type + " hy__slice_source = " + emit_expression(*slice.target) +
+                       "; int64_t hy__slice_start = " + emit_expression(*slice.start) +
+                       "; int64_t hy__slice_end = " + emit_expression(*slice.end) +
+                       "; " + helper + "(hy__slice_source, hy__slice_start, hy__slice_end); })";
             }
             case BoundExpressionKind::StringLength: {
                 const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
@@ -12131,6 +12233,13 @@ void collect_symbol_usage(const BoundExpression& expression,
             collect_symbol_usage(*access.index_expression, used_locals, used_parameters);
             return;
         }
+        case BoundExpressionKind::Slice: {
+            const auto& slice = static_cast<const BoundSliceExpression&>(expression);
+            collect_symbol_usage(*slice.target, used_locals, used_parameters);
+            collect_symbol_usage(*slice.start, used_locals, used_parameters);
+            collect_symbol_usage(*slice.end, used_locals, used_parameters);
+            return;
+        }
         case BoundExpressionKind::StringLength: {
             const auto& length = static_cast<const BoundStringLengthExpression&>(expression);
             collect_symbol_usage(*length.string_expression, used_locals, used_parameters);
@@ -12404,6 +12513,13 @@ void collect_member_usage(const BoundExpression& expression,
             collect_member_usage(*access.index_expression, used_fields, used_methods);
             return;
         }
+        case BoundExpressionKind::Slice: {
+            const auto& slice = static_cast<const BoundSliceExpression&>(expression);
+            collect_member_usage(*slice.target, used_fields, used_methods);
+            collect_member_usage(*slice.start, used_fields, used_methods);
+            collect_member_usage(*slice.end, used_fields, used_methods);
+            return;
+        }
         case BoundExpressionKind::StringLength:
             collect_member_usage(*static_cast<const BoundStringLengthExpression&>(expression).string_expression, used_fields, used_methods);
             return;
@@ -12525,6 +12641,13 @@ void lint_expression(const BoundExpression& expression,
             const auto& access = static_cast<const BoundStringIndexExpression&>(expression);
             lint_expression(*access.string_expression, freed_buffers, diagnostics, file);
             lint_expression(*access.index_expression, freed_buffers, diagnostics, file);
+            return;
+        }
+        case BoundExpressionKind::Slice: {
+            const auto& slice = static_cast<const BoundSliceExpression&>(expression);
+            lint_expression(*slice.target, freed_buffers, diagnostics, file);
+            lint_expression(*slice.start, freed_buffers, diagnostics, file);
+            lint_expression(*slice.end, freed_buffers, diagnostics, file);
             return;
         }
         case BoundExpressionKind::StringLength: {

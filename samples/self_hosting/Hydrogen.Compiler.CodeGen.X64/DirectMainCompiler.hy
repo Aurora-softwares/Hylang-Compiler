@@ -829,6 +829,31 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (skip >= 0) { FinishOptional(skip); }
                 return true;
             }
+            if (kind == IrExpression.KindSlice()) {
+                if (freestanding) { failure = "slicing is not supported for freestanding targets"; return false; }
+                if (!CompileExpression(expression.Receiver())) { return false; }
+                string receiverType = valueType;
+                if (receiverType != "string" && !IsArray(receiverType)) {
+                    failure = "native slicing requires an array or string"; return false;
+                }
+                code.EmitByte(0x50); // preserve receiver
+                if (!CompileExpression(expression.Index())) { return false; }
+                if (valueType != "int") { failure = "native slice start must be int"; return false; }
+                code.EmitByte(0x50); // preserve start
+                if (!CompileExpression(expression.SliceEnd())) { return false; }
+                if (valueType != "int") { failure = "native slice end must be int"; return false; }
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc2); // mov rdx, rax
+                code.EmitByte(0x5e); // pop rsi
+                code.EmitByte(0x5f); // pop rdi
+                int elementBytes = 8;
+                if (receiverType == "string") { elementBytes = 0; }
+                else if (receiverType == "byte[]") { elementBytes = 1; }
+                else if (receiverType == "int[]") { elementBytes = 4; }
+                code.EmitByte(0xb9); code.Emit32(elementBytes); // mov ecx, element width
+                EmitRuntime("rt_slice");
+                valueType = receiverType;
+                return true;
+            }
             if (kind == IrExpression.KindArrayCreation()) {
                 string type = ResolveType(expression.Type().DisplayName(), functions[currentFunction].Owner());
                 if (!SupportedType(type, false)) { failure = "unsupported native array element type"; return false; }

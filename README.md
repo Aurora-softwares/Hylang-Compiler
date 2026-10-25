@@ -26,11 +26,11 @@ The [Hydrogen Development project](https://github.com/orgs/Aurora-softwares/proj
 tracks the 0.2.0 development target. Fixed-width bitwise operators, integral
 compound assignment, increment/decrement, conditional expressions, null
 coalescing, null-conditional access, `foreach` over arrays and strings, interpolated strings,
-and switch statements and expressions are implemented and verified across the
-SDK, Linux native, and Windows native paths under Wine. The next language target is
-[range and slicing syntax](https://github.com/Aurora-softwares/Hylang-Compiler/issues/161).
-The remaining language queue is tracked on that project; full-width unsigned
-hexadecimal literals and a real Windows-host validation remain open gates.
+switch statements and expressions, and range-based slicing are implemented across the
+SDK, Linux native, and Windows native paths under Wine. The top ten language
+features are tracked on that project. The next 0.2.0 language target is
+[full-width unsigned hexadecimal literals](https://github.com/Aurora-softwares/Hylang-Compiler/issues/166);
+real Windows-host validation remains an open release gate.
 
 ## Build output
 
@@ -405,6 +405,14 @@ Cases accept constant numbers, strings, and booleans, and duplicate cases and
 branches after `default` are errors. The switch value is evaluated once.
 `continue` cannot target an outer loop across a switch; put the continuation
 in a loop nested inside the selected branch.
+`collection[start..end]` creates a new array or string containing positions
+from `start` up to but excluding `end`. Both bounds are required and must be
+`int`; the source and bounds are evaluated once, left to right. Bounds outside
+`0..Length` or a reversed range fail at runtime. Arrays copy their element
+slots once, so changing the source array does not change the slice; referenced
+objects remain shared. String positions count UTF-8 bytes, matching existing
+string length and indexing. Slicing may therefore select a partial UTF-8
+sequence. Null-conditional slicing is not supported.
 
 Native builtins include `System.Console.Write`/`WriteLine`, `System.IO.File` text/byte reads and writes and existence checks, `System.Convert.ToInt32`, and `System.Runtime.GC` collection/accounting. Objects are managed by a conservative non-moving mark/sweep collector using Linux memory mappings or Windows `VirtualAlloc`/`VirtualFree`. Windows file paths are converted from Hydrogen UTF-8 strings to Win32 UTF-16. File reads require seekable files.
 

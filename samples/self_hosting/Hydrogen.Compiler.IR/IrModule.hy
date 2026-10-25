@@ -144,6 +144,8 @@ namespace Hydrogen.Compiler.IR {
             else if (k == IrExpression.KindIndex()) { string leftText = Expression(e.Receiver());
                 string rightText = Expression(e.Index());
                 text = "index(" + leftText + ", " + rightText + ")"; }
+            else if (k == IrExpression.KindSlice()) { text = "slice(" + Expression(e.Receiver()) + ", " +
+                Expression(e.Index()) + ", " + Expression(e.SliceEnd()) + ")"; }
             else if (k == IrExpression.KindAssignment()) { string leftText = Expression(e.Target());
                 string rightText = Expression(e.Value());
                 text = "store(" + leftText + ", " + rightText + ")"; }

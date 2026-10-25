@@ -608,6 +608,64 @@ rt_int_array:
  pop rcx
  mov [rax],rcx
  ret
+rt_slice:
+ # rdi=source, rsi=start, rdx=exclusive end, rcx=element width;
+ # width zero means a byte string. Validate before subtracting or allocating.
+ test rdi,rdi
+ jz rt_null_error
+ test rsi,rsi
+ js rt_index_error
+ cmp rdx,rsi
+ jb rt_index_error
+ cmp rdx,[rdi]
+ ja rt_index_error
+ push rbx
+ push r12
+ push r13
+ push r14
+ mov rbx,rdi
+ mov r12,rsi
+ mov r13,rdx
+ sub r13,rsi
+ cmp r13,0x7ffffff
+ ja rt_size_error
+ mov r14,rcx
+ test r14,r14
+ jnz .slice_array
+ lea rdi,[rbx+r12+8]
+ mov rsi,r13
+ call rt_string
+ jmp .slice_done
+.slice_array:
+ mov rdi,r13
+ cmp r14,1
+ je .slice_byte
+ cmp r14,4
+ je .slice_int
+ call rt_array
+ jmp .slice_copy
+.slice_byte:
+ call rt_byte_array
+ jmp .slice_copy
+.slice_int:
+ call rt_int_array
+.slice_copy:
+ mov r8,rax
+ lea rsi,[rbx+8]
+ mov rcx,r12
+ imul rcx,r14
+ add rsi,rcx
+ lea rdi,[r8+8]
+ mov rcx,r13
+ imul rcx,r14
+ rep movsb
+ mov rax,r8
+.slice_done:
+ pop r14
+ pop r13
+ pop r12
+ pop rbx
+ ret
 rt_index:
  test rdi,rdi
  jz rt_null_error

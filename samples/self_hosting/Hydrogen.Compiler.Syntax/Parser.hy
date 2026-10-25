@@ -584,6 +584,13 @@ namespace Hydrogen.Compiler.Syntax {
                     else { Emit("ElementAccessExpression"); }
                     Push();
                     ParseExpression();
+                    if (Check(SyntaxKind.DotDotToken)) {
+                        Emit("SliceBounds");
+                        Push();
+                        EmitToken(Advance());
+                        ParseExpression();
+                        Pop();
+                    }
                     EmitToken(Consume(SyntaxKind.CloseBracketToken, "Expected ']'"));
                     Pop();
                     continue;
