@@ -106,3 +106,4 @@ if ($env:MOCK_FORCE -eq '1') {
     $env:LOCALAPPDATA = $originalLocalAppData
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
+exit 0
