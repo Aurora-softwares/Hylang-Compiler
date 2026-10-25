@@ -6,11 +6,16 @@ wine_binary=${3:?expected Wine binary}
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 version=alpha-0.0.3
-project="$source_dir/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Windows.hyproj"
-"$native_binary" build "$project" -o "$work/hy-core.exe" --hide-progress >"$work/build.log"
-cmake -DSOURCE_DIR="$source_dir" -DINPUT_BINARY="$work/hy-core.exe" \
+cmake -DSOURCE_DIR="$source_dir" -DHOST_COMPILER="$native_binary" \
     -DVERSION="$version" -DRELEASES_DIR="$work/releases" \
-    -P "$source_dir/cmake/PackageHydrogenWindowsRelease.cmake" >"$work/package.log"
+    -P "$source_dir/cmake/MakeHydrogenReleaseCandidate.cmake" >"$work/package.log"
+linux_archive="hydrogen-$version-linux-x86_64.tar.gz"
+(cd "$work/releases" && sha256sum -c "$linux_archive.sha256")
+tar -xzf "$work/releases/$linux_archive" -C "$work"
+linux_root="$work/hydrogen-$version-linux-x86_64"
+[[ $("$linux_root/bin/hy" --version) == "Hydrogen $version" ]] ||
+    { echo 'Linux release launcher version failed' >&2; exit 1; }
+(cd "$linux_root" && sha256sum -c SHA256SUMS)
 archive="hydrogen-$version-windows-x86_64.zip"
 (cd "$work/releases" && sha256sum -c "$archive.sha256")
 unzip -q "$work/releases/$archive" -d "$work/extracted"
@@ -26,4 +31,4 @@ hash_output=$(cd "$root" && WINEDEBUG=-all "$wine_binary" cmd /c "$launcher pack
 expected=$(sha256sum "$root/LICENSE")
 [[ $hash_output == "${expected%% *}" ]] ||
     { echo 'Windows launcher did not delegate to native compiler' >&2; exit 1; }
-echo 'Windows release layout, checksums, launcher, and native delegation passed under Wine'
+echo 'Linux and Windows release candidate layouts, checksums, and launchers passed'
