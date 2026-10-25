@@ -112,7 +112,8 @@ foreach(name native_runtime_gc native_inheritance native_interfaces
 endforeach()
 set(bounds_negative "byte[] values = new byte[2]; int i = -1; int sum = 0; while (i < values.Length) { sum = sum + values[i]; i = i + 1; } return sum;")
 set(bounds_mutated "int n = 2; int[] values = new int[n]; n = 3; int i = 0; while (i < n) { values[i] = i; i = i + 1; } return 0;")
-foreach(name bounds_negative bounds_mutated)
+set(bounds_null "byte[] values = null; int i = 0; while (i < values.Length) { i = i + 1; } return 0;")
+foreach(name bounds_negative bounds_mutated bounds_null)
     set(source "${TEMP_DIR}/${name}.hy")
     set(image "${TEMP_DIR}/${name}.exe")
     file(WRITE "${source}" "public class Program { public static int Main() { ${${name}} } }\n")
@@ -125,8 +126,12 @@ foreach(name bounds_negative bounds_mutated)
     execute_process(COMMAND "${CMAKE_COMMAND}" -E env "WINEDEBUG=-all"
         "${WINE_BINARY}" "${image}"
         RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 90)
+    set(reason "index out of range")
+    if(name STREQUAL "bounds_null")
+        set(reason "null reference")
+    endif()
     if(NOT status STREQUAL "1" OR NOT output STREQUAL "" OR
-       NOT errors MATCHES "runtime error: index out of range")
+       NOT errors MATCHES "runtime error: ${reason}")
         message(FATAL_ERROR "Windows bounds failure mismatch: ${name}: ${status}\n${output}\n${errors}")
     endif()
 endforeach()

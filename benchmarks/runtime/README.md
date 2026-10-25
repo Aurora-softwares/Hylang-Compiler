@@ -118,5 +118,8 @@ for the diagnosis and remaining bounds-check work.
 The [proven packed-array bounds comparison](results-2026-10-25-proven-array-bounds.json)
 records the narrow loop optimisation and its array improvement. A
 [longer byte confirmation](results-2026-10-25-proven-array-bounds-byte-confirm.json)
-did not establish a byte-checksum speedup; see the corresponding notes in
-[optimisations.md](../../optimisations.md).
+did not establish a byte-checksum speedup. The final
+[direct-read and loop-entry check comparison](results-2026-10-25-proven-packed-reads.json)
+records 300 paired array runs and 200 paired byte runs with matching outputs,
+compiler/binary hashes, and a measurable improvement in both cases. See
+[optimisations.md](../../optimisations.md) for the results and remaining costs.

@@ -688,7 +688,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return true;
             }
             if (kind == IrStatement.KindIfStatement()) {
-                int elsePatch = CompileConditionJumpFalse(statement.Condition());
+                int elsePatch = CompileConditionJumpFalse(statement.Condition(), -1);
                 if (elsePatch < 0) { return false; }
                 if (!CompileStatement(statement.ThenStatement())) { return false; }
                 int endPatch = EmitJump();
@@ -700,15 +700,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (kind == IrStatement.KindWhileStatement()) {
                 int previousLoop = loopStart;
                 int savedBreaks = breakCount;
-                int conditionPosition = code.Position();
-                loopStart = conditionPosition;
-                int exitPatch = CompileConditionJumpFalse(statement.Condition());
-                if (exitPatch < 0) { return false; }
                 int previousIndex = provenIndexSlot;
                 int previousArray = provenArraySlot;
                 int previousBound = provenBoundSlot;
                 bool previousNonNegative = provenNonNegative;
                 ActivateProvenLoop(statement.Condition(), statement.Body(), null, loopStartsAtZero);
+                int checkedLengthSlot = ProvenLengthConditionSlot(statement.Condition());
+                if (checkedLengthSlot >= 0) { EmitProvenLengthPrecheck(checkedLengthSlot); }
+                int conditionPosition = code.Position();
+                loopStart = conditionPosition;
+                int exitPatch = CompileConditionJumpFalse(statement.Condition(), checkedLengthSlot);
+                if (exitPatch < 0) { return false; }
                 if (!CompileStatement(statement.Body())) { return false; }
                 provenIndexSlot = previousIndex; provenArraySlot = previousArray; provenBoundSlot = previousBound;
                 provenNonNegative = previousNonNegative;
@@ -730,10 +732,6 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 int previousLoop = loopStart;
                 int savedBreaks = breakCount;
                 int savedContinues = continueCount;
-                int conditionPosition = code.Position();
-                loopStart = -2;
-                int exitPatch = CompileConditionJumpFalse(statement.Condition());
-                if (exitPatch < 0) { return false; }
                 int previousIndex = provenIndexSlot;
                 int previousArray = provenArraySlot;
                 int previousBound = provenBoundSlot;
@@ -744,6 +742,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     forStartsZero = ZeroSetter(statement.ForInitializer(), statement.Condition().Left().Name());
                 }
                 ActivateProvenLoop(statement.Condition(), statement.Body(), statement.ForIncrement(), forStartsZero);
+                int checkedLengthSlot = ProvenLengthConditionSlot(statement.Condition());
+                if (checkedLengthSlot >= 0) { EmitProvenLengthPrecheck(checkedLengthSlot); }
+                int conditionPosition = code.Position();
+                loopStart = -2;
+                int exitPatch = CompileConditionJumpFalse(statement.Condition(), checkedLengthSlot);
+                if (exitPatch < 0) { return false; }
                 if (!CompileStatement(statement.Body())) { return false; }
                 provenIndexSlot = previousIndex; provenArraySlot = previousArray; provenBoundSlot = previousBound;
                 provenNonNegative = previousNonNegative;
@@ -895,10 +899,26 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 (provenBoundSlot >= 0 && arrayLengthSourceSlots[arraySlot] == provenBoundSlot));
         }
 
+        private int ProvenLengthConditionSlot(IrExpression condition) {
+            if (provenArraySlot < 0 || condition == null || condition.Kind() != IrExpression.KindBinary()) { return -1; }
+            IrExpression right = condition.Right();
+            if (right.Kind() != IrExpression.KindMemberAccess() || right.NullConditional() ||
+                right.MemberName() != "Length" || right.Receiver().Kind() != IrExpression.KindName()) { return -1; }
+            return FindLocal(right.Receiver().Name()) == provenArraySlot ? provenArraySlot : -1;
+        }
+
+        private void EmitProvenLengthPrecheck(int arraySlot) {
+            EmitLoadLocal(arraySlot);
+            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc0); // test rax, rax
+            code.EmitByte(0x0f); code.EmitByte(0x85); int nonNull = code.Position(); code.Emit32(0);
+            EmitRuntime("rt_null_error");
+            PatchRelative(nonNull, code.Position());
+        }
+
         // A branch can consume comparison flags directly. Materialising a
         // boolean with setcc/movzx and then testing it costs three extra
         // instructions in every loop iteration.
-        private int CompileConditionJumpFalse(IrExpression condition) {
+        private int CompileConditionJumpFalse(IrExpression condition, int checkedLengthSlot) {
             if (condition.Kind() == IrExpression.KindBinary() &&
                 Numeric(condition.Left().ResultType()) && Numeric(condition.Right().ResultType())) {
                 int op = condition.OperatorKind();
@@ -909,7 +929,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     IrExpression right = condition.Right();
                     int rightSlot = -1;
                     if (right.Kind() == IrExpression.KindName()) { rightSlot = FindLocal(right.Name()); }
-                    if (rightSlot >= 0) {
+                    if (checkedLengthSlot >= 0) {
+                        code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // mov rcx, rax
+                        EmitLoadLocal(checkedLengthSlot);
+                        code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x00); // mov rax, [rax]
+                        valueType = "int";
+                    } else if (rightSlot >= 0) {
                         code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // mov rcx, rax
                         EmitLoadLocal(rightSlot);
                         valueType = localTypes[rightSlot];
@@ -1017,6 +1042,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                         failure = "native null-conditional index requires reference receiver and result"; return false;
                     }
                     skip = EmitJumpIfZero();
+                }
+                // A proved packed-array read needs neither an element address
+                // nor a temporary receiver register. Fold the element load
+                // into the array/index addressing mode.
+                if (!freestanding && (receiverType == "byte[]" || receiverType == "int[]") &&
+                    ProvenPackedAccess(expression.Receiver(), expression.Index())) {
+                    int provenSlot = FindLocal(expression.Index().Name());
+                    EmitProvenPackedRead(provenSlot, receiverType == "byte[]" ? 1 : 4);
+                    valueType = ElementType(receiverType);
+                    if (skip >= 0) { FinishOptional(skip); }
+                    return true;
                 }
                 if (!CompileIndexOperands(expression.Index())) { return false; }
                 if (receiverType == "string") { EmitRuntime("rt_char"); valueType = "string"; }
@@ -1882,6 +1918,24 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (elementBytes == 1) { code.EmitByte(0x37); }
             else { code.EmitByte(0xb7); }
             code.EmitByte(8);
+        }
+
+        private void EmitProvenPackedRead(int indexSlot, int elementBytes) {
+            code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0xb5);
+            code.Emit32(-8 * (indexSlot + 1)); // mov rsi, [rbp-offset]
+            if (!provenNonNegative) {
+                code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xf6); // test rsi, rsi
+                code.EmitByte(0x0f); code.EmitByte(0x89); int nonnegative = code.Position(); code.Emit32(0);
+                EmitRuntime("rt_index_error");
+                PatchRelative(nonnegative, code.Position());
+            }
+            if (elementBytes == 1) {
+                code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0x44);
+                code.EmitByte(0x30); code.EmitByte(8); // movzx eax, byte [rax + rsi + 8]
+            } else {
+                code.EmitByte(0x48); code.EmitByte(0x63); code.EmitByte(0x44);
+                code.EmitByte(0xb0); code.EmitByte(8); // movsxd rax, dword [rax + rsi * 4 + 8]
+            }
         }
 
         private void MoveRdiRax() { code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc7); }

@@ -161,8 +161,22 @@ was 14.60 versus 14.50 ms, but a separate
 [150-pair byte confirmation](benchmarks/runtime/results-2026-10-25-proven-array-bounds-byte-confirm.json)
 measured 13.63 versus 13.79 ms, with only 68 of 150 pairs faster. Each run
 checked output and exit status; the files retain input, source, compiler, and
-binary hashes. The byte workload's dependent remainder arithmetic remains the
-larger cost, so #167 stays In Progress until its byte benchmark gate is met.
+binary hashes. The byte workload's dependent remainder arithmetic remains a
+larger cost than the removed bounds checks.
+
+The final #167 pass folds proven safe packed-array reads into one x64 load and
+checks a stable array for null once before an `i < array.Length` loop. The
+loop still reads the current length on every iteration, while all unproven
+accesses retain their checks. In a [300-pair array and 200-pair byte
+comparison](benchmarks/runtime/results-2026-10-25-proven-packed-reads.json),
+the 10-million-element array median fell from 155.62 to 152.85 ms (1.8%;
+197/300 pairs faster), and the 1.6 MB byte checksum from 13.52 to 13.28 ms
+(1.8%; 117/200 pairs faster). Every run checked exact output, empty stderr,
+and exit status; raw samples and source, compiler, binary, and input hashes
+are retained. Native runtime and Windows parity regressions passed, including
+null and out-of-range failures, and stages 1–3 passed bootstrap equivalence.
+This completes #167's narrow check-elimination gate. Dependent remainder
+arithmetic and broader register/loop optimisation remain separate work.
 
 For [#129](https://github.com/Aurora-softwares/Hylang-Compiler/issues/129),
 the [native text builder](samples/native_text_builder/README.md) appends UTF-8

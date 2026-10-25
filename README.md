@@ -35,6 +35,11 @@ Native text assembly now has a [byte-buffer builder sample](samples/native_text_
 for Linux and Windows; its `FromBytes` finishing intrinsic is native only.
 The native collector now groups adjacent dead-span releases on Linux; the
 [GC profiling notes](optimisations.md) retain its before/after measurements.
+The 0.8.0 optimisation work has completed
+[proven packed-array bounds elimination](https://github.com/Aurora-softwares/Hylang-Compiler/issues/167)
+for guarded native loops. Broader local register and loop code generation in
+[#127](https://github.com/Aurora-softwares/Hylang-Compiler/issues/127) is the
+next performance target; real Windows-host validation remains a release gate.
 
 ## Build output
 
