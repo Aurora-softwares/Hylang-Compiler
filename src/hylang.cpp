@@ -10366,6 +10366,47 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
                ")) ? hy_coalesce_finish((void*)(" + body + "), 1) : hy_coalesce_finish(NULL, 1)))";
     }
 
+	string emit_rooted_string_operation(
+		const string& left,
+		const string& right,
+		bool concatenate,
+		bool negate = false) {
+
+		std::ostringstream out;
+
+		// GNU C statement expression: supported by the existing
+		// generated-C backend.
+		out << "({ "
+			<< "HyString* hy__left = NULL; "
+			<< "HyString* hy__right = NULL; "
+			<< "void** hy__slots[] = { "
+			<< "(void**)&hy__left, (void**)&hy__right }; "
+			<< "HyRootFrame hy__frame; "
+			<< "hy_gc_push_roots(&hy__frame, hy__slots, 2); "
+
+			// Evaluation order is explicit.
+			<< "hy__left = " << left << "; "
+			<< "hy__right = " << right << "; ";
+
+		if (concatenate) {
+			out << "HyString* hy__result = "
+				<< "hy_string_concat(hy__left, hy__right); ";
+		} else {
+			out << "bool hy__result = "
+				<< "hy_string_equals(hy__left, hy__right); ";
+		}
+
+		out << "hy_gc_pop_roots(&hy__frame); ";
+
+		if (negate && !concatenate) {
+			out << "(!hy__result); })";
+		} else {
+			out << "hy__result; })";
+		}
+
+		return out.str();
+	}
+
     string emit_expression(const BoundExpression& expression) {
         if (&expression == optional_receiver_override_) {
             return "((" + c_type_name(expression.type) + ")hy_coalesce_top->value)";
@@ -10610,9 +10651,11 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
                            emit_expression(*binary.left) + ")) ? hy_coalesce_finish(NULL, 0) : " +
                            "hy_coalesce_finish((void*)(" + emit_expression(*binary.right) + "), 1)))";
                 }
-                if (binary.op == TokenKind::Plus && binary.type == &program_.semantic_model.string_type) {
-                    return "hy_string_concat(" + emit_string_operand(*binary.left) + ", " + emit_string_operand(*binary.right) + ")";
-                }
+
+				if ((binary.op == TokenKind::EqualsEquals || binary.op == TokenKind::BangEquals) && (binary.left->type == &program_.semantic_model.string_type || binary.right->type == &program_.semantic_model.string_type)) {
+					return emit_rooted_string_operation(emit_expression(*binary.left), emit_expression(*binary.right), false, binary.op == TokenKind::BangEquals);
+				}
+
                 if ((binary.op == TokenKind::EqualsEquals || binary.op == TokenKind::BangEquals) &&
                     (binary.left->type == &program_.semantic_model.string_type ||
                      binary.right->type == &program_.semantic_model.string_type)) {
@@ -10650,6 +10693,15 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
                     }
                     return binary.op == TokenKind::EqualsEquals ? comparison : "(!" + comparison + ")";
                 }
+
+				if (binary.op == TokenKind::Plus && ((binary.type != nullptr && binary.type->kind == TypeKind::String) || (binary.left->type != nullptr && binary.left->type->kind == TypeKind::String) || (binary.right->type != nullptr && binary.right->type->kind == TypeKind::String))) {
+
+					return emit_rooted_string_operation(
+						emit_string_operand(*binary.left),
+						emit_string_operand(*binary.right),
+						true
+					);
+				}
                 if (binary.op == TokenKind::Plus || binary.op == TokenKind::Minus ||
                     binary.op == TokenKind::Star || binary.op == TokenKind::Ampersand ||
                     binary.op == TokenKind::Pipe || binary.op == TokenKind::Caret) {
