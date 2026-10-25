@@ -1,11 +1,10 @@
 namespace Hydrogen.Compiler.Core {
     public class PathUtils {
         public static string DirName(string path) {
-            path = Normalize(path);
             int i = path.Length - 1;
             while (i >= 0) {
                 string ch = path[i];
-                if (ch == "/") {
+                if (ch == "/" || ch == "\\") {
                     if (i == 0) {
                         return "/";
                     }
@@ -49,14 +48,22 @@ namespace Hydrogen.Compiler.Core {
         public static string Normalize(string path) {
             // Normalize path by resolving "./" and "../" segments. Very small implementation
             // intended for repo-local deterministic builds.
-            string separators = "";
+            bool hasBackslash = false;
             int slash = 0;
             while (slash < path.Length) {
-                if (path[slash] == "\\") { separators = separators + "/"; }
-                else { separators = separators + path[slash]; }
+                if (path[slash] == "\\") { hasBackslash = true; }
                 slash = slash + 1;
             }
-            path = separators;
+            if (hasBackslash) {
+                string separators = "";
+                slash = 0;
+                while (slash < path.Length) {
+                    if (path[slash] == "\\") { separators = separators + "/"; }
+                    else { separators = separators + path[slash]; }
+                    slash = slash + 1;
+                }
+                path = separators;
+            }
             string[] parts = Split(path, "/");
             string[] stack = new string[0];
             int count = 0;

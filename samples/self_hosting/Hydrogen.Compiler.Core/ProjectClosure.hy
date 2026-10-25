@@ -25,8 +25,14 @@ namespace Hydrogen.Compiler.Core {
         public static ProjectClosure Collect(string projectPath) {
             // Normalize upfront so cycle detection and de-duping work even when callers pass paths with "../".
             string normalized = PathUtils.Normalize(projectPath);
-            return CollectProject(normalized, PathUtils.DirName(normalized), "", new string[0],
-                new string[0], new string[0], new string[0], new string[0]);
+            string workspaceRoot = PathUtils.DirName(normalized);
+            string[] emptyStack = new string[0];
+            string[] emptyProjects = new string[0];
+            string[] emptySources = new string[0];
+            string[] emptyPackageIds = new string[0];
+            string[] emptyPackageVersions = new string[0];
+            return CollectProject(normalized, workspaceRoot, "", emptyStack,
+                emptyProjects, emptySources, emptyPackageIds, emptyPackageVersions);
         }
 
         private static ProjectClosure CollectProject(string projectPath, string workspaceRoot,
