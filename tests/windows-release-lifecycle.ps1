@@ -14,6 +14,7 @@ try {
     }
     $env:LOCALAPPDATA = $work
     $env:MOCK_ASSETS = $assets
+    $env:MOCK_LOG = Join-Path $work 'manager.log'
     $env:MOCK_VERSION = 'alpha-0.0.3'
     $env:MOCK_MAINTENANCE = Join-Path $SourceDir 'scripts\hy-maintenance.ps1'
     $root = Join-Path $work 'Hydrogen'
@@ -51,6 +52,21 @@ function Move-Item {
         throw 'Injected activation failure'
     }
     Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination
+}
+function scoop {
+    if ($args[0] -eq 'list') { Write-Output 'hydrogen 0.0.2' }
+    else { Add-Content -LiteralPath $env:MOCK_LOG -Value ("scoop " + ($args -join ' ')) }
+    $global:LASTEXITCODE = 0
+}
+function choco {
+    if ($args[0] -eq 'list') { Write-Output 'hydrogen|0.0.2' }
+    else { Add-Content -LiteralPath $env:MOCK_LOG -Value ("choco " + ($args -join ' ')) }
+    $global:LASTEXITCODE = 0
+}
+function winget {
+    if ($args[0] -eq 'list') { Write-Output 'Hydrogen AuroraSoftwares.Hydrogen 0.0.2' }
+    else { Add-Content -LiteralPath $env:MOCK_LOG -Value ("winget " + ($args -join ' ')) }
+    $global:LASTEXITCODE = 0
 }
 if ($env:MOCK_FORCE -eq '1') {
     & $env:MOCK_MAINTENANCE -EntryPath $env:MOCK_ENTRY $env:MOCK_ACTION --force
@@ -101,7 +117,42 @@ if ($env:MOCK_FORCE -eq '1') {
         'Hydrogen release: alpha-0.0.2') {
         throw "Activation failure did not restore the previous release: $($result.Output)"
     }
-    Write-Output 'Windows standalone check, update, uninstall, and activation rollback passed'
+    $env:MOCK_FAIL_ACTIVATE = '0'
+    foreach ($case in @(
+        @{ Path = 'scoop\apps\hydrogen\current'; Manager = 'scoop'; Check = 'scoop status hydrogen'; Update = 'scoop update hydrogen'; Remove = 'scoop uninstall hydrogen' },
+        @{ Path = 'chocolatey\lib\hydrogen\tools'; Manager = 'choco'; Check = 'choco outdated --limit-output'; Update = 'choco upgrade hydrogen -y'; Remove = 'choco uninstall hydrogen -y' },
+        @{ Path = 'Microsoft\WinGet\Packages\AuroraSoftwares.Hydrogen_000'; Manager = 'winget'; Check = 'winget upgrade --id AuroraSoftwares.Hydrogen --exact'; Update = 'winget upgrade --id AuroraSoftwares.Hydrogen --exact'; Remove = 'winget uninstall --id AuroraSoftwares.Hydrogen --exact' }
+    )) {
+        $managedRoot = Join-Path $work $case.Path
+        New-Item -ItemType Directory -Path (Split-Path -Parent $managedRoot) -Force | Out-Null
+        $stage = Join-Path $work ([IO.Path]::GetRandomFileName())
+        Expand-Archive -LiteralPath $oldArchive -DestinationPath $stage
+        Move-Item -LiteralPath (Join-Path $stage $oldName) -Destination $managedRoot
+        $env:MOCK_ENTRY = Join-Path $managedRoot 'bin\hy.cmd'
+        '' | Set-Content -LiteralPath $env:MOCK_LOG
+        foreach ($action in @('update-check', 'update', 'uninstall')) {
+            $result = Run-Action $action ($action -ne 'update-check')
+            if ($result.Code -ne 0) { throw "$($case.Manager) $action failed: $($result.Output)" }
+        }
+        $log = Get-Content -LiteralPath $env:MOCK_LOG -Raw
+        foreach ($expected in @($case.Check, $case.Update, $case.Remove)) {
+            if (-not $log.Contains($expected)) { throw "$($case.Manager) did not delegate $expected" }
+        }
+        if (-not (Test-Path -LiteralPath $managedRoot)) {
+            throw "$($case.Manager) delegation removed package-owned files"
+        }
+    }
+    $unknownRoot = Join-Path $work 'unknown\Hydrogen'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $unknownRoot) -Force | Out-Null
+    $stage = Join-Path $work ([IO.Path]::GetRandomFileName())
+    Expand-Archive -LiteralPath $oldArchive -DestinationPath $stage
+    Move-Item -LiteralPath (Join-Path $stage $oldName) -Destination $unknownRoot
+    $env:MOCK_ENTRY = Join-Path $unknownRoot 'bin\hy.cmd'
+    $result = Run-Action 'uninstall' $true
+    if ($result.Code -eq 0 -or -not (Test-Path -LiteralPath $unknownRoot)) {
+        throw 'Unknown ownership was not rejected safely'
+    }
+    Write-Output 'Windows standalone lifecycle, rollback, manager routing, and unknown ownership passed'
 } finally {
     $env:LOCALAPPDATA = $originalLocalAppData
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
