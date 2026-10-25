@@ -1,0 +1,4 @@
+format = 2
+name = "NativeTextBuilder"
+type = "exe"
+sources = ["TextBuilder.hy", "Program.hy"]

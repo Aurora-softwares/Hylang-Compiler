@@ -552,6 +552,9 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.Console.Utf8ByteAt") {
                 return Intrinsic(e, qualified, "string", "int", "int");
             }
+            if (qualified == "System.Text.Buffer.FromBytes") {
+                return Intrinsic(e, qualified, "byte[]", "int", "string");
+            }
             if (qualified == "System.Console.ReadLine") { return Intrinsic(e, qualified, "", "", "string"); }
             if (qualified == "System.Australis.Terminal.EndOfInput") {
                 return Intrinsic(e, qualified, "", "", "bool");

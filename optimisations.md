@@ -91,6 +91,19 @@ case from 134.25 to 129.00 ms (3.9%). The
 [source and raw samples](benchmarks/runtime/results-2026-10-25-local-ops.json)
 are retained. Further spill and load profiling is needed before #127 closes.
 
+For [#129](https://github.com/Aurora-softwares/Hylang-Compiler/issues/129),
+the [native text builder](samples/native_text_builder/README.md) appends UTF-8
+bytes to a geometric `byte[]` and creates one immutable string at the end.
+For 10,000 `"abc"` appends, repeated `+` copies 150,015,000 bytes by the
+concat algorithm. The builder copies 30,000 input bytes, 32,736 bytes during
+11 growth steps, and 30,000 bytes when finalized: 92,736 total. Thirty paired
+runs on this host measured 88.54 ms median for `+` versus 1.33 ms for the
+builder. The native runtime's live managed heap reading after the loop was
+204,800 versus 139,264 bytes; it is not a cumulative allocation counter.
+The [raw runs and source hashes](benchmarks/runtime/results-2026-10-25-builder.json)
+are retained. The builder currently ships as a reusable native sample while
+packaged standard-library distribution remains separate work.
+
 The Development project tracks further code-generation and string-index work
 in [#127](https://github.com/Aurora-softwares/Hylang-Compiler/issues/127)
 and [#128](https://github.com/Aurora-softwares/Hylang-Compiler/issues/128),

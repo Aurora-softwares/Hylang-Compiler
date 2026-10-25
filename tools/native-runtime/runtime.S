@@ -724,6 +724,15 @@ rt_string:
  pop r12
  pop rbx
  ret
+rt_string_from_bytes:
+ # rdi=byte array, rsi=used byte count. Copy just the used prefix into an
+ # immutable string; unsigned comparison also rejects a negative count.
+ test rdi,rdi
+ jz rt_null_error
+ cmp rsi,[rdi]
+ ja rt_index_error
+ add rdi,8
+ jmp rt_string
 rt_concat:
  test rdi,rdi
  jz rt_null_error

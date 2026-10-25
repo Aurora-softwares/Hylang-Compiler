@@ -1398,6 +1398,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (intrinsic == "System.Console.Utf8ByteAt") {
                 return RuntimeCall(expression, "rt_string_byte_at", "string", "int", "int");
             }
+            if (intrinsic == "System.Text.Buffer.FromBytes") {
+                return RuntimeCall(expression, "rt_string_from_bytes", "byte[]", "int", "string");
+            }
             if (intrinsic == "System.IO.File.Exists") { return RuntimeCall(expression, "rt_exists", "string", "", "bool"); }
             if (intrinsic == "System.IO.File.ReadAllText") { return RuntimeCall(expression, "rt_read_text", "string", "", "string"); }
             if (intrinsic == "System.IO.File.ReadAllBytes") { return RuntimeCall(expression, "rt_read_bytes", "string", "", "byte[]"); }

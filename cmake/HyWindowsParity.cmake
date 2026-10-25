@@ -69,6 +69,16 @@ string(REPLACE "/" "\\" windows_backslash_path
     "Z:${TEMP_DIR}/created/subdir/windows-é.txt")
 run_windows("${output}" 42 "windows runtime parity ok"
     "${windows_backslash_path}" "two words")
+set(builder_image "${TEMP_DIR}/NativeTextBuilder.exe")
+execute_process(COMMAND "${NATIVE_BINARY}" build
+    "${SOURCE_DIR}/samples/native_text_builder/NativeTextBuilder.Windows.hyproj"
+    -o "${builder_image}" --hide-progress
+    RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 60)
+if(NOT result STREQUAL "0" OR NOT stderr STREQUAL "")
+    message(FATAL_ERROR "Windows text builder build failed: ${result}\n${stdout}\n${stderr}")
+endif()
+run_windows("${builder_image}" 0 "builder utf8 ok" utf8 0)
+run_windows("${builder_image}" 0 "300000" builder 100000)
 foreach(name native_runtime native_runtime_files windows_console_terminal)
     set(image "${TEMP_DIR}/${name}.exe")
     execute_process(COMMAND "${NATIVE_BINARY}" compile

@@ -31,6 +31,8 @@ SDK, Linux native, and Windows native paths under Wine. The top ten language
 features are tracked on that project. The next 0.2.0 language target is
 [full-width unsigned hexadecimal literals](https://github.com/Aurora-softwares/Hylang-Compiler/issues/166);
 real Windows-host validation remains an open release gate.
+Native text assembly now has a [byte-buffer builder sample](samples/native_text_builder/README.md)
+for Linux and Windows; its `FromBytes` finishing intrinsic is native only.
 
 ## Build output
 

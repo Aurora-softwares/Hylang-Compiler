@@ -206,6 +206,7 @@ It prints `Answer: 42`. Arrays are mutable, zero/default-initialized, and bounds
 | `System.Console` | `Write(value)`, `WriteLine(value)`, `WriteBytes(bytes)`, `IsTerminal()`, `TerminalWidth()` (zero when unavailable), `Utf8ByteAt(text, index)`, native-only empty `WriteLine()` |
 | `System.IO.File` | `Exists(path)`, `ReadAllText(path)`, `ReadAllBytes(path)`, `WriteAllText(path, text)`, `WriteAllBytes(path, bytes)` |
 | `System.Convert` | `ToInt32(text)` returning Hydrogen's `int` |
+| `System.Text.Buffer` | Native `FromBytes(bytes, count)` copies the used UTF-8 prefix into an immutable string; see the [text builder sample](../native_text_builder/README.md) |
 | `System.Runtime.GC` | `Collect()` in native code and SDK C output (`hy run` treats it as a no-op); `GetAllocatedBytes()` in native code only |
 
 File reads require seekable files. Null access, invalid indices/sizes, malformed integers, I/O errors, and allocation failures report an error on stderr and exit `1`. `Console.ReadLine` is recognized by the checker but rejected by native generation.
