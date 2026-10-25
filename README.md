@@ -33,6 +33,8 @@ features are tracked on that project. The next 0.2.0 language target is
 real Windows-host validation remains an open release gate.
 Native text assembly now has a [byte-buffer builder sample](samples/native_text_builder/README.md)
 for Linux and Windows; its `FromBytes` finishing intrinsic is native only.
+The native collector now groups adjacent dead-span releases on Linux; the
+[GC profiling notes](optimisations.md) retain its before/after measurements.
 
 ## Build output
 

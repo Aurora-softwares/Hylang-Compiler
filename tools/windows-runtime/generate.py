@@ -29,6 +29,24 @@ linux = linux[:span_start] + '''rt_span_page:
  jae rt_oom
  ret
 ''' + linux[span_end:]
+# Windows reservations remain independent even when their addresses are
+# adjacent. Release each dead span with its original VirtualAlloc base.
+sweep_start = linux.index('.sweep_span:\n')
+sweep_end = linux.index('.keep_span:\n', sweep_start)
+linux = linux[:sweep_start] + '''.sweep_span:
+ mov rbx,[r13]
+ test rbx,rbx
+ jz .sweep_next_class
+ cmp qword ptr [rbx+40],0
+ jne .keep_span
+ mov rax,[rbx]
+ mov [r13],rax
+ mov rdi,rbx
+ mov esi,4096
+ mov eax,11
+ syscall
+ jmp .sweep_span
+''' + linux[sweep_end:]
 # GNU as dot labels are file scoped, so prefix shim labels before appending.
 for label in set(re.findall(r'(?m)^(\.[A-Za-z_]\w*):', shim)):
     shim = re.sub(r'(?<!\w)' + re.escape(label) + r'\b', '.win_' + label[1:], shim)

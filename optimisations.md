@@ -73,9 +73,9 @@ one extra full collection of those live nodes, a separate paired check fell
 from 27.56 to 26.23 ms after the mark-path change (4.8%). The
 [raw samples](benchmarks/runtime/results-2026-10-25-small-span-gc.json)
 include binary hashes and output checks. These changes reduce allocation and
-collection cost, but the native node case is still well above the C++ result;
-[#130](https://github.com/Aurora-softwares/Hylang-Compiler/issues/130) remains
-in progress while root scans and span sweeping are investigated.
+collection cost, but the native node case is still well above the C++ result.
+The following diagnostics examine root scans and dead-span sweeping for
+[#130](https://github.com/Aurora-softwares/Hylang-Compiler/issues/130).
 An additional 100,000-node diagnostic drops the whole list before an explicit
 full collection. In 30 paired runs, the no-collection path took 15.08 ms
 median and the collection path 32.00 ms; the difference estimates 16.92 ms
@@ -84,7 +84,25 @@ for collection plus its call overhead. Live managed bytes fell from
 collection; that traced call count identifies page release as a likely sweep
 cost, but traced syscall times are not comparable to untraced wall times.
 The [fixture and raw samples](benchmarks/runtime/results-2026-10-25-dead-gc.json)
-are retained. Root scanning still needs an independent phase measurement.
+are retained.
+
+Linux now merges adjacent dead span pages into one `munmap` range while
+Windows retains one `VirtualFree` per reservation. The dead-span diagnostic
+made 207 release calls instead of 3,230. Thirty paired runs put the explicit
+collection path at 32.91 ms before and 24.58 ms after (25.3% faster); the
+matching no-collection path was 15.24 versus 14.83 ms. Subtracting those
+paths estimates collection work at 17.67 versus 9.75 ms (44.8% less).
+The [raw before/after samples](benchmarks/runtime/results-2026-10-25-sweep-batch.json)
+retain both modes and binary hashes.
+
+To bound root-scan cost separately, a nearly empty-heap fixture compared one
+explicit collection at stack depths zero and 50,000, each against an otherwise
+identical no-collection run. Forty paired runs put the deep collection's
+incremental cost at about 1.19 ms beyond the shallow case on this host.
+This controlled subtraction is an estimate rather than an instrumented phase
+timer; the [fixture and raw samples](benchmarks/runtime/results-2026-10-25-root-scan.json)
+show the method. Dead-span release was the larger measured cost, so this pass
+does not introduce incremental or generational collection.
 
 For [#127](https://github.com/Aurora-softwares/Hylang-Compiler/issues/127),
 commutative integer operations now load a right-hand local directly into

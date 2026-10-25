@@ -483,10 +483,27 @@ rt_collect:
  jz .sweep_next_class
  cmp qword ptr [rbx+40],0
  jne .keep_span
+ # Adjacent dead span pages can be released with one Linux munmap. Batches
+ # are linked in descending address order when populated from the page arena.
+ mov r9,rbx
+ mov r10,rbx
  mov rax,[rbx]
+.span_run:
+ test rax,rax
+ jz .span_run_end
+ lea rdx,[r10-4096]
+ cmp rax,rdx
+ jne .span_run_end
+ cmp qword ptr [rax+40],0
+ jne .span_run_end
+ mov r10,rax
+ mov rax,[rax]
+ jmp .span_run
+.span_run_end:
  mov [r13],rax
- mov rdi,rbx
- mov esi,4096
+ mov rdi,r10
+ lea rsi,[r9+4096]
+ sub rsi,r10
  mov eax,11
  syscall
  jmp .sweep_span
