@@ -663,12 +663,39 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.Australis.Display.FillRect") {
                 return Intrinsic5Int(e, qualified);
             }
+			if (qualified == "System.Australis.Display.RetainedClose" || qualified == "System.Australis.Display.RetainedMinimize" || qualified == "System.Australis.Display.RetainedRestore") {
+				return Intrinsic(e, qualified, "int", "", "int");
+			}
 			if (qualified == "System.Australis.Display.RetainedEnable") {
 				return Intrinsic(e, qualified, "int", "", "int");
 			}
 			if (qualified == "System.Australis.Display.RetainedOpen") {
 				return IntrinsicNInt(e, qualified, 4);
 			}
+			if (qualified == "System.Australis.Display.RetainedFocus") {
+				return Intrinsic(e, qualified, "int", "", "int");
+			}
+			if (qualified == "System.Australis.Display.RetainedMove") {
+				return IntrinsicNInt(e, qualified, 3);
+			}
+			if (qualified == "System.Australis.Display.RetainedHover") {
+				return Intrinsic(e, qualified, "int", "int", "int");
+			}
+			if (qualified == "System.Australis.Display.RetainedComposeRect") {
+				return IntrinsicNInt(e, qualified, 4);
+			}
+			if (qualified == "System.Australis.Display.RetainedSubmitGpu") {
+				return Intrinsic(e, qualified, "int", "int", "int");
+			}
+
+			if (qualified == "System.Australis.Display.RetainedMaximize" || qualified == "System.Australis.Display.RetainedUnmaximize") {
+				return Intrinsic(e, qualified, "int", "", "int");
+			}
+
+			if (qualified == "System.Australis.Display.RetainedResize") {
+				return IntrinsicNInt(e, qualified, 3);
+			}
+
             if (qualified == "System.Australis.Display.PollMouse") {
                 return Intrinsic(e, qualified, "byte[]", "", "int");
             }
@@ -871,7 +898,10 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.IO.File.WriteAllBytes") { return Intrinsic(e, qualified, "string", "byte[]", "void"); }
             if (qualified == "System.Convert.ToInt32") { return Intrinsic(e, qualified, "string", "", "int"); }
             if (qualified == "System.Runtime.GC.Collect") { return Intrinsic(e, qualified, "", "", "void"); }
-            if (qualified == "System.Runtime.GC.GetAllocatedBytes") { return Intrinsic(e, qualified, "", "", "int"); }
+            if (qualified == "System.Runtime.GC.GetAllocatedBytes") {
+				return Intrinsic(e, qualified, "", "", "int");
+			}
+
             string type = owner; string name = ""; bool typeReceiver = false; bool explicitReceiver = false;
             IrExpression target = e.Target();
             if (target.Kind() == IrExpression.KindName()) { name = target.Name(); }

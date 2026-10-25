@@ -6,7 +6,11 @@ trap 'rm -rf -- "$work"' EXIT
 checks=0
 check() { checks=$((checks+1)); printf 'ok %d - %s\n' "$checks" "$1"; }
 fail() { printf 'not ok - %s\n' "$*" >&2; exit 1; }
-assert_failure() { if "$@" >"$work/stdout" 2>"$work/stderr"; then fail "expected failure: $*"; fi; }
+assert_failure() {
+    if "$@" </dev/null >"$work/stdout" 2>"$work/stderr"; then
+        fail "expected failure: $*"
+    fi
+}
 
 mkdir -p "$work/source/scripts" "$work/source/release" "$work/mocks" "$work/assets"
 cp "$source_dir/scripts/hy-launcher" "$source_dir/scripts/hy-maintenance" "$work/source/scripts/"
