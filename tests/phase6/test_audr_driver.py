@@ -31,6 +31,15 @@ def main():
         project = project_dir / "Driver.hyproj"
         assert project.exists() and (project_dir / "DriverMain.hy").exists()
         run(compiler, "check", project)
+        collection = root / "Drivers.hyproj"
+        collection.write_text('format = 2\nname = "Drivers"\ntype = "collection"\n'
+                              'project_references = ["Nested/Driver/Driver.hyproj"]\n')
+        run(compiler, "check", collection)
+        collection_output = root / "collection-output"
+        collection_output.mkdir()
+        run(compiler, "build", collection, "-o", collection_output,
+            "--hide-progress", "--hide-spinner", "--hide-log")
+        assert (collection_output / "Driver.driver").read_bytes().startswith(b"AUDR")
 
         sample_image = root / "Sample.driver"
         run(compiler, "check", sample)
@@ -41,6 +50,7 @@ def main():
         assert 1 <= code_length <= 65536
         assert len(image) == 24 + code_length and entry == 0 and reserved == 0
         assert checksum == zlib.crc32(image[24:])
+        assert image[24:35] == bytes.fromhex("57e8050000004883c408c3")
         second = root / "Second.driver"
         run(compiler, "build", sample, "-o", second, "--hide-progress", "--hide-spinner", "--hide-log")
         assert second.read_bytes() == image
@@ -51,6 +61,10 @@ def main():
         bad_source.write_text("public class DriverMain { public static int Run(long context) { System.Console.WriteLine(\"unsupported\"); return 0; } }\n")
         bad_project.write_text('format = 2\nname = "Bad"\ntype = "driver"\nsources = ["Bad.hy"]\n')
         bad_output.write_bytes(b"preserved")
+        run(compiler, "check", bad_project, success=False)
+        run(compiler, "build", bad_project, "-o", bad_output, "--hide-progress", success=False)
+        assert bad_output.read_bytes() == b"preserved"
+        bad_source.write_text("public class WrongEntry { public static int Run(long context) { return 0; } }\n")
         run(compiler, "check", bad_project, success=False)
         run(compiler, "build", bad_project, "-o", bad_output, "--hide-progress", success=False)
         assert bad_output.read_bytes() == b"preserved"
