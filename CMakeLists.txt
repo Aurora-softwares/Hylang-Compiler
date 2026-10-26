@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(HylangCompiler VERSION 0.1.0 LANGUAGES CXX)
 
-set(HYDROGEN_RELEASE_VERSION "" CACHE STRING "Version for hydrogen_package_release, for example alpha-0.0.1")
-set(HYDROGEN_RELEASE_BINARY "${CMAKE_CURRENT_SOURCE_DIR}/safe/hy" CACHE FILEPATH "Verified self-hosted hy binary to package")
+set(HYDROGEN_RELEASE_VERSION "" CACHE STRING "Version for Hydrogen release packaging, for example alpha-0.0.3")
+set(HYDROGEN_RELEASE_BINARY "${CMAKE_CURRENT_SOURCE_DIR}/safe/hy" CACHE FILEPATH "Verified self-hosted compiler used for release packaging")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -170,6 +170,26 @@ add_custom_target(hydrogen_package_release
         -DVERSION=${HYDROGEN_RELEASE_VERSION}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PackageHydrogenRelease.cmake
     COMMENT "Packaging the verified self-hosted Hydrogen release"
+    VERBATIM
+)
+
+add_custom_target(hydrogen_package_windows_release
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DHOST_COMPILER=${HYDROGEN_RELEASE_BINARY}
+        -DVERSION=${HYDROGEN_RELEASE_VERSION}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MakeHydrogenWindowsRelease.cmake
+    COMMENT "Building and packaging the Windows x64 Hydrogen release"
+    VERBATIM
+)
+
+add_custom_target(hydrogen_release_candidate
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DHOST_COMPILER=${HYDROGEN_RELEASE_BINARY}
+        -DVERSION=${HYDROGEN_RELEASE_VERSION}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MakeHydrogenReleaseCandidate.cmake
+    COMMENT "Building Linux and Windows Hydrogen release candidates"
     VERBATIM
 )
 
@@ -1750,6 +1770,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
         LABELS "windows;crosscompile")
 
     if(HYDROGEN_WINE_BINARY)
+        add_test(NAME hy_stage1_windows_release
+            COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test-windows-release.sh
+                ${CMAKE_CURRENT_SOURCE_DIR}
+                ${stage1_test_dir}/hydrogen-stage1
+                ${HYDROGEN_WINE_BINARY})
+        set_tests_properties(hy_stage1_windows_release PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 240 RUN_SERIAL TRUE
+            LABELS "windows;release")
         add_test(NAME hy_stage1_windows_bootstrap
             COMMAND ${CMAKE_COMMAND}
                 -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1

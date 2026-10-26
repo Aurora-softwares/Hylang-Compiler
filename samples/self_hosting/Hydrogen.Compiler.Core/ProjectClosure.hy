@@ -22,7 +22,6 @@ namespace Hydrogen.Compiler.Core {
         public string[] PackageVersions() { return packageVersions; }
         public string Error() { return error; }
 
-
 		public static ProjectClosure Collect(string projectPath) {
 			// Normalise and resolve the workspace before creating arrays.
 			string normalized = PathUtils.Normalize(projectPath);
@@ -37,7 +36,6 @@ namespace Hydrogen.Compiler.Core {
 
 			return CollectProject(normalized, workspaceRoot, "", stack, projects, sources, packageIds, packageVersions);
 		}
-
 
         private static ProjectClosure CollectProject(string projectPath, string workspaceRoot,
             string packageRoot, string[] stack, string[] projects, string[] sources,

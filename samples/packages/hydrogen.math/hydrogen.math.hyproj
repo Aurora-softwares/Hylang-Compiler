@@ -9,4 +9,4 @@ project_references = []
 id = "hydrogen.math"
 description = "Small integer helpers for Hydrogen projects"
 authors = ["Aurora Softwares"]
-license = ""
+license = "MIT"
