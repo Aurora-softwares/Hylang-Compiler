@@ -31,6 +31,8 @@ SDK, Linux native, and Windows native paths under Wine. The top ten language
 features are tracked on that project. The next 0.2.0 language target is
 [full-width unsigned hexadecimal literals](https://github.com/Aurora-softwares/Hylang-Compiler/issues/166);
 real Windows-host validation remains an open release gate.
+The SDK self-hosting workspace and formatter checks are required CI gates;
+the local CTest suite also covers preservation of the Windows manifest output name.
 Format 2 project manifests now accept arrays of quoted strings spread across
 lines. The self-hosted compiler builds `collection` projects and allows an OS
 project to include one; Australis's application collection builds all twelve

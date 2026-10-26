@@ -1318,6 +1318,15 @@ add_test(
 )
 
 add_test(
+    NAME hy_fmt_preserve_windows_output
+    COMMAND ${CMAKE_COMMAND}
+        -DHY_BINARY=$<TARGET_FILE:hy>
+        -DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Windows.hyproj
+        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/tmp/HyFmtPreserveOutput.hyproj
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HyFmtPreserveOutput.cmake
+)
+
+add_test(
     NAME hy_check_self_hosting_json
     COMMAND hy check ${CMAKE_CURRENT_SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.hyproj --json
 )

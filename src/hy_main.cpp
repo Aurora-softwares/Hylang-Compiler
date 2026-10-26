@@ -632,7 +632,7 @@ string format_hyproj_v2(const string& input) {
     }
 
     std::ostringstream out;
-    const vector<string> root_order = {"format", "name", "version", "type", "sources", "project_references", "members"};
+    const vector<string> root_order = {"format", "name", "version", "type", "output", "sources", "project_references", "members"};
     for (const auto& key : root_order) {
         const auto found = root.find(key);
         if (found != root.end()) {

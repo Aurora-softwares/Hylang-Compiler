@@ -230,7 +230,8 @@ namespace Hydrogen.Compiler.Tests {
             }
 
             ProjectClosure cycle = ProjectClosure.Collect(FindRepoPath("tests/phase6/cycle_a.hyproj"));
-            Assert.True(Contains(cycle.Projects()[0], "<cycle:"), "cycle detection should produce a cycle marker");
+            Assert.True(Contains(cycle.Error(), "project reference cycle detected at"),
+                "cycle detection should report the project reference cycle");
 
             System.Console.WriteLine("phase6-self-hosting-foundation-ok");
             return 0;

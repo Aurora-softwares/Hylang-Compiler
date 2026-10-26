@@ -93,22 +93,7 @@ jobs:
         run: cmake --build build --parallel 2
 
       - name: Run SDK and integration regression tests
-        run: ctest --test-dir build --output-on-failure --parallel 2 -E '^(hy_stage1_|hy_stage6_|hy_test_self_hosting_workspace$|hy_fmt_self_hosting_check$)'
-
-      # Development currently has two SDK regressions (#151). Report these
-      # while keeping the new native compiler's required gates strict.
-      - name: Report known SDK workspace and formatting regressions
-        continue-on-error: true
-        run: ctest --test-dir build --output-on-failure -R '^(hy_test_self_hosting_workspace|hy_fmt_self_hosting_check)$'
-
-      - name: Upload advisory SDK test report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hydrogen-sdk-advisory-${{ github.run_id }}-${{ github.run_attempt }}
-          path: build/Testing/Temporary/LastTest.log
-          if-no-files-found: ignore
-          retention-days: 14
+        run: ctest --test-dir build --output-on-failure --parallel 2 -E '^(hy_stage1_|hy_stage6_)'
 
       - name: Record provenance and package compilers
         run: |

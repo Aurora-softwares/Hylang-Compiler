@@ -50,7 +50,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         public NativeCompilerResult BuildProjectNativeUser(string projectPath, string outputPath) {
             return ProcessProject(projectPath, outputPath, false, false, false, false, false, true, false);
         }
-        
+
         public NativeCompilerResult BuildProjectWindows(string projectPath, string outputPath) {
             return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, true);
         }
