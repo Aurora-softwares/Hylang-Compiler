@@ -59,7 +59,12 @@ namespace Hydrogen.Compiler.Core {
 
             string[] nextStack = Append(stack, stack.Length, projectPath);
 
-            HyprojManifest manifest = HyprojManifest.Load(projectPath);
+			HyprojManifest manifest = HyprojManifest.Load(projectPath);
+
+			if (!manifest.ValidSyntax()) {
+				return new ProjectClosure(projects, sources, packageIds, packageVersions, "invalid or unterminated .hyproj value: " + projectPath);
+			}
+
             if (packageRoot != "" && (manifest.Format() != 2 || manifest.Type() != "lib")) {
                 return new ProjectClosure(projects, sources, packageIds, packageVersions,
                     "package must be a format 2 library: " + projectPath);
@@ -96,6 +101,10 @@ namespace Hydrogen.Compiler.Core {
                             "project file not found: " + dependencyPath);
                     }
                     HyprojManifest packageManifest = HyprojManifest.Load(dependencyPath);
+                    if (!packageManifest.ValidSyntax()) {
+                        return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                            "invalid or unterminated .hyproj value in " + dependencyPath);
+                    }
                     if (packageManifest.PackageId() != depIds[d] ||
                         packageManifest.Version() != depVersions[d]) {
                         return new ProjectClosure(projects, sources, packageIds, packageVersions,

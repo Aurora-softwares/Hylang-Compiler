@@ -2046,3 +2046,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
     set_tests_properties(hy_stage6_bootstrap_proof PROPERTIES
         FIXTURES_REQUIRED hydrogen_stage1 ENVIRONMENT "PATH=" TIMEOUT 1800 RUN_SERIAL TRUE)
 endif()
+
+# .hyproj multiline values must work in both compiler paths.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME hy_hyproj_multiline_bootstrap
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/hyproj_multiline_regression.py"
+            "$<TARGET_FILE:hy>" --repo "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(hy_hyproj_multiline_bootstrap PROPERTIES TIMEOUT 180)
+
+    add_test(NAME hy_hyproj_multiline_selfhost
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/hyproj_multiline_regression.py"
+            "$<TARGET_FILE:hy>" --repo "${CMAKE_CURRENT_SOURCE_DIR}" --selfhost)
+    set_tests_properties(hy_hyproj_multiline_selfhost PROPERTIES TIMEOUT 360)
+endif()
