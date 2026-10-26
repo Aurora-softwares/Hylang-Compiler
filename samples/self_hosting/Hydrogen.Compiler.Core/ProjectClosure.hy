@@ -22,18 +22,20 @@ namespace Hydrogen.Compiler.Core {
         public string[] PackageVersions() { return packageVersions; }
         public string Error() { return error; }
 
-        public static ProjectClosure Collect(string projectPath) {
-            // Normalize upfront so cycle detection and de-duping work even when callers pass paths with "../".
-            string normalized = PathUtils.Normalize(projectPath);
-            string workspaceRoot = PathUtils.DirName(normalized);
-            string[] emptyStack = new string[0];
-            string[] emptyProjects = new string[0];
-            string[] emptySources = new string[0];
-            string[] emptyPackageIds = new string[0];
-            string[] emptyPackageVersions = new string[0];
-            return CollectProject(normalized, workspaceRoot, "", emptyStack,
-                emptyProjects, emptySources, emptyPackageIds, emptyPackageVersions);
-        }
+		public static ProjectClosure Collect(string projectPath) {
+			// Normalise and resolve the workspace before creating arrays.
+			string normalized = PathUtils.Normalize(projectPath);
+			string workspaceRoot = PathUtils.DirName(normalized);
+
+			// Keep each temporary array in a named, GC-rooted local.
+			string[] stack = new string[0];
+			string[] projects = new string[0];
+			string[] sources = new string[0];
+			string[] packageIds = new string[0];
+			string[] packageVersions = new string[0];
+
+			return CollectProject(normalized, workspaceRoot, "", stack, projects, sources, packageIds, packageVersions);
+		}
 
         private static ProjectClosure CollectProject(string projectPath, string workspaceRoot,
             string packageRoot, string[] stack, string[] projects, string[] sources,
