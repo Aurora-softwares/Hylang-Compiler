@@ -4,31 +4,63 @@ namespace Hydrogen.Compiler.Core {
     public class HyprojManifest {
         private int format;
         private string type;
+        private string version;
+        private string packageId;
+        private string description;
         private string output;
         private string[] sources;
         private string[] projectReferences;
+        private string[] dependencyIds;
+        private string[] dependencyVersions;
+        private bool validDependencies;
+        private bool validSyntax;
 
-        public HyprojManifest(int inputFormat, string inputType, string inputOutput, string[] inputSources, string[] inputProjectReferences) {
+        public HyprojManifest(int inputFormat, string inputType, string inputVersion, string inputPackageId, string inputDescription, string inputOutput, string[] inputSources, string[] inputProjectReferences, string[] inputDependencyIds, string[] inputDependencyVersions, bool inputValidDependencies, bool inputValidSyntax) {
             format = inputFormat;
             type = inputType;
+            version = inputVersion;
+            packageId = inputPackageId;
+            description = inputDescription;
             output = inputOutput;
             sources = inputSources;
             projectReferences = inputProjectReferences;
+            dependencyIds = inputDependencyIds;
+            dependencyVersions = inputDependencyVersions;
+            validDependencies = inputValidDependencies;
+            validSyntax = inputValidSyntax;
         }
 
         public int Format() { return format; }
         public string Type() { return type; }
+        public string Version() { return version; }
+        public string PackageId() { return packageId; }
+        public string Description() { return description; }
         public string Output() { return output; }
         public string[] Sources() { return sources; }
         public string[] ProjectReferences() { return projectReferences; }
+        public string[] DependencyIds() { return dependencyIds; }
+        public string[] DependencyVersions() { return dependencyVersions; }
+        public bool ValidDependencies() { return validDependencies; }
+        public bool ValidSyntax() { return validSyntax; }
 
         public static HyprojManifest Load(string path) {
-            string text = System.IO.File.ReadAllText(path);
+            return Parse(System.IO.File.ReadAllText(path));
+        }
+
+        public static HyprojManifest Parse(string text) {
             int format = 0;
             string type = "";
+            string version = "";
+            string packageId = "";
             string output = "";
+			string description = "";
             string[] sources = new string[0];
             string[] projectReferences = new string[0];
+            string[] dependencyIds = new string[0];
+            string[] dependencyVersions = new string[0];
+            bool validDependencies = true;
+            bool validSyntax = true;
+            string section = "";
 
             string[] lines = SplitLines(text);
             int i = 0;
@@ -39,7 +71,7 @@ namespace Hydrogen.Compiler.Core {
                     continue;
                 }
                 if (StartsWith(line, "[")) {
-                    // ignore sections
+                    section = line;
                     i = i + 1;
                     continue;
                 }
@@ -50,10 +82,90 @@ namespace Hydrogen.Compiler.Core {
                 }
                 string key = Trim(Slice(line, 0, eq));
                 string value = Trim(Slice(line, eq + 1, line.Length - (eq + 1)));
-                if (key == "format") {
+
+				if (StartsWith(value, "[")) {
+					while (!ArrayComplete(value) && i + 1 < lines.Length) {
+						i = i + 1;
+						value = value + "\n" + Trim(lines[i]);
+					}
+                if (!ArrayComplete(value)) { validSyntax = false; }
+
+					// An incomplete array must be reported as
+					// a manifest syntax error, not an empty array.
+				} else if (value == "|") {
+					int baseIndent = LeadingIndent(lines[i]);
+					int next = i + 1;
+					int commonIndent = 2147483647;
+					int lastContent = i;
+
+					while (next < lines.Length) {
+						string raw = lines[next];
+						string trimmed = Trim(raw);
+
+						if (trimmed != "") {
+							int indent = LeadingIndent(raw);
+
+							if (indent <= baseIndent) {
+								break;
+							}
+
+							if (indent < commonIndent) {
+								commonIndent = indent;
+							}
+
+							lastContent = next;
+						}
+
+						next = next + 1;
+					}
+
+					string block = "";
+					int j = i + 1;
+
+					while (j <= lastContent) {
+						if (j > i + 1) {
+							block = block + "\n";
+						}
+
+						if (Trim(lines[j]) != "") {
+							block = block + Slice(
+								lines[j],
+								commonIndent,
+								lines[j].Length - commonIndent
+							);
+						}
+
+						j = j + 1;
+					}
+
+					value = "\"" + block + "\"";
+					i = next - 1;
+				}
+
+                if (section == "[package]") {
+					if (key == "id") {
+						packageId = Unquote(value);
+					} else if (key == "description") {
+						description = Unquote(value);
+					}
+                } else if (section == "[dependencies]") {
+                    string dependencyVersion = Unquote(value);
+                    if (!ValidPackagePart(key) || !ValidPackagePart(dependencyVersion) ||
+                        value.Length < 2 || value[0] != "\"" ||
+                        value[value.Length - 1] != "\"" || Contains(dependencyIds, key)) {
+                        validDependencies = false;
+                    } else {
+                        dependencyIds = Append(dependencyIds, dependencyIds.Length, key);
+                        dependencyVersions = Append(dependencyVersions, dependencyVersions.Length, dependencyVersion);
+                    }
+                } else if (section != "") {
+                    // Package metadata and future sections do not change root fields.
+                } else if (key == "format") {
                     format = ParseInt(value);
                 } else if (key == "type") {
                     type = Unquote(value);
+                } else if (key == "version") {
+                    version = Unquote(value);
                 } else if (key == "output") {
                     output = Unquote(value);
                 } else if (key == "sources") {
@@ -64,7 +176,29 @@ namespace Hydrogen.Compiler.Core {
                 i = i + 1;
             }
 
-            return new HyprojManifest(format, type, output, sources, projectReferences);
+            return new HyprojManifest(format, type, version, packageId, description, output, sources, projectReferences,
+                dependencyIds, dependencyVersions, validDependencies, validSyntax);
+        }
+
+        private static bool Contains(string[] values, string needle) {
+            int i = 0;
+            while (i < values.Length) {
+                if (values[i] == needle) { return true; }
+                i = i + 1;
+            }
+            return false;
+        }
+
+        public static bool ValidPackagePart(string value) {
+            if (value.Length == 0 || value == "." || value == "..") { return false; }
+            if (IndexOf("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", value[0]) < 0) { return false; }
+            int i = 0;
+            while (i < value.Length) {
+                string ch = value[i];
+                if (IndexOf("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-", ch) < 0) { return false; }
+                i = i + 1;
+            }
+            return true;
         }
 
         private static string[] SplitLines(string text) {
@@ -227,5 +361,44 @@ namespace Hydrogen.Compiler.Core {
             next[count] = item;
             return next;
         }
+
+		private static int LeadingIndent(string line) {
+			int i = 0;
+			while (i < line.Length) {
+				if (line[i] != " " && line[i] != "\t") {
+					break;
+				}
+				i = i + 1;
+			}
+			return i;
+		}
+
+		private static bool ArrayComplete(string text) {
+			int depth = 0;
+			bool quoted = false;
+			bool escaped = false;
+			int i = 0;
+
+			while (i < text.Length) {
+				string ch = text[i];
+
+				if (escaped) {
+					escaped = false;
+				} else if (quoted && ch == "\\") {
+					escaped = true;
+				} else if (ch == "\"") {
+					quoted = !quoted;
+				} else if (!quoted && ch == "[") {
+					depth = depth + 1;
+				} else if (!quoted && ch == "]") {
+					depth = depth - 1;
+					if (depth < 0) return false;
+				}
+
+				i = i + 1;
+			}
+
+			return depth == 0 && !quoted;
+		}
     }
 }

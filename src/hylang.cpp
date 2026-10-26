@@ -3094,6 +3094,7 @@ struct SemanticModel {
     std::unordered_set<string> namespaces;
     ClassSymbol* console_class = nullptr;
     ClassSymbol* file_class = nullptr;
+    ClassSymbol* host_process_class = nullptr;
     ClassSymbol* convert_class = nullptr;
     ClassSymbol* memory_class = nullptr;
     ClassSymbol* gc_class = nullptr;
@@ -3114,6 +3115,8 @@ struct SemanticModel {
     MethodSymbol* file_write_all_text = nullptr;
     MethodSymbol* file_read_all_bytes = nullptr;
     MethodSymbol* file_write_all_bytes = nullptr;
+    MethodSymbol* host_process_run = nullptr;
+    MethodSymbol* host_process_is_windows = nullptr;
     MethodSymbol* convert_to_int32 = nullptr;
     MethodSymbol* memory_alloc = nullptr;
     MethodSymbol* memory_free = nullptr;
@@ -3879,6 +3882,7 @@ private:
     void install_builtins(SemanticModel& model) {
         model.namespaces.insert("System");
         model.namespaces.insert("System.IO");
+        model.namespaces.insert("System.Host");
         model.namespaces.insert("System.Collections");
         model.namespaces.insert("System.Runtime");
         model.namespaces.insert("System.Testing");
@@ -3954,6 +3958,10 @@ private:
                                                     &model.void_type,
                                                     {{"path", &model.string_type},
                                                      {"content", model.get_array_type(&model.byte_type)}});
+        model.host_process_class = create_builtin_class("System.Host", "Process");
+        model.host_process_run = create_builtin(model.host_process_class, "Run", &model.int_type,
+                                                {{"command", &model.string_type}});
+        model.host_process_is_windows = create_builtin(model.host_process_class, "IsWindows", &model.bool_type, {});
 
         model.convert_class = create_builtin_class("System", "Convert");
         model.convert_to_int32 =
@@ -8558,6 +8566,7 @@ private:
         out << "#include <stdlib.h>\n";
         out << "#include <string.h>\n\n";
         out << "#ifdef _WIN32\n#include <io.h>\n#include <windows.h>\n#else\n#include <sys/ioctl.h>\n#include <unistd.h>\n#endif\n\n";
+        out << "#ifdef _WIN32\n#define HY_PLATFORM_WINDOWS 1\n#else\n#define HY_PLATFORM_WINDOWS 0\n#endif\n\n";
         out << "static int32_t hy_wrap_i32(uint32_t bits) { int32_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n";
         out << "static int64_t hy_wrap_i64(uint64_t bits) { int64_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n\n";
         out << "static int8_t hy_wrap_i8(uint8_t bits) { int8_t value; memcpy(&value, &bits, sizeof(value)); return value; }\n";
@@ -9391,6 +9400,11 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
         out << "        }\n";
         out << "    }\n";
         out << "    if (fclose(file) != 0) hy_runtime_fail(\"File close failed\");\n";
+        out << "}\n";
+        out << "static int64_t hy_host_process_run(HyString* command) {\n";
+        out << "    if (command == NULL || command->bytes == NULL) return -1;\n";
+        out << "    int status = system(command->bytes);\n";
+        out << "    return status == -1 ? -1 : (int64_t)status;\n";
         out << "}\n";
         out << "static void hy_assert_fail(HyString* message) {\n";
         out << "    if (message != NULL && message->bytes != NULL) {\n";
@@ -10352,6 +10366,47 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
                ")) ? hy_coalesce_finish((void*)(" + body + "), 1) : hy_coalesce_finish(NULL, 1)))";
     }
 
+	string emit_rooted_string_operation(
+		const string& left,
+		const string& right,
+		bool concatenate,
+		bool negate = false) {
+
+		std::ostringstream out;
+
+		// GNU C statement expression: supported by the existing
+		// generated-C backend.
+		out << "({ "
+			<< "HyString* hy__left = NULL; "
+			<< "HyString* hy__right = NULL; "
+			<< "void** hy__slots[] = { "
+			<< "(void**)&hy__left, (void**)&hy__right }; "
+			<< "HyRootFrame hy__frame; "
+			<< "hy_gc_push_roots(&hy__frame, hy__slots, 2); "
+
+			// Evaluation order is explicit.
+			<< "hy__left = " << left << "; "
+			<< "hy__right = " << right << "; ";
+
+		if (concatenate) {
+			out << "HyString* hy__result = "
+				<< "hy_string_concat(hy__left, hy__right); ";
+		} else {
+			out << "bool hy__result = "
+				<< "hy_string_equals(hy__left, hy__right); ";
+		}
+
+		out << "hy_gc_pop_roots(&hy__frame); ";
+
+		if (negate && !concatenate) {
+			out << "(!hy__result); })";
+		} else {
+			out << "hy__result; })";
+		}
+
+		return out.str();
+	}
+
     string emit_expression(const BoundExpression& expression) {
         if (&expression == optional_receiver_override_) {
             return "((" + c_type_name(expression.type) + ")hy_coalesce_top->value)";
@@ -10596,9 +10651,11 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
                            emit_expression(*binary.left) + ")) ? hy_coalesce_finish(NULL, 0) : " +
                            "hy_coalesce_finish((void*)(" + emit_expression(*binary.right) + "), 1)))";
                 }
-                if (binary.op == TokenKind::Plus && binary.type == &program_.semantic_model.string_type) {
-                    return "hy_string_concat(" + emit_string_operand(*binary.left) + ", " + emit_string_operand(*binary.right) + ")";
-                }
+
+				if ((binary.op == TokenKind::EqualsEquals || binary.op == TokenKind::BangEquals) && (binary.left->type == &program_.semantic_model.string_type || binary.right->type == &program_.semantic_model.string_type)) {
+					return emit_rooted_string_operation(emit_expression(*binary.left), emit_expression(*binary.right), false, binary.op == TokenKind::BangEquals);
+				}
+
                 if ((binary.op == TokenKind::EqualsEquals || binary.op == TokenKind::BangEquals) &&
                     (binary.left->type == &program_.semantic_model.string_type ||
                      binary.right->type == &program_.semantic_model.string_type)) {
@@ -10636,6 +10693,15 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
                     }
                     return binary.op == TokenKind::EqualsEquals ? comparison : "(!" + comparison + ")";
                 }
+
+				if (binary.op == TokenKind::Plus && ((binary.type != nullptr && binary.type->kind == TypeKind::String) || (binary.left->type != nullptr && binary.left->type->kind == TypeKind::String) || (binary.right->type != nullptr && binary.right->type->kind == TypeKind::String))) {
+
+					return emit_rooted_string_operation(
+						emit_string_operand(*binary.left),
+						emit_string_operand(*binary.right),
+						true
+					);
+				}
                 if (binary.op == TokenKind::Plus || binary.op == TokenKind::Minus ||
                     binary.op == TokenKind::Star || binary.op == TokenKind::Ampersand ||
                     binary.op == TokenKind::Pipe || binary.op == TokenKind::Caret) {
@@ -10718,6 +10784,12 @@ static void hy_coalesce_unwind(hy_coalesce_frame* marker) {
                         return "hy_file_write_all_bytes(" + emit_expression(*call.arguments[0]) + ", " +
                                emit_expression(*call.arguments[1]) + ")";
                     }
+                }
+                if (call.method == program_.semantic_model.host_process_run) {
+                    return "hy_host_process_run(" + emit_expression(*call.arguments[0]) + ")";
+                }
+                if (call.method == program_.semantic_model.host_process_is_windows) {
+                    return "HY_PLATFORM_WINDOWS";
                 }
                 if (call.method->is_builtin && call.method->owner == program_.semantic_model.convert_class) {
                     if (call.method == program_.semantic_model.convert_to_int32) {

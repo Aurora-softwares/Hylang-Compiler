@@ -1,0 +1,12 @@
+format = 2
+name = "Hydrogen Math"
+version = "0.1.0"
+type = "lib"
+sources = ["IntegerMath.hy"]
+project_references = []
+
+[package]
+id = "hydrogen.math"
+description = "Small integer helpers for Hydrogen projects"
+authors = ["Aurora Softwares"]
+license = "MIT"

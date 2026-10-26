@@ -4,48 +4,135 @@ namespace Hydrogen.Compiler.Core {
     public class ProjectClosure {
         private string[] projects;
         private string[] sources;
+        private string[] packageIds;
+        private string[] packageVersions;
+        private string error;
 
-        public ProjectClosure(string[] inputProjects, string[] inputSources) {
+        public ProjectClosure(string[] inputProjects, string[] inputSources, string[] inputPackageIds, string[] inputPackageVersions, string inputError) {
             projects = inputProjects;
             sources = inputSources;
+            packageIds = inputPackageIds;
+            packageVersions = inputPackageVersions;
+            error = inputError;
         }
 
         public string[] Projects() { return projects; }
         public string[] Sources() { return sources; }
+        public string[] PackageIds() { return packageIds; }
+        public string[] PackageVersions() { return packageVersions; }
+        public string Error() { return error; }
 
-        public static ProjectClosure Collect(string projectPath) {
-            // Normalize upfront so cycle detection and de-duping work even when callers pass paths with "../".
-            return CollectProject(PathUtils.Normalize(projectPath), new string[0], new string[0], new string[0]);
-        }
+		public static ProjectClosure Collect(string projectPath) {
+			// Normalise and resolve the workspace before creating arrays.
+			string normalized = PathUtils.Normalize(projectPath);
+			string workspaceRoot = PathUtils.DirName(normalized);
 
-        private static ProjectClosure CollectProject(string projectPath, string[] stack, string[] projects, string[] sources) {
+			// Keep each temporary array in a named, GC-rooted local.
+			string[] stack = new string[0];
+			string[] projects = new string[0];
+			string[] sources = new string[0];
+			string[] packageIds = new string[0];
+			string[] packageVersions = new string[0];
+
+			return CollectProject(normalized, workspaceRoot, "", stack, projects, sources, packageIds, packageVersions);
+		}
+
+        private static ProjectClosure CollectProject(string projectPath, string workspaceRoot,
+            string packageRoot, string[] stack, string[] projects, string[] sources,
+            string[] packageIds, string[] packageVersions) {
             projectPath = PathUtils.Normalize(projectPath);
             if (Contains(projects, projectPath)) {
-                return new ProjectClosure(projects, sources);
+                return new ProjectClosure(projects, sources, packageIds, packageVersions, "");
             }
             if (Contains(stack, projectPath)) {
-                // Cycle detected; represent as a single project list containing the cycle marker.
-                string[] cycle = new string[1];
-                cycle[0] = "<cycle:" + projectPath + ">";
-                return new ProjectClosure(cycle, new string[0]);
+                return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                    "project reference cycle detected at " + projectPath);
+            }
+            if (!System.IO.File.Exists(projectPath)) {
+                return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                    "project file not found: " + projectPath);
+            }
+            if (packageRoot != "" && !Within(packageRoot, projectPath)) {
+                return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                    "package project escapes its directory: " + projectPath);
             }
 
             string[] nextStack = Append(stack, stack.Length, projectPath);
 
-            HyprojManifest manifest = HyprojManifest.Load(projectPath);
+			HyprojManifest manifest = HyprojManifest.Load(projectPath);
+
+			if (!manifest.ValidSyntax()) {
+				return new ProjectClosure(projects, sources, packageIds, packageVersions, "invalid or unterminated .hyproj value: " + projectPath);
+			}
+
+            if (packageRoot != "" && (manifest.Format() != 2 || manifest.Type() != "lib")) {
+                return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                    "package must be a format 2 library: " + projectPath);
+            }
+            if (!manifest.ValidDependencies()) {
+                return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                    "invalid or duplicate exact package dependency in " + projectPath);
+            }
             string baseDir = PathUtils.DirName(projectPath);
+
+            string[] depIds = manifest.DependencyIds();
+            string[] depVersions = manifest.DependencyVersions();
+            int d = 0;
+            while (d < depIds.Length) {
+                int existing = IndexOf(packageIds, depIds[d]);
+                string dir = PathUtils.Join(PathUtils.Join(
+                    PathUtils.Join(workspaceRoot, ".hylang/packages"), depIds[d]), depVersions[d]);
+                string dependencyPath = PathUtils.Join(dir, depIds[d] + ".hyproj");
+                if (existing >= 0) {
+                    if (packageVersions[existing] != depVersions[d]) {
+                        return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                            "package version conflict for " + depIds[d] + ": " +
+                            packageVersions[existing] + " and " + depVersions[d]);
+                    }
+                    if (Contains(nextStack, dependencyPath)) {
+                        return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                            "package dependency cycle detected at " + dependencyPath);
+                    }
+                } else {
+                    packageIds = Append(packageIds, packageIds.Length, depIds[d]);
+                    packageVersions = Append(packageVersions, packageVersions.Length, depVersions[d]);
+                    if (!System.IO.File.Exists(dependencyPath)) {
+                        return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                            "project file not found: " + dependencyPath);
+                    }
+                    HyprojManifest packageManifest = HyprojManifest.Load(dependencyPath);
+                    if (!packageManifest.ValidSyntax()) {
+                        return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                            "invalid or unterminated .hyproj value in " + dependencyPath);
+                    }
+                    if (packageManifest.PackageId() != depIds[d] ||
+                        packageManifest.Version() != depVersions[d]) {
+                        return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                            "package identity mismatch: " + dependencyPath);
+                    }
+                    ProjectClosure dependency = CollectProject(dependencyPath, workspaceRoot, dir,
+                        nextStack, projects, sources, packageIds, packageVersions);
+                    if (dependency.Error() != "") { return dependency; }
+                    projects = dependency.Projects();
+                    sources = dependency.Sources();
+                    packageIds = dependency.PackageIds();
+                    packageVersions = dependency.PackageVersions();
+                }
+                d = d + 1;
+            }
 
             // Recurse references first
             string[] refs = manifest.ProjectReferences();
             int i = 0;
             while (i < refs.Length) {
                 string refPath = PathUtils.Join(baseDir, refs[i]);
-                ProjectClosure next = CollectProject(refPath, nextStack, projects, sources);
-                if (IsCycleMarker(next.Projects())) {
-                    return next;
-                }
+                ProjectClosure next = CollectProject(refPath, workspaceRoot, packageRoot,
+                    nextStack, projects, sources, packageIds, packageVersions);
+                if (next.Error() != "") { return next; }
                 projects = next.Projects();
                 sources = next.Sources();
+                packageIds = next.PackageIds();
+                packageVersions = next.PackageVersions();
                 i = i + 1;
             }
 
@@ -55,16 +142,35 @@ namespace Hydrogen.Compiler.Core {
             string[] src = manifest.Sources();
             int s = 0;
             while (s < src.Length) {
-                sources = Append(sources, sources.Length, PathUtils.Join(baseDir, src[s]));
+                string source = PathUtils.Join(baseDir, src[s]);
+                if (packageRoot != "" && !Within(packageRoot, source)) {
+                    return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                        "package source escapes its directory: " + source);
+                }
+                if (!System.IO.File.Exists(source)) {
+                    return new ProjectClosure(projects, sources, packageIds, packageVersions,
+                        "source file not found: " + source);
+                }
+                sources = Append(sources, sources.Length, source);
                 s = s + 1;
             }
 
-            return new ProjectClosure(projects, sources);
+            return new ProjectClosure(projects, sources, packageIds, packageVersions, "");
         }
 
-        private static bool IsCycleMarker(string[] projects) {
-            if (projects.Length == 0) { return false; }
-            return StartsWith(projects[0], "<cycle:");
+        private static bool Within(string directory, string path) {
+            string normalizedDirectory = PathUtils.Normalize(directory);
+            string normalizedPath = PathUtils.Normalize(path);
+            return StartsWith(normalizedPath, normalizedDirectory + "/");
+        }
+
+        private static int IndexOf(string[] items, string value) {
+            int i = 0;
+            while (i < items.Length) {
+                if (items[i] == value) { return i; }
+                i = i + 1;
+            }
+            return -1;
         }
 
         private static bool StartsWith(string text, string prefix) {

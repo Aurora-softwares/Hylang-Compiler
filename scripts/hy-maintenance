@@ -271,8 +271,14 @@ check_manifest "$root"
 if [[ $action == uninstall ]]; then
     confirm "Remove the Hydrogen release at $root?"
     remove_manifest_files "$root"
+    # The website installer creates exactly this user launcher. Remove it only
+    # when it still points to the release that was just removed.
+    user_link=${HOME:-}/.local/bin/hy
+    if [[ -L $user_link && $(readlink -- "$user_link") == "$root/bin/hy" ]]; then
+        rm -- "$user_link"
+    fi
     info 'Hydrogen files removed; user projects and configuration were not touched.'
-    [[ "$entry" == "$resolved" ]] || info "External launcher symlink may remain at $entry (not modified)."
+    [[ "$entry" == "$resolved" || "$entry" == "$user_link" ]] || info "External launcher symlink may remain at $entry (not modified)."
     exit 0
 fi
 

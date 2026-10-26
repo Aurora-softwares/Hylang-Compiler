@@ -40,6 +40,17 @@ The 0.8.0 optimisation work has completed
 for guarded native loops. Broader local register and loop code generation in
 [#127](https://github.com/Aurora-softwares/Hylang-Compiler/issues/127) is the
 next performance target; real Windows-host validation remains a release gate.
+Native source package work for the 0.5.0 target is in progress under
+[#111](https://github.com/Aurora-softwares/Hylang-Compiler/issues/111).
+The native CLI now packs and adds local source archives, removes direct
+dependencies, resolves exact transitive dependencies from `.hylang/packages`,
+and verifies the SHA-256 hashes in `hy.lock` during builds. It can search the
+curated static registry, fetch a pinned package and its transitive dependencies,
+restore a project from its lockfile, and upgrade a direct dependency to an
+explicit version. Windows release packaging and the `hy.cmd` launcher have a
+Wine-checked candidate. The PowerShell lifecycle and website installer pass
+fixture tests on GitHub-hosted Windows runners. Published installer-ready assets
+and a live Windows install from those assets remain open release gates.
 
 ## Build output
 
@@ -69,13 +80,62 @@ file manifest and GitHub Releases checksums/digests; they refuse to touch any
 unmanaged files. `--force` skips prompts, but never disables safety checks.
 
 This is available in newly packaged releases, not in old standalone compiler
-binaries. See [release installation details](release/README.md). The isolated
-lifecycle checks run with `ctest -R hy_release_lifecycle --output-on-failure`.
+binaries. See [Linux release installation details](release/README.md) and
+[Windows release installation details](release/README-windows.md). The isolated
+Linux lifecycle checks run with `ctest -R hy_release_lifecycle --output-on-failure`.
+The Windows ZIP layout, `hy.cmd` launcher, and compiler delegation run under
+Wine with `ctest -R hy_stage1_windows_release --output-on-failure`. GitHub
+Actions also exercises the PowerShell lifecycle on a Windows runner; the
+published release smoke test runs manually after installer-ready assets exist.
+
+## Native source packages in development
+
+The self-hosted compiler accepts exact package versions in a format 2 project:
+
+```toml
+[dependencies]
+example = "1.0.0"
+```
+
+The package library must declare the same `version` and `[package] id`, and
+live at `.hylang/packages/example/1.0.0/example.hyproj` beneath the project.
+`hy package pack example.hyproj -o example.hypkg` creates a source-only archive.
+`hy package add App.hyproj example.hypkg` installs a local archive. For the
+curated website registry, use `hy package search math`,
+`hy package add App.hyproj hydrogen.math@0.1.0`,
+`hy package restore App.hyproj`, or
+`hy package upgrade App.hyproj hydrogen.math@0.2.0` when that version exists.
+`hy package remove App.hyproj example` removes the direct dependency and
+refreshes the lock. `hy package lock App.hyproj` records a pre-existing local
+package tree when each package directory also contains `package.hypkg`. Builds
+verify the lock and fail if package files change. Commit `hy.lock`; the
+`.hylang/packages` directory is a project-local cache. Development can point
+at another HTTPS or local-file registry with `--registry <origin>`.
 
 ## Package a self-hosted release
 
-After you have verified and renamed the final self-hosted compiler to `safe/hy`,
-create a Linux x86-64 release archive with:
+The release candidate command compiles the current self-hosted compiler source
+for Linux x86-64 and Windows x64, then creates both installer-compatible
+archives and their `.sha256` sidecars. Pass a verified self-hosted compiler:
+
+```bash
+RELEASE_VERSION=alpha-0.0.3
+cmake -DSOURCE_DIR="$PWD" -DHOST_COMPILER="/path/to/verified/hy" \
+  -DVERSION="$RELEASE_VERSION" -DRELEASES_DIR="$PWD/releases" \
+  -P cmake/MakeHydrogenReleaseCandidate.cmake
+```
+
+The command stages outputs until both platforms build and their archive
+checksums pass. It refuses to overwrite existing assets unless `-DFORCE=ON` is
+set. Australis is not included: its current AUEX/AUN1 targets are constrained
+OS program formats, and there is no self-hosted compiler CLI project that runs
+on Australis.
+
+If CMake is already configured with `HYDROGEN_RELEASE_VERSION` and
+`HYDROGEN_RELEASE_BINARY`, use
+`cmake --build build --target hydrogen_release_candidate`.
+
+To package only a previously verified Linux compiler at `safe/hy`, run:
 
 ```bash
 RELEASE_VERSION=your-next-version
@@ -87,12 +147,35 @@ This writes `releases/hydrogen-<version>-linux-x86_64.tar.gz` and its adjacent
 metadata, and `SHA256SUMS` for the executable. The command refuses to overwrite
 an existing release; pass `-DFORCE=ON` only when intentionally rebuilding it.
 
-If CMake is already configured, the equivalent target is:
+If CMake is already configured, the Linux-only target is:
 
 ```bash
 cmake -S . -B build -DHYDROGEN_RELEASE_VERSION="$RELEASE_VERSION"
 cmake --build build --target hydrogen_package_release
 ```
+
+To build and package the Windows x64 compiler from the same verified
+self-hosted compiler, run:
+
+```bash
+cmake -DSOURCE_DIR="$PWD" -DHOST_COMPILER="/path/to/verified/hy" \
+  -DVERSION="$RELEASE_VERSION" -DRELEASES_DIR="$PWD/releases" \
+  -P cmake/MakeHydrogenWindowsRelease.cmake
+```
+
+This builds the Windows compiler executable, checks its PE header, then writes
+`releases/hydrogen-<version>-windows-x86_64.zip` and its `.sha256` sidecar.
+Like the Linux script, it refuses to overwrite an existing release unless
+`-DFORCE=ON` is set. The ZIP contains `bin/hy.cmd`, `libexec/hy-core.exe`, a
+PowerShell lifecycle helper, and the same manifest/checksum contract as the
+Linux archive. Keep both platform archives and their sidecars together for an
+installer-compatible GitHub release.
+
+If CMake is already configured with `HYDROGEN_RELEASE_VERSION` and
+`HYDROGEN_RELEASE_BINARY`, the equivalent target is
+`cmake --build build --target hydrogen_package_windows_release`.
+To package an already-built Windows executable without rebuilding it, use
+`cmake/PackageHydrogenWindowsRelease.cmake` with `-DINPUT_BINARY=<path>`.
 
 ## Build the tools
 

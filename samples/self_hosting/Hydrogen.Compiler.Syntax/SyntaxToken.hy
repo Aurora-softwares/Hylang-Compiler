@@ -43,5 +43,10 @@ namespace Hydrogen.Compiler.Syntax {
         public string ToLine() {
             return line + ":" + column + " " + SyntaxFacts.KindName(kind) + " " + text;
         }
+
+		//public string ToLine() {
+		//	return line + ":" + column + " " + SyntaxFacts.KindName(kind) + kindName + " " + text;
+		//}
+
     }
 }

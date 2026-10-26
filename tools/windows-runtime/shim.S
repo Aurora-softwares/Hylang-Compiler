@@ -361,6 +361,77 @@ rt_args:
  pop rbx
  ret
 
+# Run a mutable UTF-16 command line and wait for its exit status. The native
+# caller supplies a fully quoted command string; no shell is inserted here.
+rt_process_run:
+ test rdi,rdi
+ jz rt_null_error
+ push r12
+ push r13
+ sub rsp,264
+ mov r12,rdi
+ mov rdi,rsp
+ xor eax,eax
+ mov ecx,33
+ rep stosq
+ lea rdi,[r12+8]
+ call win_utf8_to_wide
+ test rax,rax
+ jz .process_failed
+ mov r13,rax
+ mov dword ptr [rsp+96],104
+ mov qword ptr [rsp+32],0
+ mov qword ptr [rsp+40],0
+ mov qword ptr [rsp+48],0
+ mov qword ptr [rsp+56],0
+ lea rax,[rsp+96]
+ mov [rsp+64],rax
+ lea rax,[rsp+208]
+ mov [rsp+72],rax
+ xor ecx,ecx
+ mov rdx,r13
+ xor r8d,r8d
+ xor r9d,r9d
+ call win_CreateProcessW
+ test eax,eax
+ jz .process_free
+ mov rcx,[rsp+208]
+ mov edx,-1
+ call win_WaitForSingleObject
+ cmp eax,-1
+ je .process_close_failed
+ mov rcx,[rsp+208]
+ lea rdx,[rsp+240]
+ call win_GetExitCodeProcess
+ test eax,eax
+ jz .process_close_failed
+ mov r12d,[rsp+240]
+ jmp .process_close
+.process_close_failed:
+ mov r12d,-1
+.process_close:
+ mov rcx,[rsp+216]
+ call win_CloseHandle
+ mov rcx,[rsp+208]
+ call win_CloseHandle
+ jmp .process_free_return
+.process_free:
+ mov r12d,-1
+.process_free_return:
+ mov rcx,r13
+ xor edx,edx
+ mov r8d,0x8000
+ call win_VirtualFree
+ mov eax,r12d
+ jmp .process_done
+.process_failed:
+ mov eax,-1
+.process_done:
+ add rsp,264
+ pop r13
+ pop r12
+ ret
+
 # Each thunk is a RIP-relative indirect jump. The PE writer patches its disp32
 # to the corresponding IAT slot, so the image needs no absolute relocations.
 .macro import name
@@ -386,3 +457,6 @@ import CommandLineToArgvW
 import WideCharToMultiByte
 import LocalFree
 import MultiByteToWideChar
+import CreateProcessW
+import WaitForSingleObject
+import GetExitCodeProcess

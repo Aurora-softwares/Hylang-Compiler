@@ -60,6 +60,80 @@ bool starts_with(const string& value, const string& prefix) {
     return value.rfind(prefix, 0) == 0;
 }
 
+std::size_t leading_indent(const string& line) {
+    std::size_t i = 0;
+    while (i < line.size() &&
+           (line[i] == ' ' || line[i] == '\t')) {
+        ++i;
+    }
+    return i;
+}
+
+bool array_complete(const string& text) {
+    int depth = 0;
+    bool quoted = false;
+    bool escaped = false;
+
+    for (char ch : text) {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (quoted && ch == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (ch == '"') {
+            quoted = !quoted;
+            continue;
+        }
+        if (!quoted) {
+            if (ch == '[') ++depth;
+            else if (ch == ']') --depth;
+            if (depth < 0) return false;
+        }
+    }
+
+    return depth == 0 && !quoted;
+}
+
+string read_literal_block(
+    const vector<string>& lines,
+    std::size_t& index
+) {
+    const auto base_indent = leading_indent(lines[index]);
+    std::size_t next = index + 1;
+    std::size_t common_indent = string::npos;
+    std::size_t last_content = index;
+
+    while (next < lines.size()) {
+        const string& line = lines[next];
+
+        if (!trim(line).empty()) {
+            const auto indent = leading_indent(line);
+            if (indent <= base_indent) break;
+
+            common_indent = std::min(common_indent, indent);
+            last_content = next;
+        }
+        ++next;
+    }
+
+    string result;
+
+    for (std::size_t j = index + 1;
+         j <= last_content; ++j) {
+        if (j > index + 1) result += '\n';
+
+        if (!trim(lines[j]).empty()) {
+            result += lines[j].substr(common_indent);
+        }
+    }
+
+    index = next - 1;
+    return result;
+}
+
 bool read_text_file(const fs::path& path, string& output) {
     std::ifstream input(path);
     if (!input) {
@@ -189,11 +263,16 @@ std::optional<CliManifest> load_cli_manifest(const fs::path& path) {
     }
 
     CliManifest manifest;
-    std::istringstream input(text);
-    string line;
-    string current_section;
-    while (std::getline(input, line)) {
-        line = trim(line);
+	std::istringstream input(text);
+	vector<string> lines;
+	string raw_line;
+	while (std::getline(input, raw_line)) {
+		lines.push_back(raw_line);
+	}
+	string current_section;
+	for (std::size_t i = 0; i < lines.size(); ++i) {
+		string line = trim(lines[i]);
+
         if (line.empty() || starts_with(line, "#") || starts_with(line, "//")) {
             continue;
         }
@@ -206,7 +285,32 @@ std::optional<CliManifest> load_cli_manifest(const fs::path& path) {
             continue;
         }
         const string key = trim(line.substr(0, equals));
-        const string value = trim(line.substr(equals + 1));
+
+		string value = trim(line.substr(equals + 1));
+
+		if (!value.empty() && value.front() == '[') {
+			const std::size_t start_line = i + 1;
+
+			while (!array_complete(value) &&
+				i + 1 < lines.size()) {
+				++i;
+				value += "\n" + trim(lines[i]);
+			}
+
+			if (!array_complete(value)) {
+				std::cerr
+					<< path << ":" << start_line
+					<< ": error: unterminated array\n";
+				return std::nullopt;
+			}
+		} else if (value == "|") {
+			const string block = read_literal_block(lines, i);
+
+			// Existing quoted-string handling strips the
+			// outer quotes and retains the literal content.
+			value = "\"" + block + "\"";
+		}
+
         if (current_section.empty() && key == "format") {
             manifest.format = value == "2" ? 2 : 1;
         } else if (current_section.empty() && key == "name") {

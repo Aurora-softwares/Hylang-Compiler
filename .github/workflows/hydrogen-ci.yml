@@ -10,11 +10,53 @@ on:
       - Development
       - Release
   workflow_dispatch:
+    inputs:
+      live_windows_release:
+        description: 'Published alpha tag to verify using hylang.co.uk (leave empty for normal CI)'
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  windows-lifecycle:
+    name: Windows release lifecycle
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Exercise Windows release lifecycle on Windows
+        shell: powershell
+        run: .\tests\windows-release-lifecycle.ps1 -SourceDir $PWD.Path
+
+      - name: Check live release smoke test syntax
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile('tests/windows-live-release.ps1', [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+
+  windows-live-release:
+    name: Public Windows release smoke test
+    if: github.event_name == 'workflow_dispatch' && inputs.live_windows_release != ''
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Install and test published release on Windows
+        shell: powershell
+        env:
+          EXPECTED_VERSION: ${{ inputs.live_windows_release }}
+        run: .\tests\windows-live-release.ps1 -ExpectedVersion $env:EXPECTED_VERSION
+
   compiler:
     name: Bootstrap and cross-target tests
     runs-on: ubuntu-24.04
