@@ -131,6 +131,17 @@ vector<fs::path> parse_path_array(const string& raw) {
     return result;
 }
 
+bool manifest_value_complete(const string& value) {
+    int brackets = 0;
+    bool quoted = false;
+    for (char ch : value) {
+        if (ch == '"') quoted = !quoted;
+        else if (!quoted && ch == '[') ++brackets;
+        else if (!quoted && ch == ']') --brackets;
+    }
+    return !quoted && brackets <= 0;
+}
+
 std::map<string, string> parse_inline_table(const string& raw) {
     std::map<string, string> result;
     if (raw.size() < 2 || raw.front() != '{' || raw.back() != '}') {
@@ -206,7 +217,10 @@ std::optional<CliManifest> load_cli_manifest(const fs::path& path) {
             continue;
         }
         const string key = trim(line.substr(0, equals));
-        const string value = trim(line.substr(equals + 1));
+        string value = trim(line.substr(equals + 1));
+        while (!manifest_value_complete(value) && std::getline(input, line)) {
+            value += "\n" + trim(line);
+        }
         if (current_section.empty() && key == "format") {
             manifest.format = value == "2" ? 2 : 1;
         } else if (current_section.empty() && key == "name") {
@@ -276,7 +290,8 @@ std::optional<CliManifest> load_cli_manifest(const fs::path& path) {
 
 bool is_workspace_manifest(const fs::path& path) {
     const auto manifest = load_cli_manifest(path);
-    return manifest.has_value() && manifest->type == "workspace";
+    return manifest.has_value() &&
+        (manifest->type == "workspace" || manifest->type == "collection");
 }
 
 void collect_workspace_members(const fs::path& path, vector<fs::path>& members) {
@@ -284,12 +299,14 @@ void collect_workspace_members(const fs::path& path, vector<fs::path>& members) 
     if (!manifest.has_value()) {
         return;
     }
-    if (manifest->type != "workspace") {
+    if (manifest->type != "workspace" && manifest->type != "collection") {
         members.push_back(path);
         return;
     }
     const fs::path base = path.parent_path();
-    for (const auto& member : manifest->members) {
+    const auto& entries = manifest->type == "collection"
+        ? manifest->project_references : manifest->members;
+    for (const auto& member : entries) {
         const fs::path member_path = fs::weakly_canonical(base / member);
         if (is_workspace_manifest(member_path)) {
             collect_workspace_members(member_path, members);

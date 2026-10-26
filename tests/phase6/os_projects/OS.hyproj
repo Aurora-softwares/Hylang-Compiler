@@ -1,4 +1,6 @@
 format = 2
 name = "Test.OS"
 type = "os"
-project_references = ["Boot/Boot.hyproj", "Kernel/Kernel.hyproj"]
+project_references = [
+    "Collection.hyproj",
+]

@@ -517,6 +517,12 @@ add_test(
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildProjectAndRun.cmake
 )
 
+add_test(
+    NAME hy_check_multiline_collection
+    COMMAND $<TARGET_FILE:hy> check
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/projects/collection/Collection.hyproj
+)
+
 add_hyrun_negative_test(
     hyrun_missing_main_fails
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/negative/missing_main.hy

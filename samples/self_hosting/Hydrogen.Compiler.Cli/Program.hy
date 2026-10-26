@@ -80,12 +80,12 @@ namespace Hydrogen.Compiler.Cli {
 
         private static int New(string[] args) {
             if (args.Length != 3) {
-                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|os|efi|kernel|exec|windows <name>");
+                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|collection|os|efi|kernel|exec|windows <name>");
                 return 1;
             }
             string kind = args[1];
             string destination = PathUtils.Normalize(args[2]);
-            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace" && kind != "os" && kind != "efi" && kind != "kernel" && kind != "exec" && kind != "windows") {
+            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace" && kind != "collection" && kind != "os" && kind != "efi" && kind != "kernel" && kind != "exec" && kind != "windows") {
                 System.Console.WriteLine("error: unknown project kind '" + kind + "'");
                 return 1;
             }
@@ -101,9 +101,9 @@ namespace Hydrogen.Compiler.Cli {
                 System.IO.File.WriteAllText(workspacePath, workspaceManifest);
                 return 0;
             }
-            if (kind == "os") {
+            if (kind == "os" || kind == "collection") {
                 string osPath = PathUtils.Join(destination, name + ".hyproj");
-                System.IO.File.WriteAllText(osPath, RenderManifest(name, "os", "", false));
+                System.IO.File.WriteAllText(osPath, RenderManifest(name, kind, "", false));
                 return 0;
             }
 
@@ -753,7 +753,7 @@ namespace Hydrogen.Compiler.Cli {
             text = text + "type = \"" + type + "\"\n";
             if (workspace) {
                 text = text + "members = []\n";
-            } else if (type == "os") {
+            } else if (type == "os" || type == "collection") {
                 text = text + "project_references = []\n";
             } else {
                 if (type == "efi") {
@@ -812,8 +812,8 @@ namespace Hydrogen.Compiler.Cli {
         private static int Check(string path, bool emitIr) {
             if (EndsWith(path, ".hyproj")) {
                 HyprojManifest manifest = HyprojManifest.Load(path);
-                if (manifest.Type() == "os") {
-                    return ProcessOsProject(path, manifest, "", true, emitIr, null);
+                if (manifest.Type() == "os" || manifest.Type() == "collection") {
+                    return ProcessCollectionProject(path, manifest, "", true, emitIr, null, 0);
                 }
                 if (manifest.Type() == "exec" || manifest.Type() == "australis") {
                     NativeCompiler execCompiler = new NativeCompiler();
@@ -952,8 +952,8 @@ namespace Hydrogen.Compiler.Cli {
                 return 1;
             }
             BuildProgress progress = new BuildProgress(hideProgress, hideSpinner, hideLog);
-            if (manifest.Type() == "os") {
-                return ProcessOsProject(projectPath, manifest, output, false, false, progress);
+            if (manifest.Type() == "os" || manifest.Type() == "collection") {
+                return ProcessCollectionProject(projectPath, manifest, output, false, false, progress, 0);
             }
             if (manifest.Type() != "exe" &&
 				manifest.Type() != "efi" &&
@@ -989,14 +989,18 @@ namespace Hydrogen.Compiler.Cli {
             return 0;
         }
 
-        private static int ProcessOsProject(string projectPath, HyprojManifest manifest, string outputDirectory, bool check, bool emitIr, BuildProgress progress) {
+        private static int ProcessCollectionProject(string projectPath, HyprojManifest manifest, string outputDirectory, bool check, bool emitIr, BuildProgress progress, int depth) {
+            if (depth >= 16) {
+                System.Console.WriteLine("error: collection nesting exceeds 16 projects");
+                return 1;
+            }
             if (manifest.Format() != 2) {
-                System.Console.WriteLine("error: unsupported OS project format (expected format = 2)");
+                System.Console.WriteLine("error: unsupported collection project format (expected format = 2)");
                 return 1;
             }
             string[] references = manifest.ProjectReferences();
             if (manifest.Sources().Length != 0 || references.Length == 0) {
-                System.Console.WriteLine("error: OS projects require project_references and no sources");
+                System.Console.WriteLine("error: collection projects require project_references and no sources");
                 return 1;
             }
 
@@ -1010,22 +1014,32 @@ namespace Hydrogen.Compiler.Cli {
                     return 1;
                 }
                 HyprojManifest child = HyprojManifest.Load(path);
-                if (child.Format() != 2 || (child.Type() != "exe" && child.Type() != "efi" &&
-                    child.Type() != "kernel" && child.Type() != "exec" &&
-                    child.Type() != "australis" && child.Type() != "native")) {
-                    System.Console.WriteLine("error: OS reference must be a format 2 exe, efi, kernel, exec, or native project: " + path);
+                if (
+					child.Format() != 2 ||
+					(
+						child.Type() != "exe" &&
+						child.Type() != "efi" &&
+						child.Type() != "kernel" &&
+						child.Type() != "exec" &&
+						child.Type() != "australis" &&
+						child.Type() != "native" &&
+						child.Type() != "windows" &&
+						child.Type() != "collection"
+					)
+				) {
+                    System.Console.WriteLine("error: collection reference must be a format 2 buildable project: " + path);
                     return 1;
                 }
                 string output = child.Output();
-                if (!ValidOsOutput(output)) {
-                    System.Console.WriteLine("error: OS project output must be a relative path below the output directory: " + path);
+                if (child.Type() != "collection" && !ValidOsOutput(output)) {
+                    System.Console.WriteLine("error: project output must be a relative path below the output directory: " + path);
                     return 1;
                 }
-                output = PathUtils.Normalize(output);
+                if (child.Type() != "collection") { output = PathUtils.Normalize(output); }
                 int previous = 0;
                 while (previous < i) {
-                    if (outputs[previous] == output) {
-                        System.Console.WriteLine("error: duplicate OS output path: " + output);
+                    if (output != "" && outputs[previous] == output) {
+                        System.Console.WriteLine("error: duplicate project output path: " + output);
                         return 1;
                     }
                     previous = previous + 1;
@@ -1041,12 +1055,21 @@ namespace Hydrogen.Compiler.Cli {
             while (index < paths.Length) {
                 string outputPath = PathUtils.Join(outputDirectory, outputs[index]);
                 NativeCompilerResult result;
+                HyprojManifest childProject = HyprojManifest.Load(paths[index]);
+                if (childProject.Type() == "collection") {
+                    int nested = ProcessCollectionProject(paths[index], childProject, outputDirectory, check, emitIr, progress, depth + 1);
+                    if (nested != 0) { return nested; }
+                    index = index + 1;
+                    continue;
+                }
                 if (check) {
                     HyprojManifest checkedChild = HyprojManifest.Load(paths[index]);
                     if (checkedChild.Type() == "exec" || checkedChild.Type() == "australis") {
                         result = compiler.CheckProjectAustralis(paths[index], emitIr);
                     } else if (checkedChild.Type() == "native") {
                         result = compiler.CheckProjectNativeUser(paths[index], emitIr);
+                    } else if (checkedChild.Type() == "windows") {
+                        result = compiler.CheckProjectWindows(paths[index], emitIr);
                     } else if (emitIr) { result = compiler.CheckFileEmitIr(paths[index]); }
                     else { result = compiler.CheckFile(paths[index]); }
                 } else {
@@ -1054,6 +1077,7 @@ namespace Hydrogen.Compiler.Cli {
                     if (child.Type() == "kernel") { result = compiler.BuildProjectKernel(paths[index], outputPath); }
                     else if (child.Type() == "efi") { result = compiler.BuildProjectUefi(paths[index], outputPath); }
                     else if (child.Type() == "native") { result = compiler.BuildProjectNativeUser(paths[index], outputPath); }
+                    else if (child.Type() == "windows") { result = compiler.BuildProjectWindows(paths[index], outputPath); }
                     else if (child.Type() == "exec" || child.Type() == "australis") { result = compiler.BuildProjectAustralis(paths[index], outputPath); }
                     else { result = compiler.BuildProject(paths[index], outputPath); }
                 }

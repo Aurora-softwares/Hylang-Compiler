@@ -60,6 +60,16 @@ namespace Hydrogen.Compiler.Tests {
         }
 
         public static int Main(string[] args) {
+            HyprojManifest multiline = HyprojManifest.Parse(
+                "format = 2\n" +
+                "type = \"collection\"\n" +
+                "sources = [\n  \"One.hy\",\n  \"Two.hy\",\n]\n" +
+                "project_references = [\n  \"First.hyproj\",\n  \"Second.hyproj\",\n]\n");
+            Assert.Equal("collection", multiline.Type(), "multiline manifest type");
+            Assert.True(multiline.Sources().Length == 2, "multiline sources should parse both paths");
+            Assert.True(multiline.ProjectReferences().Length == 2, "multiline references should parse both projects");
+            Assert.Equal("Second.hyproj", multiline.ProjectReferences()[1], "multiline reference order");
+
             SyntaxTree hello = SyntaxTree.Parse(new SourceText("public class Program { public static void Main(string[] args) { System.Console.WriteLine(\"Hello\"); } }"));
             Assert.Equal("Public", SyntaxFacts.KindName(hello.Tokens().Get(0).Kind()), "first token should be public");
             Assert.Equal("EndOfFile", SyntaxFacts.KindName(hello.Tokens().Get(hello.Tokens().Count() - 1).Kind()), "last token should be EOF");

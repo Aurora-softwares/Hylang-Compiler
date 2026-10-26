@@ -1,0 +1,7 @@
+format = 2
+name = "Test.Collection"
+type = "collection"
+project_references = [
+    "Boot/Boot.hyproj",
+    "Kernel/Kernel.hyproj",
+]

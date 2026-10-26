@@ -31,6 +31,11 @@ SDK, Linux native, and Windows native paths under Wine. The top ten language
 features are tracked on that project. The next 0.2.0 language target is
 [full-width unsigned hexadecimal literals](https://github.com/Aurora-softwares/Hylang-Compiler/issues/166);
 real Windows-host validation remains an open release gate.
+Format 2 project manifests now accept arrays of quoted strings spread across
+lines. The self-hosted compiler builds `collection` projects and allows an OS
+project to include one; Australis's application collection builds all twelve
+listed applications. Full OS integration remains pending while its separate
+driver, filesystem, and userland project manifests are being reorganized.
 Native text assembly now has a [byte-buffer builder sample](samples/native_text_builder/README.md)
 for Linux and Windows; its `FromBytes` finishing intrinsic is native only.
 The native collector now groups adjacent dead-span releases on Linux; the
@@ -424,6 +429,11 @@ The current development AUEX backend also supports application method calls,
 bounded strings and byte arrays, and concurrent child processes. These calls
 remain software-checked inside the kernel interpreter.
 
+Arrays such as `sources` and `project_references` can span lines, with one
+quoted path per line and an optional trailing comma. A `collection` groups
+independently built projects without naming the group an OS. It can also be
+included by an OS project. Each child still declares its own relative `output`.
+
 An OS project lists component `.hyproj` files in `project_references` and has
 no sources of its own. Each component sets an `output` path relative to the
 build directory, such as `EFI/BOOT/BOOTX64.EFI`. Hydrogen compiles each
@@ -433,7 +443,12 @@ component independently:
 # OS.hyproj
 format = 2
 type = "os"
-project_references = ["Boot/Boot.hyproj", "Kernel/Kernel.hyproj"]
+project_references = [
+    "Components.hyproj",
+]
+
+# In Components.hyproj: type = "collection"
+# project_references = ["Boot/Boot.hyproj", "Kernel/Kernel.hyproj"]
 
 # In Boot/Boot.hyproj: type = "efi", output = "EFI/BOOT/BOOTX64.EFI"
 # In Kernel/Kernel.hyproj: type = "kernel", output = "EFI/OS/KERNEL.BIN"
@@ -448,6 +463,7 @@ kernel image ready for packaging. You can also build an `efi`, `kernel`, or `exe
 with `-o` pointing to its output file. Scaffold them with
 `hydrogen-stage1 new efi <name>`, `hydrogen-stage1 new kernel <name>`,
 `hydrogen-stage1 new exec <name>`, or `hydrogen-stage1 new os <name>`.
+Use `hydrogen-stage1 new collection <name>` to scaffold a collection.
 These project types are currently available in
 `hydrogen-stage1`.
 

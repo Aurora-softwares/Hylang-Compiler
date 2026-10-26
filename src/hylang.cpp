@@ -11075,7 +11075,18 @@ struct ProjectManifest {
 };
 
 bool is_workspace_manifest(const ProjectManifest& manifest) {
-    return manifest.type == "workspace";
+    return manifest.type == "workspace" || manifest.type == "collection";
+}
+
+bool manifest_value_complete(const string& value) {
+    int brackets = 0;
+    bool quoted = false;
+    for (char ch : value) {
+        if (ch == '"') quoted = !quoted;
+        else if (!quoted && ch == '[') ++brackets;
+        else if (!quoted && ch == ']') --brackets;
+    }
+    return !quoted && brackets <= 0;
 }
 
 bool is_test_manifest(const ProjectManifest& manifest) {
@@ -11247,7 +11258,8 @@ void validate_manifest_metadata(const fs::path& path, ProjectManifest& manifest,
     if (manifest.type != "exe" &&
         manifest.type != "lib" &&
         manifest.type != "test" &&
-        manifest.type != "workspace") {
+        manifest.type != "workspace" &&
+        manifest.type != "collection") {
         diagnostics.add(path, 1, 1, "Unsupported project type '" + manifest.type + "'");
     }
 
@@ -11256,7 +11268,8 @@ void validate_manifest_metadata(const fs::path& path, ProjectManifest& manifest,
         manifest.sources.clear();
     }
 
-    if (is_workspace_manifest(manifest) && manifest.members.empty()) {
+    if (is_workspace_manifest(manifest) && manifest.members.empty() &&
+        manifest.project_references.empty()) {
         diagnostics.warn(path, 1, 1, "Workspace manifest has no members");
     }
 
@@ -11338,7 +11351,11 @@ std::optional<ProjectManifest> load_project_manifest(const fs::path& path, Diagn
         }
 
         const string key = trim(line.substr(0, equals));
-        const string value = trim(line.substr(equals + 1));
+        string value = trim(line.substr(equals + 1));
+        while (!manifest_value_complete(value) && std::getline(input, line)) {
+            ++line_number;
+            value += "\n" + trim(line);
+        }
         const int value_column = static_cast<int>(equals + 2);
 
         if (current_section.empty()) {
@@ -11430,7 +11447,9 @@ void collect_project_sources(const fs::path& path,
 
     const fs::path base_dir = canonical.parent_path();
     if (is_workspace_manifest(*manifest)) {
-        for (const auto& member : manifest->members) {
+        const auto& members = manifest->type == "collection"
+            ? manifest->project_references : manifest->members;
+        for (const auto& member : members) {
             collect_project_sources(base_dir / member, sources, visited_projects, diagnostics);
         }
         return;
@@ -11470,7 +11489,9 @@ void collect_workspace_projects(const fs::path& path,
     }
 
     const fs::path base_dir = canonical.parent_path();
-    for (const auto& member : manifest->members) {
+    const auto& members = manifest->type == "collection"
+        ? manifest->project_references : manifest->members;
+    for (const auto& member : members) {
         collect_workspace_projects(base_dir / member, projects, visited_projects, diagnostics);
     }
 }

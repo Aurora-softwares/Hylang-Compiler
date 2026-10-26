@@ -1,0 +1,7 @@
+format = 2
+name = "ProjectCollection"
+type = "collection"
+project_references = [
+    "../mathlib/Math.hyproj",
+    "../app/App.hyproj",
+]

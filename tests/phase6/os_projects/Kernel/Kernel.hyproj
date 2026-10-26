@@ -2,5 +2,7 @@ format = 2
 name = "Test.Kernel"
 type = "kernel"
 output = "EFI/TEST/KERNEL.BIN"
-sources = ["KernelMain.hy"]
+sources = [
+    "KernelMain.hy",
+]
 project_references = []

@@ -74,6 +74,10 @@ namespace Hydrogen.Compiler.Core {
                 }
                 string key = Trim(Slice(line, 0, eq));
                 string value = Trim(Slice(line, eq + 1, line.Length - (eq + 1)));
+                while (!ValueComplete(value) && i + 1 < lines.Length) {
+                    i = i + 1;
+                    value = value + "\n" + Trim(lines[i]);
+                }
                 if (section == "[package]") {
                     if (key == "id") { packageId = Unquote(value); }
                 } else if (section == "[dependencies]") {
@@ -149,6 +153,19 @@ namespace Hydrogen.Compiler.Core {
                 i = i + 1;
             }
             return lines;
+        }
+
+        private static bool ValueComplete(string value) {
+            int brackets = 0;
+            bool quoted = false;
+            int i = 0;
+            while (i < value.Length) {
+                if (value[i] == "\"") { quoted = !quoted; }
+                else if (!quoted && value[i] == "[") { brackets = brackets + 1; }
+                else if (!quoted && value[i] == "]") { brackets = brackets - 1; }
+                i = i + 1;
+            }
+            return !quoted && brackets <= 0;
         }
 
         private static string[] ParseStringArray(string raw) {
