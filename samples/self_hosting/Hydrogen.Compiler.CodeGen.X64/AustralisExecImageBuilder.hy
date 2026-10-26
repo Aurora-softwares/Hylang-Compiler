@@ -658,7 +658,14 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.Byte(opcode); valueType = "int"; return code.IsValid();
             }
 
-			if (name == "System.Australis.Display.RetainedEnable" || name == "System.Australis.Display.RetainedOpen" || name == "System.Australis.Display.RetainedFocus" || name == "System.Australis.Display.RetainedMove" || name == "System.Australis.Display.RetainedHover" || name == "System.Australis.Display.RetainedComposeRect" || name == "System.Australis.Display.RetainedSubmitGpu" || name == "System.Australis.Display.RetainedClose" || name == "System.Australis.Display.RetainedMinimize" || name == "System.Australis.Display.RetainedRestore" || name == "System.Australis.Display.RetainedMaximize" || name == "System.Australis.Display.RetainedUnmaximize" || name == "System.Australis.Display.RetainedResize") {
+			if (name == "System.Australis.Display.RetainedSubmitCells") {
+                if (args.Length != 2 || !CompileExpression(args[0]) ||
+                    !Numeric(valueType) || !CompileExpression(args[1]) ||
+                    valueType != "byte[]") { return false; }
+                code.Byte(149); valueType = "int"; return code.IsValid();
+            }
+
+            if (name == "System.Australis.Display.RetainedEnable" || name == "System.Australis.Display.RetainedOpen" || name == "System.Australis.Display.RetainedFocus" || name == "System.Australis.Display.RetainedMove" || name == "System.Australis.Display.RetainedHover" || name == "System.Australis.Display.RetainedComposeRect" || name == "System.Australis.Display.RetainedSubmitGpu" || name == "System.Australis.Display.RetainedClose" || name == "System.Australis.Display.RetainedMinimize" || name == "System.Australis.Display.RetainedRestore" || name == "System.Australis.Display.RetainedMaximize" || name == "System.Australis.Display.RetainedUnmaximize" || name == "System.Australis.Display.RetainedResize") {
 				int expected = 1;
 				int opcode = 136;
 

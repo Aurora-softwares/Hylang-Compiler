@@ -684,7 +684,10 @@ namespace Hydrogen.Compiler.Binding {
 			if (qualified == "System.Australis.Display.RetainedComposeRect") {
 				return IntrinsicNInt(e, qualified, 4);
 			}
-			if (qualified == "System.Australis.Display.RetainedSubmitGpu") {
+			if (qualified == "System.Australis.Display.RetainedSubmitCells") {
+                return Intrinsic(e, qualified, "int", "byte[]", "int");
+            }
+            if (qualified == "System.Australis.Display.RetainedSubmitGpu") {
 				return Intrinsic(e, qualified, "int", "int", "int");
 			}
 
