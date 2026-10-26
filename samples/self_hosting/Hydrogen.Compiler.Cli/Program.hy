@@ -80,17 +80,33 @@ namespace Hydrogen.Compiler.Cli {
 
         private static int New(string[] args) {
             if (args.Length != 3) {
-                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|collection|os|efi|kernel|exec|windows <name>");
+                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|collection|os|efi|kernel|driver|exec|windows <name>");
                 return 1;
             }
             string kind = args[1];
             string destination = PathUtils.Normalize(args[2]);
-            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace" && kind != "collection" && kind != "os" && kind != "efi" && kind != "kernel" && kind != "exec" && kind != "windows") {
+            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace" && kind != "collection" && kind != "os" && kind != "efi" && kind != "kernel" && kind != "driver" && kind != "exec" && kind != "windows") {
                 System.Console.WriteLine("error: unknown project kind '" + kind + "'");
                 return 1;
             }
             if (System.IO.File.Exists(destination)) {
                 System.Console.WriteLine("destination already exists: " + destination);
+                return 1;
+            }
+            string quotedDestination = QuoteCommandPath(destination);
+            // Windows command expansion can change a quoted path containing
+            // percent or delayed-expansion markers.
+            if (quotedDestination == "" || (System.Host.Process.IsWindows() &&
+                (Find(destination, "%", 0) >= 0 || Find(destination, "!", 0) >= 0))) {
+                System.Console.WriteLine("error: invalid project destination");
+                return 1;
+            }
+            string createCommand = "mkdir -p -- " + quotedDestination;
+            if (System.Host.Process.IsWindows()) {
+                createCommand = "cmd /C mkdir " + quotedDestination;
+            }
+            if (System.Host.Process.Run(createCommand) != 0) {
+                System.Console.WriteLine("error: could not create project directory");
                 return 1;
             }
 
@@ -114,9 +130,10 @@ namespace Hydrogen.Compiler.Cli {
                 sourceFile = "Library.hy";
             } else if (kind == "test") {
                 projectType = "test";
-            } else if (kind == "efi" || kind == "kernel" || kind == "exec" || kind == "windows") {
+            } else if (kind == "efi" || kind == "kernel" || kind == "driver" || kind == "exec" || kind == "windows") {
                 projectType = kind;
                 if (kind == "kernel") { sourceFile = "KernelMain.hy"; }
+                if (kind == "driver") { sourceFile = "DriverMain.hy"; }
             }
             string manifestPath = PathUtils.Join(destination, name + ".hyproj");
             string manifestText = RenderManifest(name, projectType, sourceFile, false);
@@ -760,6 +777,8 @@ namespace Hydrogen.Compiler.Cli {
                     text = text + "output = \"EFI/" + name + ".EFI\"\n";
                 } else if (type == "kernel") {
                     text = text + "output = \"EFI/KERNEL.BIN\"\n";
+                } else if (type == "driver") {
+                    text = text + "output = \"" + name + ".driver\"\n";
                 } else if (type == "exec") {
                     text = text + "output = \"" + name + ".exec\"\n";
                 } else if (type == "windows") {
@@ -802,6 +821,13 @@ namespace Hydrogen.Compiler.Cli {
                     "    }\n" +
                     "}\n";
             }
+            if (kind == "driver") {
+                return "public class DriverMain {\n" +
+                    "    public static int Run(long context) {\n" +
+                    "        return 0;\n" +
+                    "    }\n" +
+                    "}\n";
+            }
             return "public class Program {\n" +
                 "    public static void Main(string[] args) {\n" +
                 "        System.Console.WriteLine(\"Hello from " + name + "!\");\n" +
@@ -835,6 +861,17 @@ namespace Hydrogen.Compiler.Cli {
                     }
                     System.Console.WriteLine("check ok");
                     if (emitIr) { System.Console.WriteLine(nativeResult.DiagnosticsText()); }
+                    return 0;
+                }
+                if (manifest.Type() == "driver") {
+                    NativeCompiler driverCompiler = new NativeCompiler();
+                    NativeCompilerResult driverResult = driverCompiler.CheckProjectDriver(path, emitIr);
+                    if (!driverResult.Success()) {
+                        System.Console.Write(driverResult.DiagnosticsText());
+                        return 1;
+                    }
+                    System.Console.WriteLine("check ok");
+                    if (emitIr) { System.Console.WriteLine(driverResult.DiagnosticsText()); }
                     return 0;
                 }
                 if (manifest.Type() == "windows") {
@@ -958,9 +995,10 @@ namespace Hydrogen.Compiler.Cli {
             if (manifest.Type() != "exe" &&
 				manifest.Type() != "efi" &&
 				manifest.Type() != "kernel" &&
+				manifest.Type() != "driver" &&
 				manifest.Type() != "australis" &&
 				manifest.Type() != "exec" && manifest.Type() != "native" && manifest.Type() != "windows") {
-                System.Console.WriteLine("error: hy build supports exe, windows, efi, kernel, exec, australis, native, and os projects");
+                System.Console.WriteLine("error: hy build supports exe, windows, efi, kernel, driver, exec, australis, native, and os projects");
                 return 1;
             }
 
@@ -971,6 +1009,8 @@ namespace Hydrogen.Compiler.Cli {
 				result = compiler.BuildProject(projectPath, output);
 			} else if (manifest.Type() == "kernel") {
 				result = compiler.BuildProjectKernel(projectPath, output);
+			} else if (manifest.Type() == "driver") {
+				result = compiler.BuildProjectDriver(projectPath, output);
 			} else if (manifest.Type() == "native") {
                 result = compiler.BuildProjectNativeUser(projectPath, output);
 			} else if (manifest.Type() == "windows") {
@@ -1020,6 +1060,7 @@ namespace Hydrogen.Compiler.Cli {
 						child.Type() != "exe" &&
 						child.Type() != "efi" &&
 						child.Type() != "kernel" &&
+						child.Type() != "driver" &&
 						child.Type() != "exec" &&
 						child.Type() != "australis" &&
 						child.Type() != "native" &&
@@ -1068,6 +1109,8 @@ namespace Hydrogen.Compiler.Cli {
                         result = compiler.CheckProjectAustralis(paths[index], emitIr);
                     } else if (checkedChild.Type() == "native") {
                         result = compiler.CheckProjectNativeUser(paths[index], emitIr);
+                    } else if (checkedChild.Type() == "driver") {
+                        result = compiler.CheckProjectDriver(paths[index], emitIr);
                     } else if (checkedChild.Type() == "windows") {
                         result = compiler.CheckProjectWindows(paths[index], emitIr);
                     } else if (emitIr) { result = compiler.CheckFileEmitIr(paths[index]); }
@@ -1075,6 +1118,7 @@ namespace Hydrogen.Compiler.Cli {
                 } else {
                     HyprojManifest child = HyprojManifest.Load(paths[index]);
                     if (child.Type() == "kernel") { result = compiler.BuildProjectKernel(paths[index], outputPath); }
+                    else if (child.Type() == "driver") { result = compiler.BuildProjectDriver(paths[index], outputPath); }
                     else if (child.Type() == "efi") { result = compiler.BuildProjectUefi(paths[index], outputPath); }
                     else if (child.Type() == "native") { result = compiler.BuildProjectNativeUser(paths[index], outputPath); }
                     else if (child.Type() == "windows") { result = compiler.BuildProjectWindows(paths[index], outputPath); }
@@ -1171,7 +1215,7 @@ namespace Hydrogen.Compiler.Cli {
         }
 
         private static void PrintUsage() {
-            System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|os|efi|kernel|exec|windows <name>");
+            System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|collection|os|efi|kernel|driver|exec|windows <name>");
             System.Console.WriteLine("usage: hy <tokens|parse|check|build> <file.hy|project.hyproj>");
             System.Console.WriteLine("usage: hy check <file.hy> --emit-ir");
             System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");

@@ -32,42 +32,50 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         public NativeCompilerResult BuildProject(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, false, false);
         }
 
         public NativeCompilerResult BuildProjectUefi(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, true, false, false, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, true, false, false, false, false, false);
         }
 
         public NativeCompilerResult BuildProjectKernel(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, true, false, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, false, true, false, false, false, false);
+        }
+
+        public NativeCompilerResult BuildProjectDriver(string projectPath, string outputPath) {
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, false, true);
         }
 
         public NativeCompilerResult BuildProjectAustralis(string projectPath, string outputPath) {
-			return ProcessProject(projectPath, outputPath, false, false, false, false, true, false, false);
+			return ProcessProject(projectPath, outputPath, false, false, false, false, true, false, false, false);
 		}
 
         public NativeCompilerResult BuildProjectNativeUser(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, false, false, true, false);
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false, true, false, false);
         }
 
         public NativeCompilerResult BuildProjectWindows(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, true);
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, true, false);
+        }
+
+        public NativeCompilerResult CheckProjectDriver(string projectPath, bool emitIr) {
+            return ProcessProject(projectPath, "", true, emitIr, false, false, false, false, false, true);
         }
 
         public NativeCompilerResult CheckProjectAustralis(string projectPath, bool emitIr) {
-            return ProcessProject(projectPath, "", true, emitIr, false, false, true, false, false);
+            return ProcessProject(projectPath, "", true, emitIr, false, false, true, false, false, false);
         }
 
         public NativeCompilerResult CheckProjectNativeUser(string projectPath, bool emitIr) {
-            return ProcessProject(projectPath, "", true, emitIr, false, false, false, true, false);
+            return ProcessProject(projectPath, "", true, emitIr, false, false, false, true, false, false);
         }
 
         public NativeCompilerResult CheckProjectWindows(string projectPath, bool emitIr) {
-            return ProcessProject(projectPath, "", true, emitIr, false, false, false, false, true);
+            return ProcessProject(projectPath, "", true, emitIr, false, false, false, false, true, false);
         }
 
-        private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel, bool australis, bool nativeUser, bool windows) {
+        private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel, bool australis, bool nativeUser, bool windows, bool driver) {
             ProjectClosure closure = ProjectClosure.Collect(projectPath);
             if (closure.Error() != "") {
                 return new NativeCompilerResult(false, "error: " + closure.Error() + "\n");
@@ -83,7 +91,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             if (progress != null && !check) {
                 int steps = sources.Length * 3 + 4;
-                if (uefi || kernel || australis || nativeUser || windows) { steps = sources.Length * 3 + 3; }
+                if (uefi || kernel || australis || nativeUser || windows || driver) { steps = sources.Length * 3 + 3; }
                 progress.Start(projectPath, steps);
             }
 
@@ -131,9 +139,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (progress != null && !check) { progress.Step("Bound program"); }
 
             if (check) {
-                if (australis || nativeUser) {
+                if (australis || nativeUser || driver) {
                     byte[] validated = null;
-                    if (nativeUser) {
+                    if (driver) {
+                        validated = new AustralisDriverImageBuilder().Build(program);
+                    } else if (nativeUser) {
                         validated = new AustralisNativeImageBuilder().Build(program);
                     } else {
                         validated = new AustralisExecImageBuilder().Build(program);
@@ -154,6 +164,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return new NativeCompilerResult(true, DebugProgram(program, emitIr));
             }
             if (kernel) { return EmitKernelImage(program, projectPath, outputPath); }
+            if (driver) { return EmitDriverImage(program, projectPath, outputPath); }
             if (uefi) { return EmitUefiImage(program, projectPath, outputPath); }
 			if (australis) { return EmitAustralisImage(program, projectPath, outputPath); }
             if (nativeUser) { return EmitNativeUserImage(program, projectPath, outputPath); }
@@ -339,6 +350,20 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return new NativeCompilerResult(true, "");
         }
 
+        private NativeCompilerResult EmitDriverImage(BoundProgram program, string inputPath, string outputPath) {
+            if (progress != null) { progress.Begin("Generating Australis driver image"); }
+            byte[] image = new AustralisDriverImageBuilder().Build(program);
+            if (image == null) {
+                return new NativeCompilerResult(false,
+                    inputPath + ": unsupported Australis driver program (expected static int DriverMain.Run(long context))\n");
+            }
+            if (progress != null) { progress.Step("Generated Australis driver image"); }
+            if (progress != null) { progress.Begin("Writing " + outputPath); }
+            System.IO.File.WriteAllBytes(outputPath, image);
+            if (progress != null) { progress.Step("Wrote " + outputPath); }
+            return new NativeCompilerResult(true, "");
+        }
+
         // AUKR v1: 16-byte header followed by raw position-independent code.
         // The loader validates size and entry offset before ending boot services.
         private NativeCompilerResult EmitKernelImage(BoundProgram program, string inputPath, string outputPath) {
@@ -439,7 +464,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private NativeCompilerResult CheckFileInternal(string inputPath, bool emitIr) {
-            if (IsProject(inputPath)) { return ProcessProject(inputPath, "", true, emitIr, false, false, false, false, false); }
+            if (IsProject(inputPath)) { return ProcessProject(inputPath, "", true, emitIr, false, false, false, false, false, false); }
             SourceText source = SourceText.FromFile(inputPath);
             DiagnosticBag subsetDiagnostics = new DiagnosticBag();
             SelfHostSubsetValidator subset = new SelfHostSubsetValidator();

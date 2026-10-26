@@ -1,0 +1,13 @@
+format = 2
+name = "ExampleDriver"
+version = "0.1.0"
+type = "driver"
+output = "Example.driver"
+sources = ["DriverMain.hy"]
+project_references = []
+
+[package]
+id = "ExampleDriver"
+description = "AUDR v1 Australis driver example"
+authors = ["Aurora Softwares"]
+license = "MIT"

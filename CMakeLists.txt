@@ -1966,6 +1966,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
     )
     set_tests_properties(hy_stage1_aun1_native PROPERTIES
         FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 60 RUN_SERIAL TRUE)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME hy_stage1_audr_driver
+            COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/phase6/test_audr_driver.py
+                ${stage1_test_dir}/hydrogen-stage1 ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(hy_stage1_audr_driver PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 180 RUN_SERIAL TRUE)
+    endif()
     add_test(NAME hy_stage1_compile_uefi_multiline
         COMMAND ${CMAKE_COMMAND}
             -DNATIVE_BINARY=${stage1_test_dir}/hydrogen-stage1
