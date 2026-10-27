@@ -57,7 +57,9 @@ foreach(EXECUTABLE "bin/hy" "libexec/hy-core" "libexec/hy-maintenance")
     file(CHMOD "${PACKAGE_DIR}/${EXECUTABLE}"
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 endforeach()
-configure_file("${SOURCE_DIR}/release/README.md" "${PACKAGE_DIR}/README.md" COPYONLY)
+file(WRITE "${PACKAGE_DIR}/README.md"
+    "# Hydrogen ${VERSION} for Linux x86-64\n\n"
+    "Installation, update, and uninstall instructions: https://hylang.co.uk/releasing/linux-archive/\n")
 
 set(INSTALLED_FILES
     "bin/hy"

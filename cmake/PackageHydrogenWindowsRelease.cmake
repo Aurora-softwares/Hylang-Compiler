@@ -29,7 +29,9 @@ file(MAKE_DIRECTORY "${root}/bin" "${root}/libexec")
 configure_file("${INPUT_BINARY}" "${root}/libexec/hy-core.exe" COPYONLY)
 configure_file("${SOURCE_DIR}/scripts/hy-windows.cmd" "${root}/bin/hy.cmd" COPYONLY)
 configure_file("${SOURCE_DIR}/scripts/hy-maintenance.ps1" "${root}/libexec/hy-maintenance.ps1" COPYONLY)
-configure_file("${SOURCE_DIR}/release/README-windows.md" "${root}/README.md" COPYONLY)
+file(WRITE "${root}/README.md"
+    "# Hydrogen ${VERSION} for Windows x64\n\n"
+    "Installation, update, and uninstall instructions: https://hylang.co.uk/releasing/windows-archive/\n")
 configure_file("${SOURCE_DIR}/LICENSE" "${root}/LICENSE" COPYONLY)
 file(WRITE "${root}/BUILD-INFO.txt"
     "Hydrogen release: ${VERSION}\nPlatform: windows-x86_64\nEntrypoint: bin/hy.cmd\nCompiler: libexec/hy-core.exe\n")
