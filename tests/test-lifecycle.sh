@@ -12,10 +12,9 @@ assert_failure() {
     fi
 }
 
-mkdir -p "$work/source/scripts" "$work/source/release" "$work/mocks" "$work/assets"
+mkdir -p "$work/source/scripts" "$work/mocks" "$work/assets"
 cp "$source_dir/scripts/hy-launcher" "$source_dir/scripts/hy-maintenance" "$work/source/scripts/"
 cat > "$work/source/LICENSE" <<<'test license'
-cp "$source_dir/release/README.md" "$work/source/release/README.md"
 cat > "$work/source/core" <<'CORE'
 #!/usr/bin/env bash
 printf 'native compiler invoked: %s\n' "$*"
