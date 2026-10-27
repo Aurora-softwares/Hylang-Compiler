@@ -206,7 +206,7 @@ namespace Hydrogen.Compiler.Tests {
                 missingEntry.Message() == "missing freestanding entry method Missing.Run",
                 "direct backend must report compilation failures instead of returning partial code");
 
-            ProjectClosure cliClosure = ProjectClosure.Collect(FindRepoPath("samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj"));
+            ProjectClosure cliClosure = ProjectClosure.Collect(FindRepoPath("src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj"));
             string[] projects = cliClosure.Projects();
             Assert.True(projects.Length == 7, "CLI closure should contain 7 projects");
             Assert.True(Contains(projects[0], "Hydrogen.Compiler.Core.hyproj"), "closure[0] should be Core");

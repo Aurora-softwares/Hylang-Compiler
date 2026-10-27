@@ -28,7 +28,7 @@ if((EXISTS "${ARCHIVE}" OR EXISTS "${ARCHIVE}.sha256") AND NOT FORCE)
     message(FATAL_ERROR "Release output already exists. Choose a new VERSION or pass -DFORCE=ON: ${ARCHIVE}")
 endif()
 
-set(PROJECT "${SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Windows.hyproj")
+set(PROJECT "${SOURCE_DIR}/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Windows.hyproj")
 if(NOT EXISTS "${PROJECT}")
     message(FATAL_ERROR "Windows compiler project was not found: ${PROJECT}")
 endif()

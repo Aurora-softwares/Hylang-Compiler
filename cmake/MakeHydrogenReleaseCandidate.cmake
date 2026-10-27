@@ -33,7 +33,7 @@ foreach(OUTPUT
     endif()
 endforeach()
 
-set(PROJECT "${SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj")
+set(PROJECT "${SOURCE_DIR}/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj")
 if(NOT EXISTS "${PROJECT}")
     message(FATAL_ERROR "Linux compiler project was not found: ${PROJECT}")
 endif()

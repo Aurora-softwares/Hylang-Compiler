@@ -98,6 +98,6 @@ lines += ['            return -1;', '        }', '        private int Digit(stri
 for value, ch in enumerate('0123456789abcdef'):
     lines.append(f'            if (ch == "{ch}") {{ return {value}; }}')
 lines += ['            return 0;', '        }', '    }', '}']
-target = root / 'samples/self_hosting/Hydrogen.Compiler.CodeGen.X64/WindowsRuntimeEmitter.hy'
+target = root / 'src/Hydrogen.Compiler.CodeGen.X64/WindowsRuntimeEmitter.hy'
 target.write_text('\n'.join(lines) + '\n')
 print(f'{len(data)//2} Windows runtime bytes -> {target.relative_to(root)}')

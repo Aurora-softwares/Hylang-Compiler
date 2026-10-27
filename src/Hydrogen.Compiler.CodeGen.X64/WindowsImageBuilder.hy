@@ -1,11 +1,9 @@
 namespace Hydrogen.Compiler.CodeGen.X64 {
+	// Package the shared direct compiler's code and managed string literals
+	// as a PE32+ console process. All references are RIP relative, including
+	// the runtime's Win32 import thunks; no native linker is required.
     public class WindowsImageBuilder {
-        // Package the shared direct compiler's code and managed string literals
-        // as a PE32+ console process. All references are RIP relative, including
-        // the runtime's Win32 import thunks; no native linker is required.
-        public byte[] BuildCodeAndData(byte[] code, string[] payloads,
-                                       int[] patchOffsets, int[] payloadIndexes,
-                                       int runtimeStart, WindowsRuntimeEmitter runtime) {
+        public byte[] BuildCodeAndData(byte[] code, string[] payloads, int[] patchOffsets, int[] payloadIndexes, int[] externalCallOffsets, string[] externalSymbols, int runtimeStart, WindowsRuntimeEmitter runtime) {
             if (code == null || code.Length < 1 || code.Length > 0x10000000) { return null; }
             int textRva = 0x1000;
             int textRaw = 0x200;
@@ -179,9 +177,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return (value + unit - 1) / unit * unit;
         }
 
-        private void WriteAscii(byte[] image,
-                                int offset,
-                                string value) {
+        private void WriteAscii(byte[] image, int offset, string value) {
             ElfImageBuilder ascii = new ElfImageBuilder();
 
             int i = 0;
@@ -192,42 +188,29 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
         }
 
-        private void Write16(byte[] image,
-                             int offset,
-                             int value) {
+        private void Write16(byte[] image, int offset, int value) {
             WriteByte(image, offset, value % 256);
-            WriteByte(image, offset + 1,
-                      (value / 256) % 256);
+            WriteByte(image, offset + 1, (value / 256) % 256);
         }
 
-        private void Write32(byte[] image,
-                             int offset,
-                             int value) {
+        private void Write32(byte[] image, int offset, int value) {
             int current = value;
             int i = 0;
-
             while (i < 4) {
                 int part = current % 256;
-                if (part < 0) {
-                    part = part + 256;
-                }
-
+                if (part < 0) { part = part + 256; }
                 WriteByte(image, offset + i, part);
                 current = (current - part) / 256;
                 i = i + 1;
             }
         }
 
-        private void Write64(byte[] image,
-                             int offset,
-                             int value) {
+        private void Write64(byte[] image, int offset, int value) {
             Write32(image, offset, value);
             Write32(image, offset + 4, 0);
         }
 
-        private void WriteByte(byte[] image,
-                               int offset,
-                               int value) {
+        private void WriteByte(byte[] image, int offset, int value) {
             image[offset] = (byte)value;
         }
     }

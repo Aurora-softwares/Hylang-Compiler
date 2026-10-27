@@ -124,7 +124,7 @@ if(COMPILE_CLI)
         message(FATAL_ERROR "Compiler project closure failed semantic/IR checking: ${result}\n${stdout}\n${stderr}")
     endif()
     set(harness_project "${TEMP_DIR}/IrBackend.hyproj")
-    file(WRITE "${harness_project}" "format = 2\nname = \"IrBackend\"\ntype = \"exe\"\nsources = [\"${SOURCE_DIR}/tests/phase6/native_ir_backend.hy\"]\nproject_references = [\"${SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.CodeGen.X64/Hydrogen.Compiler.CodeGen.X64.hyproj\"]\n")
+    file(WRITE "${harness_project}" "format = 2\nname = \"IrBackend\"\ntype = \"exe\"\nsources = [\"${SOURCE_DIR}/tests/phase6/native_ir_backend.hy\"]\nproject_references = [\"${SOURCE_DIR}/src/Hydrogen.Compiler.CodeGen.X64/Hydrogen.Compiler.CodeGen.X64.hyproj\"]\n")
     execute_process(COMMAND "${HY_BINARY}" build "${harness_project}" -o "${TEMP_DIR}/ir_backend"
         RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 60)
     if(NOT result STREQUAL "0")

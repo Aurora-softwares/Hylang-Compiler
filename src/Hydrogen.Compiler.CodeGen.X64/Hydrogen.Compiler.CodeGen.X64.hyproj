@@ -2,7 +2,23 @@ format = 2
 name = "Hydrogen.Compiler.CodeGen.X64"
 version = "0.1.0"
 type = "lib"
-sources = ["X64Assembler.hy", "ElfImageBuilder.hy", "UefiImageBuilder.hy", "IrLowering.hy", "DirectMainCompiler.hy", "NativeRuntimeEmitter.hy", "WindowsRuntimeEmitter.hy", "FreestandingRuntimeEmitter.hy", "NativeCompiler.hy", "AustralisExecImageBuilder.hy", "AustralisNativeImageBuilder.hy", "AustralisDriverImageBuilder.hy", "WindowsImageBuilder.hy"]
+sources = [
+	"AustralisDriverImageBuilder.hy",
+	"AustralisExecImageBuilder.hy",
+	"AustralisNativeImageBuilder.hy",
+	"DirectMainCompiler.hy",
+	"ElfImageBuilder.hy",
+	"FreestandingRuntimeEmitter.hy",
+	"IrLowering.hy",
+	"MacOSImageBuilder.hy",
+	"MacOSRuntimeEmitter.hy",
+	"NativeCompiler.hy",
+	"NativeRuntimeEmitter.hy",
+	"UefiImageBuilder.hy",
+	"WindowsImageBuilder.hy",
+	"WindowsRuntimeEmitter.hy",
+	"X64Assembler.hy"
+]
 project_references = ["../Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj", "../Hydrogen.Compiler.Syntax/Hydrogen.Compiler.Syntax.hyproj", "../Hydrogen.Compiler.Binding/Hydrogen.Compiler.Binding.hyproj", "../Hydrogen.Compiler.IR/Hydrogen.Compiler.IR.hyproj", "../Hydrogen.Compiler.RuntimeModel/Hydrogen.Compiler.RuntimeModel.hyproj"]
 
 [package]

@@ -911,6 +911,7 @@ namespace Hydrogen.Compiler.Cli {
         private static int Compile(string[] args) {
             bool uefi = false;
             bool windows = false;
+            bool macos = false;
             string output = "";
             if (args.Length == 4 && args[2] == "-o") {
                 output = args[3];
@@ -920,10 +921,14 @@ namespace Hydrogen.Compiler.Cli {
             } else if (args.Length == 6 && args[2] == "--target" && args[3] == "windows-x64" && args[4] == "-o") {
                 windows = true;
                 output = args[5];
+            } else if (args.Length == 6 && args[2] == "--target" && args[3] == "macos-x64" && args[4] == "-o") {
+                macos = true;
+                output = args[5];
             } else {
                 System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");
                 System.Console.WriteLine("   or: hy compile <file.hy> --target uefi-x64 -o <output>");
                 System.Console.WriteLine("   or: hy compile <file.hy> --target windows-x64 -o <output.exe>");
+                System.Console.WriteLine("   or: hy compile <file.hy> --target macos-x64 -o <output.exe>");
                 return 1;
             }
 
@@ -933,6 +938,8 @@ namespace Hydrogen.Compiler.Cli {
                 result = compiler.CompileFileUefi(args[1], output);
             } else if(windows) {
                 result = compiler.CompileFileWindows(args[1], output);
+            } else if(macos) {
+                result = compiler.CompileFileMacOS(args[1], output);
             } else {
                 result = compiler.CompileFile(args[1], output);
             }
@@ -997,8 +1004,11 @@ namespace Hydrogen.Compiler.Cli {
 				manifest.Type() != "kernel" &&
 				manifest.Type() != "driver" &&
 				manifest.Type() != "australis" &&
-				manifest.Type() != "exec" && manifest.Type() != "native" && manifest.Type() != "windows") {
-                System.Console.WriteLine("error: hy build supports exe, windows, efi, kernel, driver, exec, australis, native, and os projects");
+				manifest.Type() != "exec" &&
+				manifest.Type() != "native" &&
+				manifest.Type() != "windows" &&
+				manifest.Type() != "macos") {
+                System.Console.WriteLine("error: hy build supports exe, windows, efi, kernel, exec, australis, macos, driver, native, and os projects");
                 return 1;
             }
 
@@ -1017,6 +1027,8 @@ namespace Hydrogen.Compiler.Cli {
                 result = compiler.BuildProjectWindows(projectPath, output);
 			} else if (manifest.Type() == "australis" || manifest.Type() == "exec") {
 				result = compiler.BuildProjectAustralis(projectPath, output);
+			} else if (manifest.Type() == "macos") {
+				result = compiler.BuildProjectMacOS(projectPath, output);
 			} else {
 				result = compiler.BuildProjectUefi(projectPath, output);
 			}

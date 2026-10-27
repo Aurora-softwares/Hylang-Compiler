@@ -9,7 +9,7 @@ endif()
 if(NOT EXISTS "${STAGE1_BINARY}")
     message(FATAL_ERROR "Native seed compiler does not exist: ${STAGE1_BINARY}")
 endif()
-set(project "${SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj")
+set(project "${SOURCE_DIR}/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj")
 file(MAKE_DIRECTORY "${OUTPUT_DIR}")
 # Native commands have no external toolchain available. prlimit and CMake are
 # absolute-path test drivers; neither participates in Hydrogen code generation.

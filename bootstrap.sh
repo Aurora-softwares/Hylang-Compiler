@@ -19,22 +19,59 @@ set -Eeuo pipefail
 # ------------------------------------------------------------------------------
 
 # The project is ALWAYS the directory the user ran the script from.
-PROJECT_DIR="$(pwd)"
+PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 BUILD_DIR="$PROJECT_DIR/build"
+BOOTSTRAP_BUILD_DIR="$BUILD_DIR/bootstrap"
 SELF_HOST_DIR="$BUILD_DIR/self_hosting"
 
-PROJECT_FILE="$PROJECT_DIR/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj"
+STAGE0="$BOOTSTRAP_BUILD_DIR/hy"
+BOOTSTRAP="$BOOTSTRAP_BUILD_DIR/hydrogen-bootstrap"
 
-STAGE0="$BUILD_DIR/hy"
-BOOTSTRAP="$SELF_HOST_DIR/hydrogen-bootstrap"
-STAGE1="$SELF_HOST_DIR/hydrogen-stage1"
-STAGE2="$SELF_HOST_DIR/hydrogen-stage2"
-STAGE3="$SELF_HOST_DIR/hydrogen-stage3"
+# Linux self-hosting
+LINUX_DIR="$SELF_HOST_DIR/linux"
+
+LINUX_PROJECT_FILE="$PROJECT_DIR/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj"
+#LINUX_PROJECT_FILE="$PROJECT_DIR/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Linux.hyproj"
+
+LINUX_STAGE1="$LINUX_DIR/hydrogen-stage1"
+LINUX_STAGE2="$LINUX_DIR/hydrogen-stage2"
+LINUX_STAGE3="$LINUX_DIR/hydrogen-stage3"
+
+LINUX_STAGE1_PENDING="$LINUX_DIR/hydrogen-stage1.pending"
+LINUX_STAGE2_PENDING="$LINUX_DIR/hydrogen-stage2.pending"
+LINUX_STAGE3_PENDING="$LINUX_DIR/hydrogen-stage3.pending"
+
+# Windows self-hosting
+WINDOWS_DIR="$SELF_HOST_DIR/windows"
+
+WINDOWS_PROJECT_FILE="$PROJECT_DIR/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Windows.hyproj"
+
+WINDOWS_STAGE1="$WINDOWS_DIR/hydrogen-stage1.exe"
+WINDOWS_STAGE2="$WINDOWS_DIR/hydrogen-stage2.exe"
+WINDOWS_STAGE3="$WINDOWS_DIR/hydrogen-stage3.exe"
+
+WINDOWS_STAGE1_PENDING="$WINDOWS_DIR/hydrogen-stage1.pending.exe"
+WINDOWS_STAGE2_PENDING="$WINDOWS_DIR/hydrogen-stage2.pending.exe"
+WINDOWS_STAGE3_PENDING="$WINDOWS_DIR/hydrogen-stage3.pending.exe"
+
+# Mac self-hosting
+MACOS_DIR="$SELF_HOST_DIR/mac"
+
+MACOS_PROJECT_FILE="$PROJECT_DIR/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.MacOS.hyproj"
+
+MACOS_STAGE1="$MACOS_DIR/hydrogen-stage1"
+MACOS_STAGE2="$MACOS_DIR/hydrogen-stage2"
+MACOS_STAGE3="$MACOS_DIR/hydrogen-stage3"
+
+MACOS_STAGE1_PENDING="$MACOS_DIR/hydrogen-stage1.pending"
+MACOS_STAGE2_PENDING="$MACOS_DIR/hydrogen-stage2.pending"
+MACOS_STAGE3_PENDING="$MACOS_DIR/hydrogen-stage3.pending"
 
 LOG_FILE="$BUILD_DIR/bootstrap.log"
+STEP_LOG_DIR="$BUILD_DIR/bootstrap-logs"
 
-TOTAL_STEPS=11
+TOTAL_STEPS=26
 CURRENT_STEP=0
 CURRENT_MESSAGE="Starting..."
 
@@ -144,7 +181,7 @@ draw_progress() {
     # Return to the start of the line and clear the entire line first.
     printf "\r\033[2K"
 
-    printf "${CYAN}%s [%s%s]${RESET} %3d%%  %s" \
+    printf "${CYAN}%b [%s%s]${RESET} %3d%%  %s" \
         "$spinner" \
         "$bar_filled" \
         "$bar_empty" \
@@ -269,8 +306,11 @@ require_executable() {
 # ------------------------------------------------------------------------------
 
 cleanup() {
-    # Never leave incomplete compiler stages looking like successful builds.
-    rm -f "$STAGE1.pending" "$STAGE2.pending" "$STAGE3.pending" 2>/dev/null || true
+    rm -f \
+	"$LINUX_STAGE1_PENDING" "$LINUX_STAGE2_PENDING" "$LINUX_STAGE3_PENDING" \
+	"$WINDOWS_STAGE1_PENDING" "$WINDOWS_STAGE2_PENDING" "$WINDOWS_STAGE3_PENDING" \
+	"$MACOS_STAGE1_PENDING" "$MACOS_STAGE2_PENDING" "$MACOS_STAGE3_PENDING" \
+	2>/dev/null || true
 }
 
 on_error() {
@@ -332,35 +372,35 @@ install_dependencies() {
             info "Installing build-essential and CMake..."
 
             sudo apt-get update
-            sudo apt-get install -y build-essential cmake
+            sudo apt-get install -y build-essential cmake wine
             ;;
 
         dnf)
             info "Detected Fedora/RHEL."
             info "Installing GCC, GCC C++, Make and CMake..."
 
-            sudo dnf install -y gcc gcc-c++ make cmake
+            sudo dnf install -y gcc gcc-c++ make cmake wine 
             ;;
 
         yum)
             info "Detected yum."
             info "Installing GCC, GCC C++, Make and CMake..."
 
-            sudo yum install -y gcc gcc-c++ make cmake
+            sudo yum install -y gcc gcc-c++ make cmake wine 
             ;;
 
         pacman)
             info "Detected Arch Linux."
             info "Installing base-devel and CMake..."
 
-            sudo pacman -S --needed --noconfirm base-devel cmake
+            sudo pacman -S --needed --noconfirm base-devel cmake wine 
             ;;
 
         zypper)
             info "Detected openSUSE."
             info "Installing compiler tools and CMake..."
 
-            sudo zypper --non-interactive install gcc gcc-c++ make cmake
+            sudo zypper --non-interactive install gcc gcc-c++ make cmake wine 
             ;;
 
         *)
@@ -453,10 +493,11 @@ This does not appear to be the Hydrogen compiler repository.
 Run this script from the root of the Hydrogen project."
 fi
 
-require_file "$PROJECT_FILE" "Hydrogen self-hosting project"
+require_file "$LINUX_PROJECT_FILE" "Hydrogen self-hosting project"
 
 mkdir -p "$BUILD_DIR"
-mkdir -p "$SELF_HOST_DIR"
+mkdir -p "$BOOTSTRAP_BUILD_DIR"
+mkdir -p "$LINUX_DIR" "$WINDOWS_DIR" "$MACOS_DIR" "$STEP_LOG_DIR"
 
 # Reset log each run.
 : > "$LOG_FILE"
@@ -464,6 +505,78 @@ mkdir -p "$SELF_HOST_DIR"
 info "Checking build requirements..."
 check_dependencies
 success "Build requirements available."
+
+# ------------------------------------------------------------
+# Windows testing environment (Wine)
+# ------------------------------------------------------------
+
+WINE=""
+TEST_WINDOWS=false
+WINDOWS_TEST_REASON="Wine is not installed."
+WINDOWS_BUILD_AVAILABLE=false
+
+if command -v wine >/dev/null 2>&1; then
+    WINE="$(command -v wine)"
+elif command -v wine64 >/dev/null 2>&1; then
+    WINE="$(command -v wine64)"
+fi
+
+if [[ -n "$WINE" ]]; then
+    if "$WINE" --version >> "$LOG_FILE" 2>&1; then
+        TEST_WINDOWS=true
+        WINDOWS_TEST_REASON=""
+        success "Wine is available for Windows testing."
+    else
+        WINDOWS_TEST_REASON="Wine is installed but failed its version check."
+        warning "$WINDOWS_TEST_REASON"
+    fi
+else
+    warning "Wine is unavailable; Windows execution tests will be skipped."
+fi
+
+if [[ -f "$WINDOWS_PROJECT_FILE" ]]; then
+    WINDOWS_BUILD_AVAILABLE=true
+else
+    warning "Windows compiler project not found: $WINDOWS_PROJECT_FILE"
+fi
+
+mkdir -p "$WINDOWS_DIR"
+
+
+# ------------------------------------------------------------
+# macOS testing environment (Darling)
+# ------------------------------------------------------------
+
+DARLING=""
+TEST_MACOS=false
+MACOS_TEST_REASON="Darling is not installed."
+MACOS_BUILD_AVAILABLE=false
+
+if command -v darling >/dev/null 2>&1; then
+    DARLING="$(command -v darling)"
+
+    if "$DARLING" shell uname -s 2>> "$LOG_FILE" |
+       grep -qx "Darwin"; then
+
+        TEST_MACOS=true
+        MACOS_TEST_REASON=""
+        success "Darling is available for macOS testing."
+    else
+        MACOS_TEST_REASON="Darling is installed but failed its startup check."
+        warning "$MACOS_TEST_REASON"
+    fi
+else
+    warning "Darling is unavailable; macOS execution tests will be skipped."
+fi
+
+if [[ -f "$MACOS_PROJECT_FILE" ]]; then
+    MACOS_BUILD_AVAILABLE=true
+else
+    warning "macOS compiler project not found: $MACOS_PROJECT_FILE"
+fi
+
+mkdir -p "$MACOS_DIR"
+
 
 # Remove stale pending files from previous failed builds.
 cleanup
@@ -473,154 +586,269 @@ printf "\n"
 # ------------------------------------------------------------------------------
 # Stage 0
 # ------------------------------------------------------------------------------
-
-step "Configuring Stage 0 build..."
-
-run cmake -S "$PROJECT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
-
+step "Configuring build..."
+run cmake -S "$PROJECT_DIR" -B "$BOOTSTRAP_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
 step "Building C++ Stage 0 compiler..."
-
-run cmake --build "$BUILD_DIR" --target hy --parallel
-
+run cmake --build "$BOOTSTRAP_BUILD_DIR" --target hy --parallel
 require_executable "$STAGE0" "Stage 0 compiler"
 
-step "Testing Stage 0 compiler..."
-
+## Testing
+step "Testing compiler..."
 run_test "$STAGE0" --help
 
 # ------------------------------------------------------------------------------
 # Bootstrap compiler
 # ------------------------------------------------------------------------------
-
 step "Building temporary bootstrap compiler..."
-
 rm -f "$BOOTSTRAP"
-
-run "$STAGE0" build "$PROJECT_FILE" -o "$BOOTSTRAP"
-
+run "$STAGE0" build "$LINUX_PROJECT_FILE" -o "$BOOTSTRAP"
 require_executable "$BOOTSTRAP" "bootstrap compiler"
 
-step "Testing bootstrap compiler..."
-
+## Testing
+step "Testing temporary bootstrap compiler..."
 run_test "$BOOTSTRAP" --help
 
 # ------------------------------------------------------------------------------
-# Stage 1
+# Cross-platform command and result handling
 # ------------------------------------------------------------------------------
+# Stage 0 and the temporary bootstrap remain mandatory prerequisites. The three
+# target bootstraps are independent; failure in one does not stop another.
 
-step "Bootstrapping Stage 1..."
+declare -A PLATFORM_STATUS=( [Linux]="NOT RUN" [Windows]="NOT RUN" [macOS]="NOT RUN" )
+declare -A PLATFORM_REASON=( [Linux]="" [Windows]="" [macOS]="" )
+declare -A PRODUCED=()
+LAST_FAILURE=""
 
-rm -f "$STAGE1.pending"
+# A nonfatal alternative to run()/run_test(), with a separate diagnostic log.
+# For --help only, status 1 is accepted because Hydrogen has used it for usage.
+try_run() {
+    local allow_help_one="$1"
+    shift
+    local safe_name="${CURRENT_MESSAGE//[^[:alnum:]]/_}"
+    local command_log="$STEP_LOG_DIR/$(printf '%02d' "$CURRENT_STEP")_${safe_name}.log"
+    local code=0
+    printf '\n\n==>' >> "$LOG_FILE"
+    printf ' %q' "$@" >> "$LOG_FILE"
+    printf '\n' >> "$LOG_FILE"
 
-run "$BOOTSTRAP" build "$PROJECT_FILE" -o "$STAGE1.pending"
+    "$@" > "$command_log" 2>&1 &
+    local child_pid=$!
+    local spinner_index=0
+    while kill -0 "$child_pid" 2>/dev/null; do
+        draw_progress "$CURRENT_MESSAGE" "${SPINNER[$spinner_index]}"
+        spinner_index=$(( (spinner_index + 1) % ${#SPINNER[@]} ))
+        sleep 0.08
+    done
+    wait "$child_pid" || code=$?
+    cat "$command_log" >> "$LOG_FILE"
 
-require_executable "$STAGE1.pending" "Stage 1 pending compiler"
+    if (( code == 0 || (allow_help_one == 1 && code == 1) )); then
+        draw_progress "$CURRENT_MESSAGE" "${GREEN}✓${RESET}"
+        return 0
+    fi
 
-mv "$STAGE1.pending" "$STAGE1"
-chmod +x "$STAGE1"
+    local diagnostic
+    diagnostic="$(grep -v '^[[:space:]]*$' "$command_log" | tail -n 1 || true)"
+    diagnostic="${diagnostic//$'\r'/ }"
+    LAST_FAILURE="exit code $code"
+    if [[ -n "$diagnostic" ]]; then LAST_FAILURE+=": $diagnostic"; fi
+    LAST_FAILURE+=" (see $command_log)"
+    draw_progress "$CURRENT_MESSAGE" "${RED}✗${RESET}"
+    return 1
+}
 
-step "Testing Stage 1 compiler..."
+mark_failure() {
+    local platform="$1" reason="$2"
+    PLATFORM_STATUS["$platform"]="FAILED"
+    PLATFORM_REASON["$platform"]="$reason"
+	printf '\n'
+    warning "$platform: $reason"
+    printf '\n[%s] FAILED: %s\n' "$platform" "$reason" >> "$LOG_FILE"
+}
 
-run_test "$STAGE1" --help
+# Do not report .o objects, ELF, or PE images as runnable macOS compilers.
+check_binary_type() {
+    local platform="$1" binary="$2" description
+    if [[ ! -s "$binary" ]]; then
+        LAST_FAILURE="generated file is missing or empty: $binary"
+        return 1
+    fi
+    if ! command -v file >/dev/null 2>&1; then
+        LAST_FAILURE="the 'file' command is required to verify generated binaries"
+        return 1
+    fi
+    if ! description="$(file -b -- "$binary" 2>&1)"; then
+        LAST_FAILURE="could not inspect output $binary: $description"
+        return 1
+    fi
+    printf '%s image: %s\n' "$platform" "$description" >> "$LOG_FILE"
+    case "$platform" in
+        Linux)
+            [[ "$description" == *ELF* && "$description" == *x86-64* ]] ;;
+        Windows)
+            [[ "$description" == *PE32+* && "$description" == *x86-64* ]] ;;
+        macOS)
+            [[ "$description" == *Mach-O* && "$description" == *x86_64* && "$description" == *executable* ]] ;;
+    esac && return 0
+    LAST_FAILURE="unexpected image type: $description (expected executable for $platform)"
+    return 1
+}
+
+# Darling maps the Linux host filesystem into /Volumes/SystemRoot.
+darling_path() {
+    local absolute
+    absolute="$(realpath -m -- "$1")" || return 1
+    printf '/Volumes/SystemRoot%s' "$absolute"
+}
+
+# One implementation for all targets: compile, execute/test (where possible),
+# and compare Stage 2/3. The compiler must emit the final linked executable.
+bootstrap_target() {
+    local platform="$1" project="$2" runtime="$3" base_dir="$4" suffix="$5"
+    local -a stages=("$base_dir/hydrogen-stage1$suffix" "$base_dir/hydrogen-stage2$suffix" "$base_dir/hydrogen-stage3$suffix")
+    local -a pending=("$base_dir/hydrogen-stage1.pending$suffix" "$base_dir/hydrogen-stage2.pending$suffix" "$base_dir/hydrogen-stage3.pending$suffix")
+    local i stage_number current previous
+    local -a command=() help_command=()
+
+    if [[ ! -f "$project" ]]; then
+        PLATFORM_STATUS["$platform"]="SKIPPED"
+        PLATFORM_REASON["$platform"]="project not found: $project"
+        warning "$platform: ${PLATFORM_REASON[$platform]}"
+        return 0
+    fi
+
+    for ((i=0; i<3; i++)); do
+        stage_number=$((i + 1))
+        current="${stages[i]}"
+        rm -f -- "${pending[i]}"
+
+        # Do not attempt Stage 2/3 without an execution environment.
+        if (( i > 0 )); then
+            if [[ "$platform" == Windows && "$TEST_WINDOWS" != true ]]; then
+                PLATFORM_STATUS["$platform"]="PARTIAL"
+                PLATFORM_REASON["$platform"]="Stage 1 built; Windows execution skipped: $WINDOWS_TEST_REASON"
+                return 0
+            fi
+            if [[ "$platform" == macOS && "$TEST_MACOS" != true ]]; then
+                PLATFORM_STATUS["$platform"]="PARTIAL"
+                PLATFORM_REASON["$platform"]="Stage 1 built; macOS execution skipped: $MACOS_TEST_REASON"
+                return 0
+            fi
+        fi
+
+        if (( i == 0 )); then
+            command=("$BOOTSTRAP" build "$project" -o "${pending[i]}")
+        else
+            previous="${stages[i-1]}"
+            case "$platform" in
+                Linux) command=("$previous" build "$project" -o "${pending[i]}") ;;
+                Windows) command=("$WINE" "$previous" build "$project" -o "${pending[i]}") ;;
+                macOS)
+                    command=("$DARLING" shell "$(darling_path "$previous")" build
+                        "$(darling_path "$project")" -o "$(darling_path "${pending[i]}")") ;;
+            esac
+        fi
+
+        step "Bootstrapping $platform Stage $stage_number..."
+        if ! try_run 0 "${command[@]}"; then
+            mark_failure "$platform" "Stage $stage_number compilation: $LAST_FAILURE"
+            return 1
+        fi
+        if ! check_binary_type "$platform" "${pending[i]}"; then
+            mark_failure "$platform" "Stage $stage_number image validation: $LAST_FAILURE"
+            return 1
+        fi
+        if ! mv -f -- "${pending[i]}" "$current" || ! chmod +x -- "$current"; then
+            mark_failure "$platform" "could not publish Stage $stage_number executable: $current"
+            return 1
+        fi
+        PRODUCED["$platform:$stage_number"]="$current"
+        PLATFORM_STATUS["$platform"]="PARTIAL"
+        PLATFORM_REASON["$platform"]="Stages 1-$stage_number built; Stage 2/3 comparison not yet verified"
+
+        # Stage 1 can still be generated without Wine or Darling installed.
+        if [[ "$platform" == Windows && "$TEST_WINDOWS" != true ]]; then
+            PLATFORM_REASON["$platform"]="Stage 1 built; verification unavailable: $WINDOWS_TEST_REASON"
+            return 0
+        fi
+        if [[ "$platform" == macOS && "$TEST_MACOS" != true ]]; then
+            PLATFORM_REASON["$platform"]="Stage 1 built; verification unavailable: $MACOS_TEST_REASON"
+            return 0
+        fi
+
+        case "$platform" in
+            Linux) help_command=("$current" --help) ;;
+            Windows) help_command=("$WINE" "$current" --help) ;;
+            macOS) help_command=("$DARLING" shell "$(darling_path "$current")" --help) ;;
+        esac
+        step "Testing $platform Stage $stage_number..."
+        if ! try_run 1 "${help_command[@]}"; then
+            mark_failure "$platform" "Stage $stage_number execution: $LAST_FAILURE"
+            return 1
+        fi
+    done
+
+    step "Verifying $platform Stage 2 and Stage 3..."
+    if ! cmp -s -- "${stages[1]}" "${stages[2]}"; then
+        sha256sum -- "${stages[1]}" "${stages[2]}" >> "$LOG_FILE" 2>&1 || true
+        mark_failure "$platform" "Stage 2 and Stage 3 differ (see SHA-256 hashes in $LOG_FILE)"
+        return 1
+    fi
+    sha256sum -- "${stages[1]}" "${stages[2]}" >> "$LOG_FILE" 2>&1 || true
+    PLATFORM_STATUS["$platform"]="PASSED"
+    PLATFORM_REASON["$platform"]="Stages 2 and 3 are byte-identical"
+    draw_progress "$platform Stage 2/3 byte-identical." "${GREEN}✓${RESET}"
+    return 0
+}
+
+# Check whether the prerequisites exist, but always attempt cross-compilation
+# of Stage 1, even without Wine/Darling.
+bootstrap_target Linux "$LINUX_PROJECT_FILE" native "$LINUX_DIR" "" || true
+bootstrap_target Windows "$WINDOWS_PROJECT_FILE" wine "$WINDOWS_DIR" .exe || true
+bootstrap_target macOS "$MACOS_PROJECT_FILE" darling "$MACOS_DIR" "" || true
 
 # ------------------------------------------------------------------------------
-# Stage 2
-# ------------------------------------------------------------------------------
-
-step "Bootstrapping Stage 2..."
-
-rm -f "$STAGE2.pending"
-
-run "$STAGE1" build "$PROJECT_FILE" -o "$STAGE2.pending"
-
-require_executable "$STAGE2.pending" "Stage 2 pending compiler"
-
-mv "$STAGE2.pending" "$STAGE2"
-chmod +x "$STAGE2"
-
-step "Testing Stage 2 compiler..."
-
-run_test "$STAGE2" --help
-
-# ------------------------------------------------------------------------------
-# Stage 3
-# ------------------------------------------------------------------------------
-
-step "Bootstrapping Stage 3..."
-
-rm -f "$STAGE3.pending"
-
-run "$STAGE2" build "$PROJECT_FILE" -o "$STAGE3.pending"
-
-require_executable "$STAGE3.pending" "Stage 3 pending compiler"
-
-mv "$STAGE3.pending" "$STAGE3"
-chmod +x "$STAGE3"
-
-step "Testing Stage 3 compiler..."
-
-run_test "$STAGE3" --help
-
-# ------------------------------------------------------------------------------
-# Reproducibility check
-# ------------------------------------------------------------------------------
-
-step "Verifying Stage 2 and Stage 3..."
-
-{
-    printf "\n\n==> SHA-256 reproducibility check\n"
-    sha256sum "$STAGE2" "$STAGE3"
-} >> "$LOG_FILE" 2>&1
-
-if cmp -s "$STAGE2" "$STAGE3"; then
-
-    draw_progress "Stage 2 and Stage 3 are byte-identical." "${GREEN}✓${RESET}"
-
-    printf "\n"
-
-else
-
-    clear_progress_line
-
-    warning "Stage 2 and Stage 3 are NOT byte-identical."
-
-    printf "\nSHA-256 hashes:\n"
-    sha256sum "$STAGE2" "$STAGE3"
-
-    printf "\n"
-
-    die "The self-hosting compiler did not reach a reproducible fixed point."
-fi
-
-# ------------------------------------------------------------------------------
-# Complete
+# Full report -- only count artifacts produced during this invocation.
 # ------------------------------------------------------------------------------
 
 trap - ERR
+# Clear the completed progress display before showing the report.
+if [[ -t 1 ]]; then
+    printf '\033[2J\033[H'
+else
+    printf '\n'
+fi
+printf '╔══════════════════════════════════════════════════════╗\n'
+printf '║                Hydrogen Bootstrap Report             ║\n'
+printf '╚══════════════════════════════════════════════════════╝\n'
+printf '\nProject: %s\n' "$PROJECT_DIR"
+printf '\nStage 0:    %s\nBootstrap:  %s\n' "$STAGE0" "$BOOTSTRAP"
 
-# Clear the progress line first.
-clear_progress_line
+for platform in Linux Windows macOS; do
+    printf '\n%s: %s\n' "$platform" "${PLATFORM_STATUS[$platform]}"
+    for number in 1 2 3; do
+        key="$platform:$number"
+        if [[ -n "${PRODUCED[$key]:-}" ]]; then
+            printf '  Stage %s: %s\n' "$number" "${PRODUCED[$key]}"
+        else
+            printf '  Stage %s: not produced this run\n' "$number"
+        fi
+    done
+    printf '  Result: %s\n' "${PLATFORM_REASON[$platform]}"
+done
 
-# Clear the terminal and move cursor to the top-left.
-clear
+printf '\nFull log: %s\n' "$LOG_FILE"
+printf 'Stage logs: %s\n\n' "$STEP_LOG_DIR"
 
-printf "${GREEN}${BOLD}"
-printf "╔══════════════════════════════════════════════════════╗\n"
-printf "║                 Bootstrap successful!                ║\n"
-printf "╚══════════════════════════════════════════════════════╝\n"
-printf "${RESET}\n"
-
-printf "Project: %s\n\n" "$PROJECT_DIR"
-
-printf "${GREEN}✓${RESET} Stage 2 and Stage 3 are byte-identical.\n\n"
-
-printf "Compilers produced:\n\n"
-printf "  Stage 0    %s\n" "$STAGE0"
-printf "  Bootstrap  %s\n" "$BOOTSTRAP"
-printf "  Stage 1    %s\n" "$STAGE1"
-printf "  Stage 2    %s\n" "$STAGE2"
-printf "  Stage 3    %s\n" "$STAGE3"
-
-printf "\n"
-printf "Build log: %s\n" "$LOG_FILE"
-printf "\n"
+# ALL_TARGETS_REQUIRED=1 is suitable for CI. By default a partial bootstrap is
+# nonfatal if at least one platform passed (e.g. macOS still under development).
+if [[ "${ALL_TARGETS_REQUIRED:-0}" == 1 ]]; then
+    for platform in Linux Windows macOS; do
+        if [[ "${PLATFORM_STATUS[$platform]}" != PASSED ]]; then exit 1; fi
+    done
+    exit 0
+fi
+for platform in Linux Windows macOS; do
+    if [[ "${PLATFORM_STATUS[$platform]}" == PASSED ]]; then exit 0; fi
+done
+exit 1

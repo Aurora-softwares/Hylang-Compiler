@@ -102,20 +102,28 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private int staticCount;
         private string currentStaticOwner;
         private bool freestanding;
-        private bool windows;
+		private bool windows;
+		private bool macos;
 
-        public DirectImageResult Compile(IrModule input) {
-            return CompilePlatform(input, false);
-        }
+		public DirectImageResult Compile(IrModule input) {
+			return CompilePlatform(input, 0);
+		}
 
-        public DirectImageResult CompileWindows(IrModule input) {
-            return CompilePlatform(input, true);
-        }
+		public DirectImageResult CompileWindows(IrModule input) {
+			return CompilePlatform(input, 1);
+		}
 
-        private DirectImageResult CompilePlatform(IrModule input, bool forWindows) {
-            Reset(input);
-            freestanding = false;
-            windows = forWindows;
+		public DirectImageResult CompileMacOS(IrModule input) {
+			return CompilePlatform(input, 2);
+		}
+
+		private DirectImageResult CompilePlatform(IrModule input, int platform) {
+			Reset(input);
+
+			freestanding = false;
+			windows = platform == 1;
+			macos = platform == 2;
+
             mainFunction = -1;
             int i = 0;
             while (i < functionCount) {
@@ -137,7 +145,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             // The original stack is the upper bound for conservative GC roots.
             code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xe6); // mov r14, rsp
-            if (windows) {
+            if (windows || macos) {
                 code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xe4); code.EmitByte(0xf0); // align rsp for internal calls
             }
             EmitRuntime("rt_init"); // r15 owns heap state for the lifetime of the process
@@ -176,34 +184,108 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
             // Compile the reachable call graph, including forward and mutually recursive edges.
             if (!CompileNeededFunctions()) { return Failed(failure); }
-            int runtimeStart = code.Position();
-            NativeRuntimeEmitter linuxRuntime = null;
-            WindowsRuntimeEmitter windowsRuntime = null;
-            if (windows) {
-                windowsRuntime = new WindowsRuntimeEmitter();
-                windowsRuntime.Emit(code);
-            } else {
-                linuxRuntime = new NativeRuntimeEmitter();
-                linuxRuntime.Emit(code);
-            }
-            i = 0;
-            while (i < runtimePatchCount) {
-                int offset = -1;
-                if (windows) { offset = windowsRuntime.Offset(runtimeTargets[i]); }
-                else { offset = linuxRuntime.Offset(runtimeTargets[i]); }
-                if (offset < 0) { return Failed("unknown native runtime helper: " + runtimeTargets[i]); }
-                PatchRelative(runtimePatches[i], runtimeStart + offset);
-                i = i + 1;
-            }
-            ElfImageBuilder imageBuilder = new ElfImageBuilder();
-            if (windows) {
-                WindowsImageBuilder windowsImage = new WindowsImageBuilder();
-                byte[] executable = windowsImage.BuildCodeAndData(code.ToArray(), payloads,
-                    payloadPatchOffsets, payloadPatchIndexes, runtimeStart, windowsRuntime);
-                if (executable == null) { return Failed("Windows PE image exceeds format limits"); }
-                return new DirectImageResult(true, executable, "", -1);
-            }
-            return new DirectImageResult(true, imageBuilder.BuildCodeAndData(code.ToArray(), payloads, payloadPatchOffsets, payloadPatchIndexes), "", -1);
+
+			int runtimeStart = code.Position();
+
+			NativeRuntimeEmitter linuxRuntime = null;
+			WindowsRuntimeEmitter windowsRuntime = null;
+			MacOSRuntimeEmitter macRuntime = null;
+
+			if (windows) {
+				windowsRuntime = new WindowsRuntimeEmitter();
+				windowsRuntime.Emit(code);
+			} else if (macos) {
+				macRuntime = new MacOSRuntimeEmitter();
+				macRuntime.Emit(code);
+			} else {
+				linuxRuntime = new NativeRuntimeEmitter();
+				linuxRuntime.Emit(code);
+			}
+
+			// Resolve calls to internal runtime helpers.
+			i = 0;
+
+			while (i < runtimePatchCount) {
+				int offset = -1;
+
+				if (windows) {
+					offset = windowsRuntime.Offset(runtimeTargets[i]);
+				} else if (macos) {
+					offset = macRuntime.Offset(runtimeTargets[i]);
+				} else {
+					offset = linuxRuntime.Offset(runtimeTargets[i]);
+				}
+
+				if (offset < 0) {
+					return Failed(
+						"unsupported runtime helper for target: " +
+						runtimeTargets[i]
+					);
+				}
+
+				PatchRelative(
+					runtimePatches[i],
+					runtimeStart + offset
+				);
+
+				i = i + 1;
+			}
+
+			// Package the output for the selected operating system.
+			if (windows) {
+				WindowsImageBuilder builder =
+					new WindowsImageBuilder();
+
+				byte[] image = builder.BuildCodeAndData(
+					code.ToArray(),
+					payloads,
+					payloadPatchOffsets,
+					payloadPatchIndexes,
+					runtimeStart,
+					windowsRuntime
+				);
+
+				if (image == null) {
+					return Failed("Windows PE image generation failed");
+				}
+
+				return new DirectImageResult(true, image, "", -1);
+			}
+
+			if (macos) {
+				MacOSImageBuilder builder =
+					new MacOSImageBuilder();
+
+				byte[] image = builder.BuildCodeAndData(
+					code.ToArray(),
+					payloads,
+					payloadPatchOffsets,
+					payloadPatchIndexes,
+					macRuntime.ExternalCallOffsets(),
+					macRuntime.ExternalSymbols()
+				);
+
+				if (image == null) {
+					return Failed("macOS Mach-O object generation failed");
+				}
+
+				return new DirectImageResult(true, image, "", -1);
+			}
+
+			// Existing Linux ELF output.
+			ElfImageBuilder elf = new ElfImageBuilder();
+
+			return new DirectImageResult(
+				true,
+				elf.BuildCodeAndData(
+					code.ToArray(),
+					payloads,
+					payloadPatchOffsets,
+					payloadPatchIndexes
+				),
+				"",
+				-1
+			);
         }
 
         // Emit only a reachable freestanding method graph. The EFI handoff
@@ -2442,12 +2524,30 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.Patch32(patchOffset, target - (patchOffset + 4));
         }
 
-        private void EmitExitFromRax() {
-            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc7); // mov rdi, rax
-            code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc0); code.Emit32(60); // mov rax, 60
-            if (windows) { EmitRuntime("win_syscall"); }
-            else { code.EmitByte(0x0f); code.EmitByte(0x05); } // Linux syscall
-        }
+		private void EmitExitFromRax() {
+			// Move the program's return code to rdi.
+			code.EmitByte(0x48);
+			code.EmitByte(0x89);
+			code.EmitByte(0xc7);
+
+			if (macos) {
+				EmitRuntime("rt_exit");
+				return;
+			}
+
+			// Existing Linux / Windows implementation.
+			code.EmitByte(0x48);
+			code.EmitByte(0xc7);
+			code.EmitByte(0xc0);
+			code.Emit32(60);
+
+			if (windows) {
+				EmitRuntime("win_syscall");
+			} else {
+				code.EmitByte(0x0f);
+				code.EmitByte(0x05);
+			}
+		}
 
         private void InvalidateArrayLengthSource(int changedSlot) {
             int i = 0;

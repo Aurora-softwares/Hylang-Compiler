@@ -1,0 +1,856 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# Hydrogen Compiler Bootstrap
+#
+# Builds the C++ Stage 0 compiler, then bootstraps the self-hosting Hydrogen
+# compiler through stages 1, 2, and 3 before verifying reproducibility.
+#
+# Run this script from the root of the Hydrogen compiler repository:
+#
+#   ./bootstrap.sh
+#
+# ==============================================================================
+
+set -Eeuo pipefail
+
+# ------------------------------------------------------------------------------
+# Configuration
+# ------------------------------------------------------------------------------
+
+# The project is ALWAYS the directory the user ran the script from.
+PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+BUILD_DIR="$PROJECT_DIR/build"
+BOOTSTRAP_BUILD_DIR="$BUILD_DIR/bootstrap"
+SELF_HOST_DIR="$BUILD_DIR/self_hosting"
+
+STAGE0="$BOOTSTRAP_BUILD_DIR/hy"
+BOOTSTRAP="$BOOTSTRAP_BUILD_DIR/hydrogen-bootstrap"
+
+# Windows self-hosting
+LINUX_DIR="$SELF_HOST_DIR/linux"
+
+LINUX_PROJECT_FILE="$PROJECT_DIR/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj"
+#LINUX_PROJECT_FILE="$PROJECT_DIR/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Linux.hyproj"
+
+LINUX_STAGE1="$LINUX_DIR/hydrogen-stage1"
+LINUX_STAGE2="$LINUX_DIR/hydrogen-stage2"
+LINUX_STAGE3="$LINUX_DIR/hydrogen-stage3"
+
+LINUX_STAGE1_PENDING="$LINUX_DIR/hydrogen-stage1.pending"
+LINUX_STAGE2_PENDING="$LINUX_DIR/hydrogen-stage2.pending"
+LINUX_STAGE3_PENDING="$LINUX_DIR/hydrogen-stage3.pending"
+
+# Windows self-hosting
+WINDOWS_DIR="$SELF_HOST_DIR/windows"
+
+WINDOWS_PROJECT_FILE="$PROJECT_DIR/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Windows.hyproj"
+
+WINDOWS_STAGE1="$WINDOWS_DIR/hydrogen-stage1.exe"
+WINDOWS_STAGE2="$WINDOWS_DIR/hydrogen-stage2.exe"
+WINDOWS_STAGE3="$WINDOWS_DIR/hydrogen-stage3.exe"
+
+WINDOWS_STAGE1_PENDING="$WINDOWS_DIR/hydrogen-stage1.pending.exe"
+WINDOWS_STAGE2_PENDING="$WINDOWS_DIR/hydrogen-stage2.pending.exe"
+WINDOWS_STAGE3_PENDING="$WINDOWS_DIR/hydrogen-stage3.pending.exe"
+
+# Mac self-hosting
+MACOS_DIR="$SELF_HOST_DIR/mac"
+
+MACOS_PROJECT_FILE="$PROJECT_DIR/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.MacOS.hyproj"
+
+MACOS_STAGE1="$MACOS_DIR/hydrogen-stage1.o"
+MACOS_STAGE2="$MACOS_DIR/hydrogen-stage2.o"
+MACOS_STAGE3="$MACOS_DIR/hydrogen-stage3.o"
+
+MACOS_STAGE1_PENDING="$MACOS_DIR/hydrogen-stage1.pending.o"
+MACOS_STAGE2_PENDING="$MACOS_DIR/hydrogen-stage2.pending.o"
+MACOS_STAGE3_PENDING="$MACOS_DIR/hydrogen-stage3.pending.o"
+
+LOG_FILE="$BUILD_DIR/bootstrap.log"
+
+TOTAL_STEPS=17
+CURRENT_STEP=0
+CURRENT_MESSAGE="Starting..."
+
+# Braille spinner frames.
+SPINNER=(
+    "⠋"
+    "⠙"
+    "⠹"
+    "⠸"
+    "⠼"
+    "⠴"
+    "⠦"
+    "⠧"
+    "⠇"
+    "⠏"
+)
+
+# ------------------------------------------------------------------------------
+# Colours
+# ------------------------------------------------------------------------------
+
+if [[ -t 1 ]]; then
+    RESET="\033[0m"
+    BOLD="\033[1m"
+
+    RED="\033[31m"
+    GREEN="\033[32m"
+    YELLOW="\033[33m"
+    BLUE="\033[34m"
+    CYAN="\033[36m"
+    GREY="\033[90m"
+else
+    RESET=""
+    BOLD=""
+
+    RED=""
+    GREEN=""
+    YELLOW=""
+    BLUE=""
+    CYAN=""
+    GREY=""
+fi
+
+# ------------------------------------------------------------------------------
+# Utility functions
+# ------------------------------------------------------------------------------
+
+info() {
+    printf "${BLUE}ℹ${RESET} %s\n" "$*"
+}
+
+success() {
+    printf "${GREEN}✓${RESET} %s\n" "$*"
+}
+
+warning() {
+    printf "${YELLOW}⚠${RESET} %s\n" "$*"
+}
+
+error() {
+    printf "${RED}✗${RESET} %s\n" "$*" >&2
+}
+
+clear_progress_line() {
+    # Clear the whole current terminal line.
+    printf "\r\033[2K"
+}
+
+die() {
+    clear_progress_line
+    error "$*"
+
+    if [[ -f "$LOG_FILE" ]]; then
+        printf "\n"
+        printf "${GREY}Last 20 lines of the build log:${RESET}\n"
+        printf "${GREY}----------------------------------------${RESET}\n"
+        tail -n 20 "$LOG_FILE" >&2 || true
+        printf "${GREY}----------------------------------------${RESET}\n"
+        printf "Full log: %s\n" "$LOG_FILE"
+    fi
+
+    exit 1
+}
+
+# ------------------------------------------------------------------------------
+# Progress bar
+# ------------------------------------------------------------------------------
+
+draw_progress() {
+    local message="$1"
+    local spinner="${2:- }"
+
+    local width=30
+    local percent=$(( CURRENT_STEP * 100 / TOTAL_STEPS ))
+    local filled=$(( CURRENT_STEP * width / TOTAL_STEPS ))
+    local empty=$(( width - filled ))
+
+    local bar_filled=""
+    local bar_empty=""
+
+    printf -v bar_filled "%${filled}s" ""
+    printf -v bar_empty "%${empty}s" ""
+
+    bar_filled="${bar_filled// /#}"
+    bar_empty="${bar_empty// /-}"
+
+    # Return to the start of the line and clear the entire line first.
+    printf "\r\033[2K"
+
+    printf "${CYAN}%s [%s%s]${RESET} %3d%%  %s" \
+        "$spinner" \
+        "$bar_filled" \
+        "$bar_empty" \
+        "$percent" \
+        "$message"
+}
+
+step() {
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    CURRENT_MESSAGE="$1"
+
+    draw_progress "$CURRENT_MESSAGE" " "
+}
+
+# ------------------------------------------------------------------------------
+# Command runner with spinner
+# ------------------------------------------------------------------------------
+
+run() {
+    printf "\n\n==> %s\n" "$*" >> "$LOG_FILE"
+
+    # Start command in the background and send output to the log.
+    "$@" >> "$LOG_FILE" 2>&1 &
+
+    local command_pid=$!
+    local spinner_index=0
+
+    # Animate while command is running.
+    while kill -0 "$command_pid" 2>/dev/null; do
+        draw_progress "$CURRENT_MESSAGE" "${SPINNER[$spinner_index]}"
+
+        spinner_index=$(( (spinner_index + 1) % ${#SPINNER[@]} ))
+
+        sleep 0.08
+    done
+
+    # Collect the actual exit code.
+    local exit_code=0
+
+    wait "$command_pid" || exit_code=$?
+
+    if (( exit_code != 0 )); then
+        clear_progress_line
+
+        die "Command failed:
+  $*
+
+Exit code: $exit_code"
+    fi
+
+    # Leave the completed operation visible with a tick.
+    draw_progress "$CURRENT_MESSAGE" "${GREEN}✓${RESET}"
+}
+
+run_test() {
+    printf "\n\n==> %s\n" "$*" >> "$LOG_FILE"
+
+    "$@" >> "$LOG_FILE" 2>&1 &
+
+    local command_pid=$!
+    local spinner_index=0
+
+    while kill -0 "$command_pid" 2>/dev/null; do
+        draw_progress "$CURRENT_MESSAGE" "${SPINNER[$spinner_index]}"
+
+        spinner_index=$(( (spinner_index + 1) % ${#SPINNER[@]} ))
+
+        sleep 0.08
+    done
+
+    local exit_code=0
+
+    wait "$command_pid" || exit_code=$?
+
+    # For compiler sanity checks we accept 0 or 1.
+    #
+    # Some versions of Hydrogen currently return 1 for --help even
+    # though the executable launched correctly and printed its usage.
+    if (( exit_code > 1 )); then
+        clear_progress_line
+
+        die "Compiler sanity check failed:
+  $*
+
+Exit code: $exit_code"
+    fi
+
+    draw_progress "$CURRENT_MESSAGE" "${GREEN}✓${RESET}"
+}
+
+# ------------------------------------------------------------------------------
+# File validation
+# ------------------------------------------------------------------------------
+
+require_file() {
+    local file="$1"
+    local description="$2"
+
+    if [[ ! -f "$file" ]]; then
+        die "$description was not found:
+  $file"
+    fi
+}
+
+require_executable() {
+    local file="$1"
+    local description="$2"
+
+    if [[ ! -f "$file" ]]; then
+        die "$description was not created:
+  $file"
+    fi
+
+    if [[ ! -x "$file" ]]; then
+        chmod +x "$file" ||
+            die "Could not make $description executable."
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Error handling
+# ------------------------------------------------------------------------------
+
+cleanup() {
+    rm -f \
+	"$LINUX_STAGE1_PENDING" "$LINUX_STAGE2_PENDING" "$LINUX_STAGE3_PENDING" \
+	"$WINDOWS_STAGE1_PENDING" "$WINDOWS_STAGE2_PENDING" "$WINDOWS_STAGE3_PENDING" \
+	"$MACOS_STAGE1_PENDING" "$MACOS_STAGE2_PENDING" "$MACOS_STAGE3_PENDING" \
+	2>/dev/null || true
+}
+
+on_error() {
+    local exit_code=$?
+
+    clear_progress_line
+
+    cleanup
+
+    error "Bootstrap failed unexpectedly."
+
+    if [[ -f "$LOG_FILE" ]]; then
+        printf "\nSee the full log at:\n  %s\n" "$LOG_FILE"
+    fi
+
+    exit "$exit_code"
+}
+
+trap on_error ERR
+trap cleanup EXIT
+
+# ------------------------------------------------------------------------------
+# Dependency handling
+# ------------------------------------------------------------------------------
+
+detect_package_manager() {
+    if command -v apt-get >/dev/null 2>&1; then
+        echo "apt"
+
+    elif command -v dnf >/dev/null 2>&1; then
+        echo "dnf"
+
+    elif command -v yum >/dev/null 2>&1; then
+        echo "yum"
+
+    elif command -v pacman >/dev/null 2>&1; then
+        echo "pacman"
+
+    elif command -v zypper >/dev/null 2>&1; then
+        echo "zypper"
+
+    else
+        echo "unknown"
+    fi
+}
+
+install_dependencies() {
+    local package_manager
+    package_manager="$(detect_package_manager)"
+
+    printf "\n"
+
+    warning "Some required build tools are missing."
+
+    case "$package_manager" in
+
+        apt)
+            info "Detected Debian/Ubuntu."
+            info "Installing build-essential and CMake..."
+
+            sudo apt-get update
+            sudo apt-get install -y build-essential cmake wine
+            ;;
+
+        dnf)
+            info "Detected Fedora/RHEL."
+            info "Installing GCC, GCC C++, Make and CMake..."
+
+            sudo dnf install -y gcc gcc-c++ make cmake wine 
+            ;;
+
+        yum)
+            info "Detected yum."
+            info "Installing GCC, GCC C++, Make and CMake..."
+
+            sudo yum install -y gcc gcc-c++ make cmake wine 
+            ;;
+
+        pacman)
+            info "Detected Arch Linux."
+            info "Installing base-devel and CMake..."
+
+            sudo pacman -S --needed --noconfirm base-devel cmake wine 
+            ;;
+
+        zypper)
+            info "Detected openSUSE."
+            info "Installing compiler tools and CMake..."
+
+            sudo zypper --non-interactive install gcc gcc-c++ make cmake wine 
+            ;;
+
+        *)
+            die "Required build tools are missing and your package manager
+could not be detected automatically.
+
+Please install:
+
+  • CMake
+  • A C++ compiler (GCC or Clang)
+  • Make or another CMake-compatible build system
+
+Then run this script again."
+            ;;
+    esac
+}
+
+check_dependencies() {
+    local missing=0
+
+    if ! command -v cmake >/dev/null 2>&1; then
+        warning "CMake is not installed."
+        missing=1
+    fi
+
+    if ! command -v c++ >/dev/null 2>&1 &&
+       ! command -v g++ >/dev/null 2>&1 &&
+       ! command -v clang++ >/dev/null 2>&1; then
+
+        warning "No C++ compiler was found."
+        missing=1
+    fi
+
+    if (( missing == 1 )); then
+
+        if [[ ! -t 0 ]]; then
+            die "Missing build dependencies and no interactive terminal is available."
+        fi
+
+        printf "\n"
+
+        read -r -p "Would you like to install the missing dependencies? [Y/n] " answer
+
+        answer="${answer:-Y}"
+
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            install_dependencies
+        else
+            die "Cannot continue without the required build dependencies."
+        fi
+    fi
+
+    # Verify again after attempted installation.
+    command -v cmake >/dev/null 2>&1 ||
+        die "CMake is still unavailable."
+
+    if ! command -v c++ >/dev/null 2>&1 &&
+       ! command -v g++ >/dev/null 2>&1 &&
+       ! command -v clang++ >/dev/null 2>&1; then
+
+        die "A C++ compiler is still unavailable."
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# Header
+# ------------------------------------------------------------------------------
+
+clear 2>/dev/null || true
+
+printf "${BOLD}${CYAN}"
+printf "╔══════════════════════════════════════════════════════╗\n"
+printf "║              Hydrogen Compiler Bootstrap             ║\n"
+printf "╚══════════════════════════════════════════════════════╝\n"
+printf "${RESET}\n"
+
+printf "Project: %s\n\n" "$PROJECT_DIR"
+
+# ------------------------------------------------------------------------------
+# Pre-flight checks
+# ------------------------------------------------------------------------------
+
+if [[ ! -f "$PROJECT_DIR/CMakeLists.txt" ]]; then
+    die "No CMakeLists.txt was found in the current directory:
+
+  $PROJECT_DIR
+
+This does not appear to be the Hydrogen compiler repository.
+
+Run this script from the root of the Hydrogen project."
+fi
+
+require_file "$LINUX_PROJECT_FILE" "Hydrogen self-hosting project"
+
+mkdir -p "$BUILD_DIR"
+mkdir -p "$BOOTSTRAP_BUILD_DIR"
+mkdir -p "$LINUX_DIR"
+
+# Reset log each run.
+: > "$LOG_FILE"
+
+info "Checking build requirements..."
+check_dependencies
+success "Build requirements available."
+
+# ------------------------------------------------------------
+# Windows testing environment (Wine)
+# ------------------------------------------------------------
+
+WINE=""
+TEST_WINDOWS=false
+WINDOWS_TEST_REASON="Wine is not installed."
+WINDOWS_BUILD_AVAILABLE=false
+
+if command -v wine >/dev/null 2>&1; then
+    WINE="$(command -v wine)"
+elif command -v wine64 >/dev/null 2>&1; then
+    WINE="$(command -v wine64)"
+fi
+
+if [[ -n "$WINE" ]]; then
+    if "$WINE" --version >> "$LOG_FILE" 2>&1; then
+        TEST_WINDOWS=true
+        WINDOWS_TEST_REASON=""
+        success "Wine is available for Windows testing."
+    else
+        WINDOWS_TEST_REASON="Wine is installed but failed its version check."
+        warning "$WINDOWS_TEST_REASON"
+    fi
+else
+    warning "Wine is unavailable; Windows execution tests will be skipped."
+fi
+
+if [[ -f "$WINDOWS_PROJECT_FILE" ]]; then
+    WINDOWS_BUILD_AVAILABLE=true
+else
+    warning "Windows compiler project not found: $WINDOWS_PROJECT_FILE"
+fi
+
+mkdir -p "$WINDOWS_DIR"
+
+
+# ------------------------------------------------------------
+# macOS testing environment (Darling)
+# ------------------------------------------------------------
+
+DARLING=""
+TEST_MACOS=false
+MACOS_TEST_REASON="Darling is not installed."
+MACOS_BUILD_AVAILABLE=false
+
+if command -v darling >/dev/null 2>&1; then
+    DARLING="$(command -v darling)"
+
+    if "$DARLING" shell uname -s 2>> "$LOG_FILE" |
+       grep -qx "Darwin"; then
+
+        TEST_MACOS=true
+        MACOS_TEST_REASON=""
+        success "Darling is available for macOS testing."
+    else
+        MACOS_TEST_REASON="Darling is installed but failed its startup check."
+        warning "$MACOS_TEST_REASON"
+    fi
+else
+    warning "Darling is unavailable; macOS execution tests will be skipped."
+fi
+
+if [[ -f "$MACOS_PROJECT_FILE" ]]; then
+    MACOS_BUILD_AVAILABLE=true
+else
+    warning "macOS compiler project not found: $MACOS_PROJECT_FILE"
+fi
+
+mkdir -p "$MACOS_DIR"
+
+
+# Remove stale pending files from previous failed builds.
+cleanup
+
+printf "\n"
+
+# ------------------------------------------------------------------------------
+# Stage 0
+# ------------------------------------------------------------------------------
+step "Configuring build..."
+run cmake -S "$PROJECT_DIR" -B "$BOOTSTRAP_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
+step "Building C++ Stage 0 compiler..."
+run cmake --build "$BOOTSTRAP_BUILD_DIR" --target hy --parallel
+require_executable "$STAGE0" "Stage 0 compiler"
+
+## Testing
+step "Testing compiler..."
+run_test "$STAGE0" --help
+
+# ------------------------------------------------------------------------------
+# Bootstrap compiler
+# ------------------------------------------------------------------------------
+step "Building temporary bootstrap compiler..."
+rm -f "$BOOTSTRAP"
+run "$STAGE0" build "$LINUX_PROJECT_FILE" -o "$BOOTSTRAP"
+require_executable "$BOOTSTRAP" "bootstrap compiler"
+
+## Testing
+step "Testing temporary bootstrap compiler..."
+run_test "$BOOTSTRAP" --help
+
+########### LINUX ###########
+
+# ------------------------------------------------------------------------------
+# Stage 1
+# ------------------------------------------------------------------------------
+step "Bootstrapping Linux Stage 1..."
+rm -f "$LINUX_STAGE1_PENDING"
+run "$BOOTSTRAP" build "$LINUX_PROJECT_FILE" -o "$LINUX_STAGE1_PENDING"
+require_executable "$LINUX_STAGE1_PENDING" "Stage 1 pending compiler"
+mv "$LINUX_STAGE1_PENDING" "$LINUX_STAGE1"
+
+## Testing
+chmod +x "$LINUX_STAGE1"
+step "Testing Linux Stage 1 compiler..."
+run_test "$LINUX_STAGE1" --help
+
+# ------------------------------------------------------------------------------
+# Stage 2
+# ------------------------------------------------------------------------------
+step "Bootstrapping Linux Stage 2..."
+rm -f "$LINUX_STAGE2_PENDING"
+run "$LINUX_STAGE1" build "$LINUX_PROJECT_FILE" -o "$LINUX_STAGE2_PENDING"
+require_executable "$LINUX_STAGE2_PENDING" "Stage 2 pending compiler"
+mv "$LINUX_STAGE2_PENDING" "$LINUX_STAGE2"
+
+## Testing
+chmod +x "$LINUX_STAGE2"
+step "Testing Linux Stage 2 compiler..."
+run_test "$LINUX_STAGE2" --help
+
+# ------------------------------------------------------------------------------
+# Stage 3
+# ------------------------------------------------------------------------------
+step "Bootstrapping Linux Stage 3..."
+rm -f "$LINUX_STAGE3_PENDING"
+run "$LINUX_STAGE2" build "$LINUX_PROJECT_FILE" -o "$LINUX_STAGE3_PENDING"
+require_executable "$LINUX_STAGE3_PENDING" "Stage 3 pending compiler"
+mv "$LINUX_STAGE3_PENDING" "$LINUX_STAGE3"
+
+## Testing
+chmod +x "$LINUX_STAGE3"
+step "Testing Linux Stage 3 compiler..."
+run_test "$LINUX_STAGE3" --help
+
+# ------------------------------------------------------------------------------
+# Reproducibility check
+# ------------------------------------------------------------------------------
+
+step "Verifying Stage 2 and Stage 3..."
+
+{
+    printf "\n\n==> SHA-256 reproducibility check\n"
+    sha256sum "$LINUX_STAGE2" "$LINUX_STAGE3"
+} >> "$LOG_FILE" 2>&1
+
+if cmp -s "$LINUX_STAGE2" "$LINUX_STAGE3"; then
+    draw_progress "Linux Stage 2 and Stage 3 are byte-identical." "${GREEN}✓${RESET}"
+    printf "\n"
+else
+    clear_progress_line
+    warning "Linux Stage 2 and Stage 3 are NOT byte-identical."
+    printf "\nSHA-256 hashes:\n"
+    sha256sum "$LINUX_STAGE2" "$LINUX_STAGE3"
+    printf "\n"
+    die "The Linux self-hosting compiler did not reach a reproducible fixed point."
+fi
+
+########### WINDOWS COMPILATION ###########
+if TEST_WINDOWS; then
+# ------------------------------------------------------------------------------
+# Stage 1
+# ------------------------------------------------------------------------------
+step "Bootstrapping Windows Stage 1..."
+rm -f "$WINDOWS_STAGE1_PENDING"
+run "$BOOTSTRAP" build "$WINDOWS_PROJECT_FILE" -o "$WINDOWS_STAGE1_PENDING"
+require_executable "$WINDOWS_STAGE1_PENDING" "Windows stage 1 pending compiler"
+mv "$WINDOWS_STAGE1_PENDING" "$WINDOWS_STAGE1"
+chmod +x "$WINDOWS_STAGE1"
+
+## Testing
+step "Testing Windows Stage 1 compiler..."
+run_test "$WINE" "$WINDOWS_STAGE1" --help
+
+# ------------------------------------------------------------------------------
+# Stage 2
+# ------------------------------------------------------------------------------
+step "Bootstrapping Windows Stage 2..."
+rm -f "$WINDOWS_STAGE2_PENDING"
+run "$WINE" "$WINDOWS_STAGE1" build "$WINDOWS_PROJECT_FILE" -o "$WINDOWS_STAGE2_PENDING"
+require_executable "$WINDOWS_STAGE2_PENDING" "Windows stage 1 pending compiler"
+mv "$WINDOWS_STAGE2_PENDING" "$WINDOWS_STAGE2"
+chmod +x "$WINDOWS_STAGE2"
+
+## Testing
+step "Testing Windows Stage 2 compiler..."
+run_test "$WINE" "$WINDOWS_STAGE2" --help
+
+# ------------------------------------------------------------------------------
+# Stage 3
+# ------------------------------------------------------------------------------
+step "Bootstrapping Windows Stage 3..."
+rm -f "$WINDOWS_STAGE3_PENDING"
+run "$WINE" "$WINDOWS_STAGE2" build "$WINDOWS_PROJECT_FILE" -o "$WINDOWS_STAGE3_PENDING"
+require_executable "$WINDOWS_STAGE3_PENDING" "Windows stage 1 pending compiler"
+mv "$WINDOWS_STAGE3_PENDING" "$WINDOWS_STAGE3"
+chmod +x "$WINDOWS_STAGE3"
+
+## Testing
+step "Testing Windows Stage 3 compiler..."
+run_test "$WINE" "$WINDOWS_STAGE3" --help
+
+# ------------------------------------------------------------------------------
+# Reproducibility check
+# ------------------------------------------------------------------------------
+
+step "Verifying Windows Stage 2 and Stage 3..."
+
+{
+    printf "\n\n==> SHA-256 reproducibility check\n"
+    sha256sum "$WINDOWS_STAGE2" "$WINDOWS_STAGE3"
+} >> "$LOG_FILE" 2>&1
+
+if cmp -s "$WINDOWS_STAGE2" "$WINDOWS_STAGE3"; then
+    draw_progress "Windows Stage 2 and Stage 3 are byte-identical." "${GREEN}✓${RESET}"
+    printf "\n"
+else
+    clear_progress_line
+    warning "Windows Stage 2 and Stage 3 are NOT byte-identical."
+    printf "\nSHA-256 hashes:\n"
+    sha256sum "$WINDOWS_STAGE2" "$WINDOWS_STAGE3"
+    printf "\n"
+    die "The Windows self-hosting compiler did not reach a reproducible fixed point."
+fi
+fi
+########### MACOS COMPILATION ###########
+if TEST_MACOS; then
+# ------------------------------------------------------------------------------
+# Stage 1
+# ------------------------------------------------------------------------------
+step "Bootstrapping MacOS Stage 1..."
+rm -f "$MACOS_STAGE1_PENDING"
+run "$BOOTSTRAP" build "$MACOS_PROJECT_FILE" -o "$MACOS_STAGE1_PENDING"
+require_executable "$MACOS_STAGE1_PENDING" "MacOS Stage 1 pending compiler"
+mv "$MACOS_STAGE1_PENDING" "$MACOS_STAGE1"
+chmod +x "$MACOS_STAGE1"
+
+## Testing
+step "Testing MacOS Stage 1 compiler..."
+run_test "$DARLING" "$MACOS_STAGE1" --help
+
+# ------------------------------------------------------------------------------
+# Stage 2
+# ------------------------------------------------------------------------------
+step "Bootstrapping MacOS Stage 2..."
+rm -f "$MACOS_STAGE2_PENDING"
+run "$DARLING" "$MACOS_STAGE1" build "$MACOS_PROJECT_FILE" -o "$MACOS_STAGE2_PENDING"
+require_executable "$MACOS_STAGE2_PENDING" "MacOS stage 1 pending compiler"
+mv "$MACOS_STAGE2_PENDING" "$MACOS_STAGE2"
+chmod +x "$MACOS_STAGE2"
+
+## Testing
+step "Testing MacOS Stage 2 compiler..."
+run_test "$DARLING" "$MACOS_STAGE2" --help
+
+# ------------------------------------------------------------------------------
+# Stage 3
+# ------------------------------------------------------------------------------
+step "Bootstrapping MacOS Stage 3..."
+rm -f "$MACOS_STAGE3_PENDING"
+run "$DARLING" "$MACOS_STAGE2" build "$MACOS_PROJECT_FILE" -o "$MACOS_STAGE3_PENDING"
+require_executable "$MACOS_STAGE3_PENDING" "MacOS stage 1 pending compiler"
+mv "$MACOS_STAGE3_PENDING" "$MACOS_STAGE3"
+chmod +x "$MACOS_STAGE3"
+
+## Testing
+step "Testing MacOS Stage 3 compiler..."
+run_test "$DARLING" "$MACOS_STAGE3" --help
+
+# ------------------------------------------------------------------------------
+# Reproducibility check
+# ------------------------------------------------------------------------------
+
+step "Verifying MacOS Stage 2 and Stage 3..."
+
+{
+    printf "\n\n==> SHA-256 reproducibility check\n"
+    sha256sum "$MACOS_STAGE2" "$MACOS_STAGE3"
+} >> "$LOG_FILE" 2>&1
+
+if cmp -s "$MACOS_STAGE2" "$MACOS_STAGE3"; then
+    draw_progress "MacOS Stage 2 and Stage 3 are byte-identical." "${GREEN}✓${RESET}"
+    printf "\n"
+else
+    clear_progress_line
+    warning "MacOS Stage 2 and Stage 3 are NOT byte-identical."
+    printf "\nSHA-256 hashes:\n"
+    sha256sum "$MACOS_STAGE2" "$MACOS_STAGE3"
+    printf "\n"
+    die "The MacOS self-hosting compiler did not reach a reproducible fixed point."
+fi
+fi
+
+# ------------------------------------------------------------------------------
+# Complete
+# ------------------------------------------------------------------------------
+
+trap - ERR
+
+# Clear the progress line first.
+clear_progress_line
+
+# Clear the terminal and move cursor to the top-left.
+clear
+
+printf "${GREEN}${BOLD}"
+printf "╔══════════════════════════════════════════════════════╗\n"
+printf "║                 Bootstrap successful!                ║\n"
+printf "╚══════════════════════════════════════════════════════╝\n"
+printf "${RESET}\n"
+
+printf "Project: %s\n\n" "$PROJECT_DIR"
+
+printf "${GREEN}✓${RESET} Stage 2 and Stage 3 are byte-identical.\n\n"
+
+printf "C++ Compilers produced:\n\n"
+printf "  Stage 0    %s\n" "$STAGE0"
+printf "  Bootstrap  %s\n" "$BOOTSTRAP"
+printf "\nLinux compilers produced:\n\n"
+printf "  Stage 1    %s\n" "$LINUX_STAGE1"
+printf "  Stage 2    %s\n" "$LINUX_STAGE2"
+printf "  Stage 3    %s\n" "$LINUX_STAGE3"
+printf "\nWindows compilers produced:\n\n"
+printf "  Stage 1    %s\n" "$WINDOWS_STAGE1"
+printf "  Stage 2    %s\n" "$WINDOWS_STAGE2"
+printf "  Stage 3    %s\n" "$WINDOWS_STAGE3"
+printf "\nMac compilers produced:\n\n"
+printf "  Stage 1    %s\n" "$MACOS_STAGE1"
+printf "  Stage 2    %s\n" "$MACOS_STAGE2"
+printf "  Stage 3    %s\n" "$MACOS_STAGE3"
+
+printf "\n"
+printf "${GREEN}✓${RESET} Linux Stage 2/3 identical.\n"
+printf "${GREEN}✓${RESET} Windows Stage 2/3 identical.\n"
+printf "${GREEN}✓${RESET} MacOS Stage 2/3 identical.\n"
+printf "\n"
+printf "Build log: %s\n" "$LOG_FILE"
+printf "\n"

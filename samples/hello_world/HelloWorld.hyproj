@@ -1,0 +1,14 @@
+format = 2
+name = "HelloWorld"
+version = "0.1.0"
+type = "exec"
+sources = ["src/Program.hy"]
+project_references = []
+
+[package]
+id = "os.australis.hello-world"
+description = "Minimal Australis executable"
+authors = [
+	"Aurora Softwares"
+]
+license = "MIT"

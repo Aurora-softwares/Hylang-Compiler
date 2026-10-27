@@ -32,50 +32,58 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         public NativeCompilerResult BuildProject(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, false, false, false);
         }
 
         public NativeCompilerResult BuildProjectUefi(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, true, false, false, false, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, true, false, false, false, false, false, false);
         }
 
         public NativeCompilerResult BuildProjectKernel(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, true, false, false, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, false, true, false, false, false, false, false);
         }
 
         public NativeCompilerResult BuildProjectDriver(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, false, true);
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, false, true, false);
         }
 
         public NativeCompilerResult BuildProjectAustralis(string projectPath, string outputPath) {
-			return ProcessProject(projectPath, outputPath, false, false, false, false, true, false, false, false);
+			return ProcessProject(projectPath, outputPath, false, false, false, false, true, false, false, false, false);
 		}
 
         public NativeCompilerResult BuildProjectNativeUser(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, false, false, true, false, false);
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false, true, false, false, false);
         }
 
         public NativeCompilerResult BuildProjectWindows(string projectPath, string outputPath) {
-            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, true, false);
+            return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, true, false, false);
         }
 
+		public NativeCompilerResult BuildProjectMacOS(string projectPath, string outputPath) {
+			return ProcessProject(projectPath, outputPath, false, false, false, false, false, false, false, false, true);
+		}
+
         public NativeCompilerResult CheckProjectDriver(string projectPath, bool emitIr) {
-            return ProcessProject(projectPath, "", true, emitIr, false, false, false, false, false, true);
+            return ProcessProject(projectPath, "", true, emitIr, false, false, false, false, false, true, false);
         }
 
         public NativeCompilerResult CheckProjectAustralis(string projectPath, bool emitIr) {
-            return ProcessProject(projectPath, "", true, emitIr, false, false, true, false, false, false);
+            return ProcessProject(projectPath, "", true, emitIr, false, false, true, false, false, false, false);
         }
 
         public NativeCompilerResult CheckProjectNativeUser(string projectPath, bool emitIr) {
-            return ProcessProject(projectPath, "", true, emitIr, false, false, false, true, false, false);
+            return ProcessProject(projectPath, "", true, emitIr, false, false, false, true, false, false, false);
         }
 
         public NativeCompilerResult CheckProjectWindows(string projectPath, bool emitIr) {
-            return ProcessProject(projectPath, "", true, emitIr, false, false, false, false, true, false);
+            return ProcessProject(projectPath, "", true, emitIr, false, false, false, false, true, false, false);
         }
 
-        private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel, bool australis, bool nativeUser, bool windows, bool driver) {
+		public NativeCompilerResult CheckProjectMacOS(string projectPath, bool emitIr) {
+			return ProcessProject(projectPath, "", true, emitIr, false, false, false, false, false, false, true);
+		}
+
+        private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel, bool australis, bool nativeUser, bool windows, bool driver, bool macos) {
             HyprojManifest driverManifest = null;
             if (driver) {
                 driverManifest = HyprojManifest.Load(projectPath);
@@ -99,7 +107,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             if (progress != null && !check) {
                 int steps = sources.Length * 3 + 4;
-                if (uefi || kernel || australis || nativeUser || windows || driver) { steps = sources.Length * 3 + 3; }
+                if (uefi || kernel || australis || nativeUser || windows || driver || macos) {
+					steps = sources.Length * 3 + 3;
+				}
                 progress.Start(projectPath, steps);
             }
 
@@ -169,14 +179,43 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                             projectPath + ": error: Windows x64 compilation failed: " + validatedWindows.Message() + "\n");
                     }
                 }
+				if (macos) {
+					IrModule lowered = new IrLowering().Lower(program);
+
+					DirectImageResult result =
+						new DirectMainCompiler().CompileMacOS(lowered);
+
+					if (!result.Success()) {
+						return new NativeCompilerResult(
+							false,
+							projectPath + ": macOS compilation failed: " +
+							result.Message() + "\n"
+						);
+					}
+				}
                 return new NativeCompilerResult(true, DebugProgram(program, emitIr));
             }
-            if (kernel) { return EmitKernelImage(program, projectPath, outputPath); }
-            if (driver) { return EmitDriverImage(program, driverManifest, projectPath, outputPath); }
-            if (uefi) { return EmitUefiImage(program, projectPath, outputPath); }
-			if (australis) { return EmitAustralisImage(program, projectPath, outputPath); }
-            if (nativeUser) { return EmitNativeUserImage(program, projectPath, outputPath); }
-            if (windows) { return EmitWindowsImage(program, projectPath, outputPath); }
+            if (kernel) {
+				return EmitKernelImage(program, projectPath, outputPath);
+			}
+            if (driver) {
+				return EmitDriverImage(program, driverManifest, projectPath, outputPath);
+			}
+            if (uefi) {
+				return EmitUefiImage(program, projectPath, outputPath);
+			}
+			if (australis) {
+				return EmitAustralisImage(program, projectPath, outputPath);
+			}
+            if (nativeUser) {
+				return EmitNativeUserImage(program, projectPath, outputPath);
+			}
+            if (windows) {
+				return EmitWindowsImage(program, projectPath, outputPath);
+			}
+			if (macos) {
+				return EmitMacOSImage(program, projectPath, outputPath);
+			}
             return EmitNativeImage(program, projectPath, outputPath);
         }
 
@@ -264,6 +303,52 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
 
             return EmitWindowsImage(
+                program,
+                inputPath,
+                outputPath
+            );
+        }
+
+        public NativeCompilerResult CompileFileMacOS(string inputPath, string outputPath) {
+            SourceText source = SourceText.FromFile(inputPath);
+
+            DiagnosticBag subsetDiagnostics = new DiagnosticBag();
+            SelfHostSubsetValidator subset = new SelfHostSubsetValidator();
+
+            if (!subset.Validate(source, subsetDiagnostics)) {
+                return new NativeCompilerResult(
+                    false,
+                    inputPath + ":\n" + subsetDiagnostics.ToText()
+                );
+            }
+
+            SyntaxTree tree = SyntaxTree.ParseFast(source);
+
+            if (tree.Diagnostics().HasErrors()) {
+                return new NativeCompilerResult(
+                    false,
+                    inputPath + ":\n" + tree.Diagnostics().ToText()
+                );
+            }
+
+            DiagnosticBag diagnostics = new DiagnosticBag();
+
+            Hydrogen.Compiler.Binding.Binder binder =
+                new Hydrogen.Compiler.Binding.Binder();
+
+            BoundProgram program = binder.Bind(
+                tree.Root(),
+                diagnostics
+            );
+
+            if (diagnostics.HasErrors()) {
+                return new NativeCompilerResult(
+                    false,
+                    inputPath + ":\n" + diagnostics.ToText()
+                );
+            }
+
+            return EmitMacOSImage(
                 program,
                 inputPath,
                 outputPath
@@ -463,6 +548,29 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return new NativeCompilerResult(true, "");
         }
 
+		private NativeCompilerResult EmitMacOSImage(BoundProgram program, string inputPath, string outputPath) {
+			IrLowering lowering = new IrLowering();
+			IrModule module = lowering.Lower(program);
+
+			DirectMainCompiler compiler = new DirectMainCompiler();
+			DirectImageResult result = compiler.CompileMacOS(module);
+
+			if (!result.Success()) {
+				return new NativeCompilerResult(
+					false,
+					inputPath + ": macOS compilation failed: " +
+					result.Message() + "\n"
+				);
+			}
+
+			System.IO.File.WriteAllBytes(
+				outputPath,
+				result.Image()
+			);
+
+			return new NativeCompilerResult(true, "");
+		}
+
         public NativeCompilerResult CheckFile(string inputPath) {
             return CheckFileInternal(inputPath, false);
         }
@@ -472,7 +580,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private NativeCompilerResult CheckFileInternal(string inputPath, bool emitIr) {
-            if (IsProject(inputPath)) { return ProcessProject(inputPath, "", true, emitIr, false, false, false, false, false, false); }
+            if (IsProject(inputPath)) {
+				return ProcessProject(inputPath, "", true, emitIr, false, false, false, false, false, false, false);
+			}
             SourceText source = SourceText.FromFile(inputPath);
             DiagnosticBag subsetDiagnostics = new DiagnosticBag();
             SelfHostSubsetValidator subset = new SelfHostSubsetValidator();

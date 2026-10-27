@@ -8,7 +8,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'tools/native-runtime/runtime.S'
-TARGET = ROOT / 'samples/self_hosting/Hydrogen.Compiler.CodeGen.X64/NativeRuntimeEmitter.hy'
+TARGET = ROOT / 'src/Hydrogen.Compiler.CodeGen.X64/NativeRuntimeEmitter.hy'
 with tempfile.TemporaryDirectory() as directory:
     obj = Path(directory) / 'runtime.o'
     binary = Path(directory) / 'runtime.bin'

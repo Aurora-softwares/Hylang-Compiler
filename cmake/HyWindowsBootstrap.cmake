@@ -4,7 +4,7 @@ foreach(required NATIVE_BINARY SOURCE_DIR TEMP_DIR WINE_BINARY)
     endif()
 endforeach()
 file(MAKE_DIRECTORY "${TEMP_DIR}")
-set(project "${SOURCE_DIR}/samples/self_hosting/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Windows.hyproj")
+set(project "${SOURCE_DIR}/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Windows.hyproj")
 set(stage1 "${TEMP_DIR}/hydrogen-windows-stage1.exe")
 set(stage2 "${TEMP_DIR}/hydrogen-windows-stage2.exe")
 execute_process(COMMAND "${NATIVE_BINARY}" build "${project}" -o "${stage1}" --hide-progress
