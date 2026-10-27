@@ -76,6 +76,14 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private NativeCompilerResult ProcessProject(string projectPath, string outputPath, bool check, bool emitIr, bool uefi, bool kernel, bool australis, bool nativeUser, bool windows, bool driver) {
+            HyprojManifest driverManifest = null;
+            if (driver) {
+                driverManifest = HyprojManifest.Load(projectPath);
+                if (!driverManifest.ValidDriver()) {
+                    return new NativeCompilerResult(false,
+                        projectPath + ": invalid [driver] ABI or device match metadata\n");
+                }
+            }
             ProjectClosure closure = ProjectClosure.Collect(projectPath);
             if (closure.Error() != "") {
                 return new NativeCompilerResult(false, "error: " + closure.Error() + "\n");
@@ -142,7 +150,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (australis || nativeUser || driver) {
                     byte[] validated = null;
                     if (driver) {
-                        validated = new AustralisDriverImageBuilder().Build(program);
+                        validated = new AustralisDriverImageBuilder().Build(program, driverManifest);
                     } else if (nativeUser) {
                         validated = new AustralisNativeImageBuilder().Build(program);
                     } else {
@@ -164,7 +172,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return new NativeCompilerResult(true, DebugProgram(program, emitIr));
             }
             if (kernel) { return EmitKernelImage(program, projectPath, outputPath); }
-            if (driver) { return EmitDriverImage(program, projectPath, outputPath); }
+            if (driver) { return EmitDriverImage(program, driverManifest, projectPath, outputPath); }
             if (uefi) { return EmitUefiImage(program, projectPath, outputPath); }
 			if (australis) { return EmitAustralisImage(program, projectPath, outputPath); }
             if (nativeUser) { return EmitNativeUserImage(program, projectPath, outputPath); }
@@ -350,9 +358,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return new NativeCompilerResult(true, "");
         }
 
-        private NativeCompilerResult EmitDriverImage(BoundProgram program, string inputPath, string outputPath) {
+        private NativeCompilerResult EmitDriverImage(BoundProgram program, HyprojManifest manifest, string inputPath, string outputPath) {
             if (progress != null) { progress.Begin("Generating Australis driver image"); }
-            byte[] image = new AustralisDriverImageBuilder().Build(program);
+            byte[] image = new AustralisDriverImageBuilder().Build(program, manifest);
             if (image == null) {
                 return new NativeCompilerResult(false,
                     inputPath + ": unsupported Australis driver program (expected static int DriverMain.Run(long context))\n");

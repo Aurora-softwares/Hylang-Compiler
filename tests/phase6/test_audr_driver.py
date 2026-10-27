@@ -55,6 +55,39 @@ def main():
         run(compiler, "build", sample, "-o", second, "--hide-progress", "--hide-spinner", "--hide-log")
         assert second.read_bytes() == image
 
+        matched = root / "Matched.hyproj"
+        matched_source = root / "Matched.hy"
+        matched_source.write_text((sample.parent / "DriverMain.hy").read_text())
+        matched.write_text('format = 2\nname = "Matched"\ntype = "driver"\n'
+                           'sources = ["Matched.hy"]\n\n[driver]\nabi = 2\n'
+                           'match = "pci"\nvendor = 65535\ndevice = 65535\n'
+                           'class = 12\nsubclass = 3\ninterface = 48\n')
+        run(compiler, "check", matched)
+        matched_image = root / "Matched.driver"
+        run(compiler, "build", matched, "-o", matched_image,
+            "--hide-progress", "--hide-spinner", "--hide-log")
+        v2 = matched_image.read_bytes()
+        assert v2[:8] == b"AUDR\x02\x02\0\0"
+        assert struct.unpack_from("<IIIIII", v2, 24) == (1, 65535, 65535, 12, 3, 48)
+        assert len(v2) == 48 + struct.unpack_from("<I", v2, 8)[0]
+        assert struct.unpack_from("<I", v2, 16)[0] == zlib.crc32(v2[24:])
+        usb = root / "Usb.hyproj"
+        usb.write_text(matched.read_text().replace('match = "pci"', 'match = "usb"'))
+        usb_image = root / "Usb.driver"
+        run(compiler, "check", usb)
+        run(compiler, "build", usb, "-o", usb_image,
+            "--hide-progress", "--hide-spinner", "--hide-log")
+        assert struct.unpack_from("<I", usb_image.read_bytes(), 24)[0] == 2
+
+        matched.write_text(matched.read_text().replace("interface = 48", "interface = 999"))
+        run(compiler, "check", matched, success=False)
+        run(compiler, "build", matched, "-o", matched_image,
+            "--hide-progress", success=False)
+        assert matched_image.read_bytes() == v2
+        matched.write_text(matched.read_text().replace("interface = 999",
+                                                       "interface = " + "9" * 80))
+        run(compiler, "check", matched, success=False)
+
         bad_source = root / "Bad.hy"
         bad_project = root / "Bad.hyproj"
         bad_output = root / "Bad.driver"

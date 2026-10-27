@@ -12,8 +12,16 @@ namespace Hydrogen.Compiler.Core {
         private string[] dependencyIds;
         private string[] dependencyVersions;
         private bool validDependencies;
+        private int driverAbi;
+        private int driverMatchKind;
+        private int driverVendor;
+        private int driverDevice;
+        private int driverClass;
+        private int driverSubclass;
+        private int driverInterface;
+        private bool validDriver;
 
-        public HyprojManifest(int inputFormat, string inputType, string inputVersion, string inputPackageId, string inputOutput, string[] inputSources, string[] inputProjectReferences, string[] inputDependencyIds, string[] inputDependencyVersions, bool inputValidDependencies) {
+        public HyprojManifest(int inputFormat, string inputType, string inputVersion, string inputPackageId, string inputOutput, string[] inputSources, string[] inputProjectReferences, string[] inputDependencyIds, string[] inputDependencyVersions, bool inputValidDependencies, int inputDriverAbi, int inputDriverMatchKind, int inputDriverVendor, int inputDriverDevice, int inputDriverClass, int inputDriverSubclass, int inputDriverInterface, bool inputValidDriver) {
             format = inputFormat;
             type = inputType;
             version = inputVersion;
@@ -24,6 +32,14 @@ namespace Hydrogen.Compiler.Core {
             dependencyIds = inputDependencyIds;
             dependencyVersions = inputDependencyVersions;
             validDependencies = inputValidDependencies;
+            driverAbi = inputDriverAbi;
+            driverMatchKind = inputDriverMatchKind;
+            driverVendor = inputDriverVendor;
+            driverDevice = inputDriverDevice;
+            driverClass = inputDriverClass;
+            driverSubclass = inputDriverSubclass;
+            driverInterface = inputDriverInterface;
+            validDriver = inputValidDriver;
         }
 
         public int Format() { return format; }
@@ -36,6 +52,14 @@ namespace Hydrogen.Compiler.Core {
         public string[] DependencyIds() { return dependencyIds; }
         public string[] DependencyVersions() { return dependencyVersions; }
         public bool ValidDependencies() { return validDependencies; }
+        public int DriverAbi() { return driverAbi; }
+        public int DriverMatchKind() { return driverMatchKind; }
+        public int DriverVendor() { return driverVendor; }
+        public int DriverDevice() { return driverDevice; }
+        public int DriverClass() { return driverClass; }
+        public int DriverSubclass() { return driverSubclass; }
+        public int DriverInterface() { return driverInterface; }
+        public bool ValidDriver() { return validDriver; }
 
         public static HyprojManifest Load(string path) {
             return Parse(System.IO.File.ReadAllText(path));
@@ -52,6 +76,15 @@ namespace Hydrogen.Compiler.Core {
             string[] dependencyIds = new string[0];
             string[] dependencyVersions = new string[0];
             bool validDependencies = true;
+            int driverAbi = 1;
+            int driverMatchKind = 0;
+            int driverVendor = -1;
+            int driverDevice = -1;
+            int driverClass = -1;
+            int driverSubclass = -1;
+            int driverInterface = -1;
+            bool validDriver = true;
+            bool hasDriverSection = false;
             string section = "";
 
             string[] lines = SplitLines(text);
@@ -64,6 +97,7 @@ namespace Hydrogen.Compiler.Core {
                 }
                 if (StartsWith(line, "[")) {
                     section = line;
+                    if (section == "[driver]") { hasDriverSection = true; }
                     i = i + 1;
                     continue;
                 }
@@ -80,6 +114,19 @@ namespace Hydrogen.Compiler.Core {
                 }
                 if (section == "[package]") {
                     if (key == "id") { packageId = Unquote(value); }
+                } else if (section == "[driver]") {
+                    if (key == "abi") { driverAbi = ParseDriverNumber(value, 2); }
+                    else if (key == "match") {
+                        if (value == "\"pci\"") { driverMatchKind = 1; }
+                        else if (value == "\"usb\"") { driverMatchKind = 2; }
+                        else { validDriver = false; }
+                    }
+                    else if (key == "vendor") { driverVendor = ParseDriverNumber(value, 65535); }
+                    else if (key == "device") { driverDevice = ParseDriverNumber(value, 65535); }
+                    else if (key == "class") { driverClass = ParseDriverNumber(value, 255); }
+                    else if (key == "subclass") { driverSubclass = ParseDriverNumber(value, 255); }
+                    else if (key == "interface") { driverInterface = ParseDriverNumber(value, 255); }
+                    else { validDriver = false; }
                 } else if (section == "[dependencies]") {
                     string version = Unquote(value);
                     if (!ValidPackagePart(key) || !ValidPackagePart(version) ||
@@ -108,8 +155,31 @@ namespace Hydrogen.Compiler.Core {
                 i = i + 1;
             }
 
+            if (hasDriverSection && (type != "driver" || driverAbi != 2 || driverMatchKind == 0 ||
+                driverVendor < 0 || driverDevice < 0 || driverClass < 0 ||
+                driverSubclass < 0 || driverInterface < 0 ||
+                (driverVendor == 65535 && driverDevice == 65535 &&
+                 driverClass == 255 && driverSubclass == 255 && driverInterface == 255))) {
+                validDriver = false;
+            }
             return new HyprojManifest(format, type, version, packageId, output, sources, projectReferences,
-                dependencyIds, dependencyVersions, validDependencies);
+                dependencyIds, dependencyVersions, validDependencies, driverAbi, driverMatchKind,
+                driverVendor, driverDevice, driverClass, driverSubclass, driverInterface, validDriver);
+        }
+
+        private static int ParseDriverNumber(string value, int maximum) {
+            if (value.Length == 0) { return -1; }
+            int result = 0;
+            int i = 0;
+            while (i < value.Length) {
+                string ch = value[i];
+                if (IndexOf("0123456789", ch) < 0) { return -1; }
+                int digit = ParseInt(ch);
+                if (digit > maximum || result > (maximum - digit) / 10) { return -1; }
+                result = result * 10 + digit;
+                i = i + 1;
+            }
+            return result;
         }
 
         private static bool Contains(string[] values, string needle) {

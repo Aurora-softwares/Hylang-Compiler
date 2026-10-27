@@ -1,18 +1,22 @@
 using Hydrogen.Compiler.Binding;
+using Hydrogen.Compiler.Core;
 using Hydrogen.Compiler.IR;
 
 namespace Hydrogen.Compiler.CodeGen.X64 {
-    // AUDR v1: a checked header followed by position-independent kernel code.
-    // The entry is static int DriverMain.Run(long context), at code offset zero.
+    // AUDR v1 and v2: a checked header followed by position-independent code.
+    // The entry remains static int DriverMain.Run(long context), at code offset zero.
     public class AustralisDriverImageBuilder {
-        public byte[] Build(BoundProgram program) {
-            if (program == null) { return null; }
+        public byte[] Build(BoundProgram program, HyprojManifest manifest) {
+            if (program == null || manifest == null || !manifest.ValidDriver()) { return null; }
+            bool v2 = manifest.DriverAbi() == 2;
             IrModule module = new IrLowering().Lower(program);
             DirectImageResult compiled = new DirectMainCompiler().CompileFreestanding(
                 module, "DriverMain", "Run");
             if (!compiled.Success()) { return null; }
             byte[] body = compiled.Image();
-            if (body == null || body.Length < 1 || body.Length > 65525) { return null; }
+            int maximumBody = 65525;
+            if (v2) { maximumBody = 1048565; }
+            if (body == null || body.Length < 1 || body.Length > maximumBody) { return null; }
             // CallKernel passes context in rdi. Freestanding Hydrogen methods
             // read their first argument at [rbp+16], so use a tiny entry shim
             // without changing the ABI of existing native runtime callers.
@@ -29,19 +33,29 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 bodyIndex = bodyIndex + 1;
             }
 
-            byte[] image = new byte[24 + code.Length];
+            int headerLength = 24;
+            if (v2) { headerLength = 48; }
+            byte[] image = new byte[headerLength + code.Length];
             image[0] = (byte)65; image[1] = (byte)85;
             image[2] = (byte)68; image[3] = (byte)82; // AUDR
-            image[4] = (byte)1; // format version
-            image[5] = (byte)1; // kernel entry ABI
-            // Flags and entry offset are zero in v1.
+            image[4] = (byte)manifest.DriverAbi();
+            image[5] = (byte)manifest.DriverAbi();
+            // Flags and entry offset are zero in both versions.
             Write32(image, 8, code.Length);
-            Write32(image, 16, Crc32(code));
+            if (v2) {
+                Write32(image, 24, manifest.DriverMatchKind());
+                Write32(image, 28, manifest.DriverVendor());
+                Write32(image, 32, manifest.DriverDevice());
+                Write32(image, 36, manifest.DriverClass());
+                Write32(image, 40, manifest.DriverSubclass());
+                Write32(image, 44, manifest.DriverInterface());
+            }
             int i = 0;
             while (i < code.Length) {
-                image[24 + i] = code[i];
+                image[headerLength + i] = code[i];
                 i = i + 1;
             }
+            Write32(image, 16, Crc32(image, 24, image.Length - 24));
             return image;
         }
 
@@ -66,13 +80,13 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             return result;
         }
 
-        private long Crc32(byte[] bytes) {
+        private long Crc32(byte[] bytes, int offset, int length) {
             long allOnes = 65535; allOnes = allOnes * 65536 + 65535;
             long polynomial = 39882; polynomial = polynomial * 100000 + 92384;
             long crc = allOnes;
             int i = 0;
-            while (i < bytes.Length) {
-                crc = Xor32(crc, (long)bytes[i]);
+            while (i < length) {
+                crc = Xor32(crc, (long)bytes[offset + i]);
                 int bit = 0;
                 while (bit < 8) {
                     if (crc % 2 == 1) { crc = Xor32(crc / 2, polynomial); }
