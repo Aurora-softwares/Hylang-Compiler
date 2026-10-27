@@ -2,7 +2,7 @@ format = 2
 name = "Hydrogen Compiler MacOS"
 version = "0.1.0"
 type = "macos"
-output = "hydrogen.o"
+output = "hydrogen"
 sources = ["Program.hy"]
 project_references = [
 	"../Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj",

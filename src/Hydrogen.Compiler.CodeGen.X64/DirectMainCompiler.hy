@@ -266,7 +266,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 				);
 
 				if (image == null) {
-					return Failed("macOS Mach-O object generation failed");
+					return Failed("macOS Mach-O executable generation failed");
 				}
 
 				return new DirectImageResult(true, image, "", -1);

@@ -3,7 +3,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 	// as a PE32+ console process. All references are RIP relative, including
 	// the runtime's Win32 import thunks; no native linker is required.
     public class WindowsImageBuilder {
-        public byte[] BuildCodeAndData(byte[] code, string[] payloads, int[] patchOffsets, int[] payloadIndexes, int[] externalCallOffsets, string[] externalSymbols, int runtimeStart, WindowsRuntimeEmitter runtime) {
+        public byte[] BuildCodeAndData(byte[] code, string[] payloads, int[] patchOffsets, int[] payloadIndexes, int runtimeStart, WindowsRuntimeEmitter runtime) {
             if (code == null || code.Length < 1 || code.Length > 0x10000000) { return null; }
             int textRva = 0x1000;
             int textRaw = 0x200;
