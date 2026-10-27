@@ -11078,6 +11078,17 @@ bool is_workspace_manifest(const ProjectManifest& manifest) {
     return manifest.type == "workspace";
 }
 
+bool manifest_value_complete(const string& value) {
+    int brackets = 0;
+    bool quoted = false;
+    for (char ch : value) {
+        if (ch == '"') quoted = !quoted;
+        else if (!quoted && ch == '[') ++brackets;
+        else if (!quoted && ch == ']') --brackets;
+    }
+    return !quoted && brackets <= 0;
+}
+
 bool is_test_manifest(const ProjectManifest& manifest) {
     return manifest.type == "test";
 }
@@ -11338,7 +11349,11 @@ std::optional<ProjectManifest> load_project_manifest(const fs::path& path, Diagn
         }
 
         const string key = trim(line.substr(0, equals));
-        const string value = trim(line.substr(equals + 1));
+        string value = trim(line.substr(equals + 1));
+        while (!manifest_value_complete(value) && std::getline(input, line)) {
+            ++line_number;
+            value += "\n" + trim(line);
+        }
         const int value_column = static_cast<int>(equals + 2);
 
         if (current_section.empty()) {

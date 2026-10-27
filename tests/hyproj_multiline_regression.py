@@ -26,6 +26,13 @@ def require_ok(proc, what):
         raise AssertionError(f"{what} returned {proc.returncode}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}")
 
 
+def make_executable(path):
+    # The self-hosted writer creates ELF files without their execute bit.
+    # Existing native integration tests also set it before launching output.
+    if ARGS.selfhost:
+        path.chmod(path.stat().st_mode | 0o111)
+
+
 def make_app(manifest):
     base = TMP / 'app'
     base.mkdir(parents=True, exist_ok=True)
@@ -60,6 +67,7 @@ class ManifestTests(unittest.TestCase):
         result = run(ENGINE, 'build', project, '-o', binary)
         require_ok(result, 'compiling app with project references')
         self.assertTrue(binary.is_file(), 'no output executable created')
+        make_executable(binary)
         execution = run(binary)
         require_ok(execution, 'running compiled application')
         self.assertIn('Hello from MathUtil', execution.stdout)
@@ -127,6 +135,7 @@ description = |
         binary = base / 'probe-out'
         build = run(ENGINE, 'build', probe, '-o', binary)
         require_ok(build, 'building description probe')
+        make_executable(binary)
         outcome = run(binary, description)
         require_ok(outcome, 'running description probe')
         self.assertEqual(outcome.stdout.replace('\r\n', '\n'),
