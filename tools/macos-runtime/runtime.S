@@ -47,7 +47,7 @@ mac_syscall:
  jmp .result
 .unmap:
  call mac_munmap
- jmp .result
+ jmp .result_int
 .read:
  call mac_read
  jmp .result
@@ -59,35 +59,39 @@ mac_syscall:
  jz .open_call
  mov esi,0x601           # Darwin O_WRONLY | O_CREAT | O_TRUNC
 .open_call:
+ xor eax,eax             # open is variadic; no vector arguments
  call mac_open
- jmp .result
+ jmp .result_int
 .close:
  call mac_close
- jmp .result
+ jmp .result_int
 .seek:
  call mac_lseek
  jmp .result
 .ioctl:
  mov esi,0x40087468      # Darwin TIOCGWINSZ
+ xor eax,eax             # ioctl is variadic; no vector arguments
  call mac_ioctl
- jmp .result
+ jmp .result_int
 .mkdir:
  mov rdi,rsi             # mkdirat(AT_FDCWD,path,mode) -> mkdir(path,mode)
  mov rsi,rdx
  call mac_mkdir
- jmp .result
+ jmp .result_int
 .fork:
  call mac_fork
- jmp .result
+ jmp .result_int
 .execve:
  call mac_execve
- jmp .result
+ jmp .result_int
 .waitpid:
  call mac_waitpid
- jmp .result
+ jmp .result_int
 .exit:
  call mac_exit
  ud2
+.result_int:
+ movsxd rax,eax          # C int -1 must remain negative in 64-bit runtime ABI
 .result:
  cmp rax,-1
  jne .restore

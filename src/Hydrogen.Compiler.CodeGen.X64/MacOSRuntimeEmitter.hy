@@ -62,12 +62,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             bytes = bytes + "63650a72756e74696d65206572726f723a20696e646578206f7574206f662072616e67650a72756e74696d65206572726f723a20696e76616c696420616c6c6f636174696f6e2073697a650a72756e74";
             bytes = bytes + "696d65206572726f723a20616c6c6f636174696f6e206661696c65640a72756e74696d65206572726f723a2066696c6520492f4f206661696c65640a72756e74696d65206572726f723a20696e76616c";
             bytes = bytes + "696420696e746567657220737472696e670a31c0c3534889e34883e4f04883ec4048893c24488974240848895424104c894424184c894c24204c8954242883f809744883f80b744f83f800745183f801";
-            bytes = bytes + "745383f802745583f803746083f808746283f81074643d02010000746983f839747183f83b747383f83d747583f83c7477b8daffffffe985000000b902100000e802010000eb68e801010000eb61e800";
-            bytes = bytes + "010000eb5ae8ff000000eb5385f67405be01060000e8f5000000eb43e8f4000000eb3ce8f3000000eb35be68740840e8ed000000eb294889f74889d6e8e6000000eb1ce8e5000000eb15e8e4000000eb";
-            bytes = bytes + "0ee8e3000000eb07e8e20000000f0b4883f8ff750be8db00000048630048f7d8488b3c24488b742408488b5424104c8b4424184c8b4c24204c8b5424284889dc5bc35341544155498bbfd010000048ff";
-            bytes = bytes + "cf790231ffe8e6f4ffff4889c34531e44c3b23732d4d8bafd81000004f8b6ce50831f641807c350000740548ffc6ebf34c89efe81df6ffff4a8944e30849ffc4ebce4889d8415d415c5bc3b83c000000";
-            bytes = bytes + "e880feffff0f0bff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff";
-            bytes = bytes + "2500000000ff2500000000";
+            bytes = bytes + "745383f802745583f803746283f808746483f81074663d02010000746d83f839747583f83b747783f83d747983f83c747bb8daffffffe98c000000b902100000e809010000eb6fe808010000eb65e807";
+            bytes = bytes + "010000eb61e806010000eb5a85f67405be0106000031c0e8fa000000eb45e8f9000000eb3ee8f8000000eb3abe6874084031c0e8f0000000eb294889f74889d6e8e9000000eb1ce8e8000000eb15e8e7";
+            bytes = bytes + "000000eb0ee8e6000000eb07e8e50000000f0b4863c04883f8ff750be8db00000048630048f7d8488b3c24488b742408488b5424104c8b4424184c8b4c24204c8b5424284889dc5bc35341544155498b";
+            bytes = bytes + "bfd010000048ffcf790231ffe8dff4ffff4889c34531e44c3b23732d4d8bafd81000004f8b6ce50831f641807c350000740548ffc6ebf34c89efe816f6ffff4a8944e30849ffc4ebce4889d8415d415c";
+            bytes = bytes + "5bc3b83c000000e879feffff0f0bff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000ff2500000000";
+            bytes = bytes + "ff2500000000ff2500000000ff2500000000";
             int i = 0;
             while (i < bytes.Length) {
                 code.EmitByte(Digit(bytes[i]) * 16 + Digit(bytes[i + 1]));
@@ -76,7 +76,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
         public int Offset(string name) {
             if (name == "rt_alloc") { return 145; }
-            if (name == "rt_args") { return 4786; }
+            if (name == "rt_args") { return 4793; }
             if (name == "rt_array") { return 1968; }
             if (name == "rt_bool_string") { return 2702; }
             if (name == "rt_byte_array") { return 2009; }
@@ -91,7 +91,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (name == "rt_equal") { return 2469; }
             if (name == "rt_error") { return 4251; }
             if (name == "rt_exists") { return 3154; }
-            if (name == "rt_exit") { return 4875; }
+            if (name == "rt_exit") { return 4882; }
             if (name == "rt_gc") { return 1883; }
             if (name == "rt_heapbytes") { return 1824; }
             if (name == "rt_index") { return 2253; }
@@ -129,20 +129,20 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
         public int[] ExternalCallOffsets() {
             int[] result = new int[14];
-            result[0] = runtimeStart + 4889;
-            result[1] = runtimeStart + 4895;
-            result[2] = runtimeStart + 4901;
-            result[3] = runtimeStart + 4907;
-            result[4] = runtimeStart + 4913;
-            result[5] = runtimeStart + 4919;
-            result[6] = runtimeStart + 4925;
-            result[7] = runtimeStart + 4931;
-            result[8] = runtimeStart + 4937;
-            result[9] = runtimeStart + 4943;
-            result[10] = runtimeStart + 4949;
-            result[11] = runtimeStart + 4955;
-            result[12] = runtimeStart + 4961;
-            result[13] = runtimeStart + 4967;
+            result[0] = runtimeStart + 4896;
+            result[1] = runtimeStart + 4902;
+            result[2] = runtimeStart + 4908;
+            result[3] = runtimeStart + 4914;
+            result[4] = runtimeStart + 4920;
+            result[5] = runtimeStart + 4926;
+            result[6] = runtimeStart + 4932;
+            result[7] = runtimeStart + 4938;
+            result[8] = runtimeStart + 4944;
+            result[9] = runtimeStart + 4950;
+            result[10] = runtimeStart + 4956;
+            result[11] = runtimeStart + 4962;
+            result[12] = runtimeStart + 4968;
+            result[13] = runtimeStart + 4974;
             return result;
         }
         public string[] ExternalSymbols() {
