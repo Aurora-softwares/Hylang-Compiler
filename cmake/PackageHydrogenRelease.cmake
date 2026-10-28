@@ -28,7 +28,13 @@ if (NOT DEFINED RELEASES_DIR OR RELEASES_DIR STREQUAL "")
 endif()
 get_filename_component(RELEASES_DIR "${RELEASES_DIR}" ABSOLUTE)
 
-set(PACKAGE_NAME "hydrogen-${VERSION}-linux-x86_64")
+if(NOT DEFINED PLATFORM OR PLATFORM STREQUAL "")
+    set(PLATFORM "linux-x86_64")
+endif()
+if(NOT PLATFORM STREQUAL "linux-x86_64" AND NOT PLATFORM STREQUAL "macos-x86_64")
+    message(FATAL_ERROR "Unsupported Unix release platform: ${PLATFORM}")
+endif()
+set(PACKAGE_NAME "hydrogen-${VERSION}-${PLATFORM}")
 set(ARCHIVE_NAME "${PACKAGE_NAME}.tar.gz")
 set(ARCHIVE_PATH "${RELEASES_DIR}/${ARCHIVE_NAME}")
 set(ARCHIVE_SUM_PATH "${ARCHIVE_PATH}.sha256")
@@ -57,9 +63,14 @@ foreach(EXECUTABLE "bin/hy" "libexec/hy-core" "libexec/hy-maintenance")
     file(CHMOD "${PACKAGE_DIR}/${EXECUTABLE}"
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 endforeach()
+if(PLATFORM STREQUAL "macos-x86_64")
+    set(RELEASE_GUIDE "https://hylang.co.uk/releasing/macos-archive/")
+else()
+    set(RELEASE_GUIDE "https://hylang.co.uk/releasing/linux-archive/")
+endif()
 file(WRITE "${PACKAGE_DIR}/README.md"
-    "# Hydrogen ${VERSION} for Linux x86-64\n\n"
-    "Installation, update, and uninstall instructions: https://hylang.co.uk/releasing/linux-archive/\n")
+    "# Hydrogen ${VERSION} for ${PLATFORM}\n\n"
+    "Installation, update, and uninstall instructions: ${RELEASE_GUIDE}\n")
 
 set(INSTALLED_FILES
     "bin/hy"
@@ -77,7 +88,7 @@ endif()
 
 file(WRITE "${PACKAGE_DIR}/BUILD-INFO.txt"
     "Hydrogen release: ${VERSION}\n"
-    "Platform: linux-x86_64\n"
+    "Platform: ${PLATFORM}\n"
     "Entrypoint: bin/hy\n"
     "Compiler: libexec/hy-core\n")
 

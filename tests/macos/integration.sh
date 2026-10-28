@@ -24,6 +24,13 @@ file "$build_dir/hydrogen-macos-stage1"
 chmod +x "$build_dir/hydrogen-macos-stage2"
 cmp "$build_dir/hydrogen-macos-stage1" "$build_dir/hydrogen-macos-stage2"
 
+"$build_dir/hydrogen-macos-stage2" new macos "$build_dir/scaffold"
+"$build_dir/hydrogen-macos-stage2" check "$build_dir/scaffold/scaffold.hyproj"
+"$build_dir/hydrogen-macos-stage2" build "$build_dir/scaffold/scaffold.hyproj" \
+    -o "$build_dir/scaffold-app" --hide-progress --hide-spinner --hide-log
+chmod +x "$build_dir/scaffold-app"
+test "$("$build_dir/scaffold-app")" = 'Hello from scaffold!'
+
 "$build_dir/hydrogen-macos-stage2" compile \
     "$source_dir/tests/macos/Hello.hy" --target macos-x64 \
     -o "$build_dir/hello"
@@ -63,4 +70,17 @@ process_status=$?
 set -e
 test "$process_status" -eq 7
 
-echo 'macOS x64 self-hosting, runtime, files, GC, argv, and process execution passed'
+cmake -DSOURCE_DIR="$source_dir" -DHOST_COMPILER="$build_dir/hydrogen-macos-stage2" \
+    -DVERSION=alpha-0.0.0-macos-ci -DRELEASES_DIR="$build_dir/releases" \
+    -P "$source_dir/cmake/MakeHydrogenMacOSRelease.cmake"
+archive="$build_dir/releases/hydrogen-alpha-0.0.0-macos-ci-macos-x86_64.tar.gz"
+test -f "$archive.sha256"
+mkdir -p "$build_dir/installed"
+tar -xzf "$archive" -C "$build_dir/installed"
+package="$build_dir/installed/hydrogen-alpha-0.0.0-macos-ci-macos-x86_64"
+test "$("$package/bin/hy" --version)" = 'Hydrogen alpha-0.0.0-macos-ci'
+"$package/bin/hy" check "$source_dir/tests/macos/FullRuntime.hyproj"
+"$package/bin/hy" uninstall --force
+test ! -e "$package"
+
+echo 'macOS x64 self-hosting, runtime, CLI, release, and uninstall passed'

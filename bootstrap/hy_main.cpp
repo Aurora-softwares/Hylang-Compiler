@@ -621,7 +621,26 @@ string format_hyproj_v2(const string& input) {
             continue;
         }
         const string key = trim(line.substr(0, equals));
-        const string value = trim(line.substr(equals + 1));
+        string value = trim(line.substr(equals + 1));
+        if (!value.empty() && value.front() == '[') {
+            int depth = 0;
+            bool quoted = false;
+            bool escaped = false;
+            auto scan = [&](const string& part) {
+                for (const char ch : part) {
+                    if (escaped) { escaped = false; continue; }
+                    if (ch == '\\' && quoted) { escaped = true; continue; }
+                    if (ch == '"') { quoted = !quoted; continue; }
+                    if (!quoted && ch == '[') { ++depth; }
+                    if (!quoted && ch == ']') { --depth; }
+                }
+            };
+            scan(value);
+            while (depth > 0 && std::getline(stream, line)) {
+                value += "\n" + line;
+                scan(line);
+            }
+        }
         if (section.empty()) {
             root[key] = value;
         } else if (section == "package") {

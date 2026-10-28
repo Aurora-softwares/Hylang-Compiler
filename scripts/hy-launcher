@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# Hydrogen's Linux release launcher; the native compiler remains libexec/hy-core.
+# Hydrogen's Linux and macOS release launcher; the compiler is libexec/hy-core.
 set -euo pipefail
 entry=${BASH_SOURCE[0]}
 if [[ $entry != */* ]]; then entry=$(command -v -- "$entry"); fi
-resolved=$(readlink -f -- "$entry")
+resolved=$entry
+while [[ -L $resolved ]]; do
+    link=$(readlink "$resolved")
+    if [[ $link == /* ]]; then resolved=$link
+    else resolved=$(dirname "$resolved")/$link; fi
+done
+resolved=$(cd "$(dirname "$resolved")" && pwd -P)/$(basename "$resolved")
 root=$(dirname -- "$(dirname -- "$resolved")")
 case ${1-} in
     update-check|update|uninstall|remove)

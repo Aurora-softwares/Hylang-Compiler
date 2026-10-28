@@ -80,12 +80,12 @@ namespace Hydrogen.Compiler.Cli {
 
         private static int New(string[] args) {
             if (args.Length != 3) {
-                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|collection|os|efi|kernel|driver|exec|windows <name>");
+                System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|collection|os|efi|kernel|driver|exec|windows|macos <name>");
                 return 1;
             }
             string kind = args[1];
             string destination = PathUtils.Normalize(args[2]);
-            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace" && kind != "collection" && kind != "os" && kind != "efi" && kind != "kernel" && kind != "driver" && kind != "exec" && kind != "windows") {
+            if (kind != "app" && kind != "lib" && kind != "tool" && kind != "test" && kind != "workspace" && kind != "collection" && kind != "os" && kind != "efi" && kind != "kernel" && kind != "driver" && kind != "exec" && kind != "windows" && kind != "macos") {
                 System.Console.WriteLine("error: unknown project kind '" + kind + "'");
                 return 1;
             }
@@ -130,7 +130,7 @@ namespace Hydrogen.Compiler.Cli {
                 sourceFile = "Library.hy";
             } else if (kind == "test") {
                 projectType = "test";
-            } else if (kind == "efi" || kind == "kernel" || kind == "driver" || kind == "exec" || kind == "windows") {
+            } else if (kind == "efi" || kind == "kernel" || kind == "driver" || kind == "exec" || kind == "windows" || kind == "macos") {
                 projectType = kind;
                 if (kind == "kernel") { sourceFile = "KernelMain.hy"; }
                 if (kind == "driver") { sourceFile = "DriverMain.hy"; }
@@ -783,6 +783,8 @@ namespace Hydrogen.Compiler.Cli {
                     text = text + "output = \"" + name + ".exec\"\n";
                 } else if (type == "windows") {
                     text = text + "output = \"" + name + ".exe\"\n";
+                } else if (type == "macos") {
+                    text = text + "output = \"" + name + "\"\n";
                 }
                 text = text + "sources = [\"" + source + "\"]\n";
                 text = text + "project_references = []\n";
@@ -883,6 +885,17 @@ namespace Hydrogen.Compiler.Cli {
                     }
                     System.Console.WriteLine("check ok");
                     if (emitIr) { System.Console.WriteLine(windowsResult.DiagnosticsText()); }
+                    return 0;
+                }
+                if (manifest.Type() == "macos") {
+                    NativeCompiler macosCompiler = new NativeCompiler();
+                    NativeCompilerResult macosResult = macosCompiler.CheckProjectMacOS(path, emitIr);
+                    if (!macosResult.Success()) {
+                        System.Console.Write(macosResult.DiagnosticsText());
+                        return 1;
+                    }
+                    System.Console.WriteLine("check ok");
+                    if (emitIr) { System.Console.WriteLine(macosResult.DiagnosticsText()); }
                     return 0;
                 }
             }
@@ -1077,6 +1090,7 @@ namespace Hydrogen.Compiler.Cli {
 						child.Type() != "australis" &&
 						child.Type() != "native" &&
 						child.Type() != "windows" &&
+						child.Type() != "macos" &&
 						child.Type() != "collection"
 					)
 				) {
@@ -1125,6 +1139,8 @@ namespace Hydrogen.Compiler.Cli {
                         result = compiler.CheckProjectDriver(paths[index], emitIr);
                     } else if (checkedChild.Type() == "windows") {
                         result = compiler.CheckProjectWindows(paths[index], emitIr);
+                    } else if (checkedChild.Type() == "macos") {
+                        result = compiler.CheckProjectMacOS(paths[index], emitIr);
                     } else if (emitIr) { result = compiler.CheckFileEmitIr(paths[index]); }
                     else { result = compiler.CheckFile(paths[index]); }
                 } else {
@@ -1134,6 +1150,7 @@ namespace Hydrogen.Compiler.Cli {
                     else if (child.Type() == "efi") { result = compiler.BuildProjectUefi(paths[index], outputPath); }
                     else if (child.Type() == "native") { result = compiler.BuildProjectNativeUser(paths[index], outputPath); }
                     else if (child.Type() == "windows") { result = compiler.BuildProjectWindows(paths[index], outputPath); }
+                    else if (child.Type() == "macos") { result = compiler.BuildProjectMacOS(paths[index], outputPath); }
                     else if (child.Type() == "exec" || child.Type() == "australis") { result = compiler.BuildProjectAustralis(paths[index], outputPath); }
                     else { result = compiler.BuildProject(paths[index], outputPath); }
                 }
@@ -1227,12 +1244,13 @@ namespace Hydrogen.Compiler.Cli {
         }
 
         private static void PrintUsage() {
-            System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|collection|os|efi|kernel|driver|exec|windows <name>");
+            System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|collection|os|efi|kernel|driver|exec|windows|macos <name>");
             System.Console.WriteLine("usage: hy <tokens|parse|check|build> <file.hy|project.hyproj>");
             System.Console.WriteLine("usage: hy check <file.hy> --emit-ir");
             System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");
             System.Console.WriteLine("usage: hy compile <file.hy> --target uefi-x64 -o <output>");
             System.Console.WriteLine("usage: hy compile <file.hy> --target windows-x64 -o <output.exe>");
+            System.Console.WriteLine("usage: hy compile <file.hy> --target macos-x64 -o <output>");
             System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--hide-progress] [--hide-spinner] [--hide-log]");
             System.Console.WriteLine("usage: hy stage-compare <project.hyproj> --stage1 <path> --stage2 <path>");
             System.Console.WriteLine("usage: hy package pack <library.hyproj> -o <output.hypkg>");

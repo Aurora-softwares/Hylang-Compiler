@@ -23,11 +23,14 @@ get_filename_component(RELEASES_DIR "${RELEASES_DIR}" ABSOLUTE)
 
 set(LINUX_NAME "hydrogen-${VERSION}-linux-x86_64")
 set(WINDOWS_NAME "hydrogen-${VERSION}-windows-x86_64")
+set(MACOS_NAME "hydrogen-${VERSION}-macos-x86_64")
 foreach(OUTPUT
     "${RELEASES_DIR}/${LINUX_NAME}.tar.gz"
     "${RELEASES_DIR}/${LINUX_NAME}.tar.gz.sha256"
     "${RELEASES_DIR}/${WINDOWS_NAME}.zip"
-    "${RELEASES_DIR}/${WINDOWS_NAME}.zip.sha256")
+    "${RELEASES_DIR}/${WINDOWS_NAME}.zip.sha256"
+    "${RELEASES_DIR}/${MACOS_NAME}.tar.gz"
+    "${RELEASES_DIR}/${MACOS_NAME}.tar.gz.sha256")
     if(EXISTS "${OUTPUT}" AND NOT FORCE)
         message(FATAL_ERROR "Release output already exists. Choose a new VERSION or pass -DFORCE=ON: ${OUTPUT}")
     endif()
@@ -92,7 +95,23 @@ if(NOT WINDOWS_PACKAGE_RESULT STREQUAL "0")
         "Could not build/package Windows release\n${WINDOWS_PACKAGE_OUTPUT}\n${WINDOWS_PACKAGE_ERROR}")
 endif()
 
-foreach(NAME "${LINUX_NAME}.tar.gz" "${WINDOWS_NAME}.zip")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSOURCE_DIR=${SOURCE_DIR}"
+        "-DHOST_COMPILER=${HOST_COMPILER}"
+        "-DVERSION=${VERSION}"
+        "-DRELEASES_DIR=${STAGE_OUTPUT}"
+        "-DFORCE=${FORCE}"
+        -P "${SOURCE_DIR}/cmake/MakeHydrogenMacOSRelease.cmake"
+    RESULT_VARIABLE MACOS_PACKAGE_RESULT
+    OUTPUT_VARIABLE MACOS_PACKAGE_OUTPUT
+    ERROR_VARIABLE MACOS_PACKAGE_ERROR)
+if(NOT MACOS_PACKAGE_RESULT STREQUAL "0")
+    message(FATAL_ERROR
+        "Could not build/package macOS release\n${MACOS_PACKAGE_OUTPUT}\n${MACOS_PACKAGE_ERROR}")
+endif()
+
+foreach(NAME "${LINUX_NAME}.tar.gz" "${WINDOWS_NAME}.zip" "${MACOS_NAME}.tar.gz")
     set(ARCHIVE "${STAGE_OUTPUT}/${NAME}")
     file(SHA256 "${ARCHIVE}" DIGEST)
     file(READ "${ARCHIVE}.sha256" SIDECAR)
@@ -105,13 +124,16 @@ if(FORCE)
         "${RELEASES_DIR}/${LINUX_NAME}.tar.gz"
         "${RELEASES_DIR}/${LINUX_NAME}.tar.gz.sha256"
         "${RELEASES_DIR}/${WINDOWS_NAME}.zip"
-        "${RELEASES_DIR}/${WINDOWS_NAME}.zip.sha256")
+        "${RELEASES_DIR}/${WINDOWS_NAME}.zip.sha256"
+        "${RELEASES_DIR}/${MACOS_NAME}.tar.gz"
+        "${RELEASES_DIR}/${MACOS_NAME}.tar.gz.sha256")
 endif()
 foreach(NAME
     "${LINUX_NAME}.tar.gz" "${LINUX_NAME}.tar.gz.sha256"
-    "${WINDOWS_NAME}.zip" "${WINDOWS_NAME}.zip.sha256")
+    "${WINDOWS_NAME}.zip" "${WINDOWS_NAME}.zip.sha256"
+    "${MACOS_NAME}.tar.gz" "${MACOS_NAME}.tar.gz.sha256")
     file(RENAME "${STAGE_OUTPUT}/${NAME}" "${RELEASES_DIR}/${NAME}")
 endforeach()
 file(REMOVE_RECURSE "${STAGE_DIR}")
-message(STATUS "Release candidate built for Linux x86-64 and Windows x64 in ${RELEASES_DIR}")
+message(STATUS "Release candidate built for Linux, Windows, and macOS x64 in ${RELEASES_DIR}")
 message(STATUS "Australis compiler package skipped: no supported self-hosted Australis CLI target")

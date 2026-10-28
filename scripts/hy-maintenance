@@ -20,10 +20,38 @@ fi
 
 entry=${HYDROGEN_ENTRY_PATH:-${BASH_SOURCE[0]}}
 if [[ $entry != */* ]]; then entry=$(command -v -- "$entry"); fi
-entry=$(realpath -m -- "$entry")
-resolved=$(readlink -f -- "$entry") || error 'unable to resolve the Hydrogen executable'
+entry=$(cd "$(dirname "$entry")" && pwd -P)/$(basename "$entry")
+resolved=$entry
+while [[ -L $resolved ]]; do
+    link=$(readlink "$resolved") || error 'unable to resolve the Hydrogen executable'
+    if [[ $link == /* ]]; then resolved=$link
+    else resolved=$(dirname "$resolved")/$link; fi
+done
+resolved=$(cd "$(dirname "$resolved")" && pwd -P)/$(basename "$resolved")
 root=$(dirname -- "$(dirname -- "$resolved")")
 [[ -f "$root/libexec/hy-maintenance" && -f "$root/libexec/hy-core" && -f "$root/bin/hy" ]] || error 'release layout not recognized'
+case $(uname -s):$(uname -m) in
+    Linux:x86_64) platform=linux-x86_64 ;;
+    Darwin:x86_64) platform=macos-x86_64 ;;
+    *) error 'this release supports Linux and macOS x86-64' ;;
+esac
+[[ $(sed -n 's/^Platform: //p' "$root/BUILD-INFO.txt") == "$platform" ]] || error 'release platform does not match this host'
+
+hash_file() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+    else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+verify_internal() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        (cd "$1" && sha256sum -c --status SHA256SUMS)
+    else
+        (cd "$1" && shasum -a 256 -c SHA256SUMS >/dev/null)
+    fi
+}
+version_sort() {
+    if printf '1.2\n1.10\n' | sort -V >/dev/null 2>&1; then sort -V
+    else awk '{ original=$0; sub(/^(alpha|beta|rc)-/, ""); split($0, n, /[.-]/); printf "%09d.%09d.%09d.%s\t%s\n", n[1], n[2], n[3], n[4], original }' | sort | cut -f2-; fi
+}
 
 # Scope file changes to a known, manifest-bearing install, never a shared prefix.
 safe_root() {
@@ -215,10 +243,10 @@ lookup_release() {
           | .tag_name ] | .[]' <<< "$release_json") || error "no published $channel releases available"
     # Sort version labels rather than publication timestamps; republishing an
     # older maintenance release must not cause an unintended downgrade.
-    latest_version=$(printf '%s\n' "$release_tags" | LC_ALL=C sort -V | tail -n1)
+    latest_version=$(printf '%s\n' "$release_tags" | LC_ALL=C version_sort | tail -n1)
     latest=$(jq -cer --arg version "$latest_version" '.[] | select(.tag_name == $version and .draft == false)' <<< "$release_json") || error 'release metadata was inconsistent'
     [[ $latest_version =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || error 'invalid release tag'
-    local archive="hydrogen-${latest_version}-linux-x86_64.tar.gz"
+    local archive="hydrogen-${latest_version}-${platform}.tar.gz"
     asset=$(jq -cer --arg name "$archive" '.assets[] | select(.name == $name)' <<< "$latest") || error "latest release lacks $archive"
     asset_url=$(jq -r '.browser_download_url' <<< "$asset")
     asset_digest=$(jq -r '.digest' <<< "$asset")
@@ -231,7 +259,7 @@ lookup_release() {
 newer_available() {
     local current=$1 target=$2 highest
     [[ $current == "$target" ]] && return 1
-    highest=$(printf '%s\n%s\n' "$current" "$target" | LC_ALL=C sort -V | tail -n1)
+    highest=$(printf '%s\n%s\n' "$current" "$target" | LC_ALL=C version_sort | tail -n1)
     [[ $highest == "$target" ]]
 }
 
@@ -262,9 +290,15 @@ safe_root
 # Lock the parent directory itself rather than creating a persistent lock file.
 # This prevents two self-updaters from rewriting one installation concurrently.
 if [[ $action != update-check ]]; then
-    need flock
-    exec 9< "$(dirname "$root")" || error 'cannot open installation parent for locking'
-    flock -n 9 || error 'another Hydrogen installation operation is running'
+    if [[ $platform == linux-x86_64 ]]; then
+        need flock
+        exec 9< "$(dirname "$root")" || error 'cannot open installation parent for locking'
+        flock -n 9 || error 'another Hydrogen installation operation is running'
+    else
+        lock_dir="$(dirname "$root")/.hydrogen-operation-lock"
+        mkdir "$lock_dir" 2>/dev/null || error 'another Hydrogen installation operation is running'
+        trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+    fi
 fi
 check_manifest "$root"
 
@@ -274,7 +308,7 @@ if [[ $action == uninstall ]]; then
     # The website installer creates exactly this user launcher. Remove it only
     # when it still points to the release that was just removed.
     user_link=${HOME:-}/.local/bin/hy
-    if [[ -L $user_link && $(readlink -- "$user_link") == "$root/bin/hy" ]]; then
+    if [[ -L $user_link && $(readlink "$user_link") == "$root/bin/hy" ]]; then
         rm -- "$user_link"
     fi
     info 'Hydrogen files removed; user projects and configuration were not touched.'
@@ -297,42 +331,45 @@ if ! newer_available "$current" "$latest_version"; then
     [[ $current == "$latest_version" ]] || error 'refusing to downgrade an installed compiler'
 fi
 confirm "Replace Hydrogen $current with $latest_version at $root?"
-need tar; need sha256sum; need mktemp
+need tar; need mktemp
+if [[ $platform == macos-x86_64 ]]; then need shasum; else need sha256sum; fi
 [[ -w "$(dirname "$root")" ]] || error 'no write access to installation parent; run with appropriate permissions'
 parent=$(dirname "$root")
 workdir=$(mktemp -d -- "$parent/.hydrogen-update.XXXXXXXX") || error 'cannot create staging directory'
 backup=''
 cleanup() {
     local status=$?
-    if [[ -n $backup && -d $backup && ! -d $root ]]; then mv -T -- "$backup" "$root" || true; fi
+    if [[ -n $backup && -d $backup && ! -d $root ]]; then mv -- "$backup" "$root" || true; fi
     if [[ -d $workdir ]]; then rm -rf -- "$workdir"; fi
+    if [[ -n ${lock_dir:-} ]]; then rmdir "$lock_dir" 2>/dev/null || true; fi
     exit "$status"
 }
 trap cleanup EXIT
-archive="hydrogen-${latest_version}-linux-x86_64.tar.gz"
+archive="hydrogen-${latest_version}-${platform}.tar.gz"
 curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --max-time 180 \
     --output "$workdir/$archive" "$asset_url" || error 'could not download release'
 curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --max-time 30 \
     --output "$workdir/$archive.sha256" "$checksum_url" || error 'could not download checksum'
-actual_digest=$(sha256sum "$workdir/$archive"); actual_digest=${actual_digest%% *}
+actual_digest=$(hash_file "$workdir/$archive")
 [[ "sha256:$actual_digest" == "$asset_digest" ]] || error 'GitHub release digest verification failed'
 expected_line="$actual_digest  $archive"
 [[ $(cat "$workdir/$archive.sha256") == "$expected_line" ]] || error 'published checksum does not match release digest'
-dirname="hydrogen-${latest_version}-linux-x86_64"
+dirname="hydrogen-${latest_version}-${platform}"
 validate_archive "$workdir/$archive" "$dirname"
 tar -xzf "$workdir/$archive" -C "$workdir" || error 'cannot unpack verified archive'
 staged="$workdir/$dirname"
 check_manifest "$staged"
-( cd "$staged" && sha256sum -c --status SHA256SUMS ) || error 'internal release checksum verification failed'
+verify_internal "$staged" || error 'internal release checksum verification failed'
 [[ $(sed -n 's/^Hydrogen release: //p' "$staged/BUILD-INFO.txt") == "$latest_version" ]] || error 'installed and downloaded version differ'
+[[ $(sed -n 's/^Platform: //p' "$staged/BUILD-INFO.txt") == "$platform" ]] || error 'release platform mismatch'
 [[ -x "$staged/bin/hy" && -x "$staged/libexec/hy-core" && -x "$staged/libexec/hy-maintenance" ]] || error 'archive executable permissions missing'
 # Preserve the old release for rollback. The updater runs as a separate process,
 # so replacing its parent while executing is supported by Linux.
 backup="$parent/.hydrogen-backup.$(basename "$root").$$"
 [[ ! -e $backup ]] || error 'backup path already exists'
-mv -T -- "$root" "$backup" || error 'could not move old installation'
-if ! mv -T -- "$staged" "$root"; then
-    mv -T -- "$backup" "$root" || error "ROLLBACK REQUIRED: old release remains at $backup"
+mv -- "$root" "$backup" || error 'could not move old installation'
+if ! mv -- "$staged" "$root"; then
+    mv -- "$backup" "$root" || error "ROLLBACK REQUIRED: old release remains at $backup"
     backup=''
     error 'could not activate update; original installation restored'
 fi

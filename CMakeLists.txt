@@ -193,13 +193,23 @@ add_custom_target(hydrogen_package_windows_release
     VERBATIM
 )
 
+add_custom_target(hydrogen_package_macos_release
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -DHOST_COMPILER=${HYDROGEN_RELEASE_BINARY}
+        -DVERSION=${HYDROGEN_RELEASE_VERSION}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MakeHydrogenMacOSRelease.cmake
+    COMMENT "Building and packaging the macOS x64 Hydrogen release"
+    VERBATIM
+)
+
 add_custom_target(hydrogen_release_candidate
     COMMAND ${CMAKE_COMMAND}
         -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
         -DHOST_COMPILER=${HYDROGEN_RELEASE_BINARY}
         -DVERSION=${HYDROGEN_RELEASE_VERSION}
         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/MakeHydrogenReleaseCandidate.cmake
-    COMMENT "Building Linux and Windows Hydrogen release candidates"
+    COMMENT "Building Linux, Windows, and macOS Hydrogen release candidates"
     VERBATIM
 )
 
