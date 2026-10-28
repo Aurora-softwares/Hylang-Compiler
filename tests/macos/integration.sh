@@ -120,7 +120,42 @@ tar -xzf "$archive" -C "$build_dir/installed"
 package="$build_dir/installed/hydrogen-alpha-0.0.0-macos-ci-macos-x86_64"
 test "$("$package/bin/hy" --version)" = 'Hydrogen alpha-0.0.0-macos-ci'
 "$package/bin/hy" check "$source_dir/tests/macos/FullRuntime.hyproj"
+
+cmake -DSOURCE_DIR="$source_dir" -DINPUT_BINARY="$build_dir/hydrogen-macos-stage2" \
+    -DVERSION=alpha-0.0.1-macos-ci -DPLATFORM=macos-x86_64 \
+    -DRELEASES_DIR="$build_dir/releases" \
+    -P "$source_dir/cmake/PackageHydrogenRelease.cmake"
+next_name=hydrogen-alpha-0.0.1-macos-ci-macos-x86_64.tar.gz
+next_digest=$(shasum -a 256 "$build_dir/releases/$next_name" | cut -d' ' -f1)
+cat > "$build_dir/releases.json" <<EOF
+[{"tag_name":"alpha-0.0.1-macos-ci","draft":false,"prerelease":true,"assets":[
+{"name":"$next_name","digest":"sha256:$next_digest","browser_download_url":"https://github.com/Aurora-softwares/Hylang-Compiler/releases/download/alpha-0.0.1-macos-ci/$next_name"},
+{"name":"$next_name.sha256","browser_download_url":"https://github.com/Aurora-softwares/Hylang-Compiler/releases/download/alpha-0.0.1-macos-ci/$next_name.sha256"}]}]
+EOF
+mkdir -p "$build_dir/mock-bin"
+cat > "$build_dir/mock-bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+output=''
+last=''
+while (( $# )); do
+    if [[ $1 == --output ]]; then output=$2; shift 2; continue; fi
+    last=$1; shift
+done
+case $last in
+    *'/releases?per_page=100') cat "$HY_MACOS_TEST_ROOT/releases.json" ;;
+    *.tar.gz.sha256) cp "$HY_MACOS_TEST_ROOT/releases/$HY_MACOS_TEST_ARCHIVE.sha256" "$output" ;;
+    *.tar.gz) cp "$HY_MACOS_TEST_ROOT/releases/$HY_MACOS_TEST_ARCHIVE" "$output" ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$build_dir/mock-bin/curl"
+export HY_MACOS_TEST_ROOT="$build_dir" HY_MACOS_TEST_ARCHIVE="$next_name"
+export PATH="$build_dir/mock-bin:$PATH"
+"$package/bin/hy" update-check
+"$package/bin/hy" update --force
+test "$("$package/bin/hy" --version)" = 'Hydrogen alpha-0.0.1-macos-ci'
 "$package/bin/hy" uninstall --force
 test ! -e "$package"
 
-echo 'macOS x64 self-hosting, runtime, CLI, release, and uninstall passed'
+echo 'macOS x64 self-hosting, runtime, CLI, packages, release, update, and uninstall passed'
