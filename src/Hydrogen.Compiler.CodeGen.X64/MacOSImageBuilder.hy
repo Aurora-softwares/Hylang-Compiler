@@ -2,10 +2,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
     // Direct Mach-O x86_64 executable writer, using libSystem and classic dyld
     // bind opcodes. No invocation of clang, ld, SDK tools or host linker.
     //
-    // Layout: __PAGEZERO | __TEXT (code + strings + import stubs)
+    // Layout: __PAGEZERO | __TEXT (code + strings + import thunks)
     //                     | __DATA (__got) | __LINKEDIT (binds + symbols).
-    // Every runtime external call targets a local 6-byte RIP-relative stub;
-    // dyld fills the matching GOT slot with the libSystem function address.
+    // Runtime calls target local RIP-relative thunks; dyld fills the matching
+    // GOT slots with libSystem function addresses.
     public class MacOSImageBuilder {
         public byte[] BuildCodeAndData(byte[] code, string[] payloads,
                 int[] patchOffsets, int[] payloadIndexes,
@@ -53,13 +53,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 i = i + 1;
             }
 
-            // Import stubs are placed after generated instructions and strings.
-            // Each stub: ff 25 <rip-relative disp32> = jmp [rip+disp32].
-            if (importCount > 1000000) { return null; }
-            int stubStart = code.Length + payloadBytes;
-            int stubBytes = importCount * 6;
-            if (stubStart > 0x10000000 - stubBytes) { return null; }
-            int textBytes = stubStart + stubBytes;
+            if (importCount > 1000000 || code.Length > 0x10000000 - payloadBytes) {
+                return null;
+            }
+            int textBytes = code.Length + payloadBytes;
 
             // Fixed x86-64 Mach-O command set (11 commands, 736 bytes).
             int commandBytes = 736;
@@ -192,8 +189,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             at = at + 24;
             if (at != textOffset) { return null; } // expected 32+736=768
 
-            // Patch only internal rel32 references. The imported symbols use
-            // local GOT-backed stubs, so no unresolved relocations remain.
+            // Patch internal rel32 references and the runtime's RIP-relative
+            // import thunks. No unresolved relocations remain in the image.
             i = 0;
             while (i < patchOffsets.Length) {
                 int site = patchOffsets[i];
@@ -206,9 +203,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             i = 0;
             while (i < externalCallOffsets.Length) {
                 int site = externalCallOffsets[i];
-                if (site < 0 || site > code.Length - 4) { return null; }
-                int stub = stubStart + callImport[i] * 6;
-                Write32(code, site, stub - site - 4);
+                if (site < 2 || site > code.Length - 4 ||
+                    code[site - 2] != (byte)255 || code[site - 1] != (byte)37) {
+                    return null;
+                }
+                Write32(code, site,
+                    dataOffset + callImport[i] * 8 - textOffset - site - 4);
                 i = i + 1;
             }
             i = 0;
@@ -227,16 +227,6 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 }
                 i = i + 1;
             }
-            i = 0;
-            while (i < importCount) {
-                int stubFile = textOffset + stubStart + i * 6;
-                image[stubFile] = (byte)255;
-                image[stubFile + 1] = (byte)37;
-                // Relative displacement from the end of the stub to its GOT slot.
-                Write32(image, stubFile + 2, dataOffset + i * 8 - stubFile - 6);
-                i = i + 1;
-            }
-
             // Immediate dyld binding: library ordinal #1 and pointer type.
             int bindAt = linkeditOffset;
             image[bindAt] = (byte)17; bindAt = bindAt + 1; // SET_DYLIB_ORDINAL_IMM(1)

@@ -20,6 +20,18 @@ permissions:
   contents: read
 
 jobs:
+  macos-integration:
+    name: macOS x64 compiler and runtime
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Bootstrap and exercise native macOS compiler
+        run: bash tests/macos/integration.sh
+
   windows-lifecycle:
     name: Windows release lifecycle
     runs-on: windows-latest

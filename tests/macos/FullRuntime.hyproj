@@ -1,0 +1,5 @@
+format = 2
+name = "MacOSFullRuntime"
+type = "macos"
+output = "MacOSFullRuntime"
+sources = ["FullRuntime.hy"]
