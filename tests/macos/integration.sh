@@ -32,7 +32,7 @@ chmod +x "$build_dir/scaffold-app"
 test "$("$build_dir/scaffold-app")" = 'Hello from scaffold!'
 
 mkdir -p "$build_dir/library"
-cat > "$build_dir/library/Library.hyproj" <<'EOF'
+cat > "$build_dir/library/mac.library.hyproj" <<'EOF'
 format = 2
 name = "MacLibrary"
 version = "1.0.0"
@@ -49,7 +49,7 @@ namespace MacLibrary {
 }
 EOF
 "$build_dir/hydrogen-macos-stage2" package pack \
-    "$build_dir/library/Library.hyproj" -o "$build_dir/library.hypkg"
+    "$build_dir/library/mac.library.hyproj" -o "$build_dir/library.hypkg"
 "$build_dir/hydrogen-macos-stage2" package add \
     "$build_dir/scaffold/scaffold.hyproj" "$build_dir/library.hypkg"
 cat > "$build_dir/scaffold/Program.hy" <<'EOF'
