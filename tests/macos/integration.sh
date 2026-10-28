@@ -2,8 +2,8 @@
 set -euo pipefail
 
 source_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-build_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/hydrogen-macos-integration"
-mkdir -p "$build_dir"
+build_dir=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/hydrogen-macos-integration.XXXXXXXX")
+trap 'rm -rf "$build_dir"' EXIT
 
 cmake -S "$source_dir" -B "$build_dir/bootstrap" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$build_dir/bootstrap" --target hy --parallel 2
@@ -30,6 +30,46 @@ cmp "$build_dir/hydrogen-macos-stage1" "$build_dir/hydrogen-macos-stage2"
     -o "$build_dir/scaffold-app" --hide-progress --hide-spinner --hide-log
 chmod +x "$build_dir/scaffold-app"
 test "$("$build_dir/scaffold-app")" = 'Hello from scaffold!'
+
+mkdir -p "$build_dir/library"
+cat > "$build_dir/library/Library.hyproj" <<'EOF'
+format = 2
+name = "MacLibrary"
+version = "1.0.0"
+type = "lib"
+sources = ["Library.hy"]
+[package]
+id = "mac.library"
+EOF
+cat > "$build_dir/library/Library.hy" <<'EOF'
+namespace MacLibrary {
+    public class Value {
+        public static string Text() { return "macOS package ok"; }
+    }
+}
+EOF
+"$build_dir/hydrogen-macos-stage2" package pack \
+    "$build_dir/library/Library.hyproj" -o "$build_dir/library.hypkg"
+"$build_dir/hydrogen-macos-stage2" package add \
+    "$build_dir/scaffold/scaffold.hyproj" "$build_dir/library.hypkg"
+cat > "$build_dir/scaffold/Program.hy" <<'EOF'
+public class Program {
+    public static int Main(string[] args) {
+        System.Console.WriteLine(MacLibrary.Value.Text());
+        return 0;
+    }
+}
+EOF
+"$build_dir/hydrogen-macos-stage2" build "$build_dir/scaffold/scaffold.hyproj" \
+    -o "$build_dir/package-app" --hide-progress --hide-spinner --hide-log
+chmod +x "$build_dir/package-app"
+test "$("$build_dir/package-app")" = 'macOS package ok'
+"$build_dir/hydrogen-macos-stage2" package remove \
+    "$build_dir/scaffold/scaffold.hyproj" mac.library
+if grep -Fq 'mac.library = ' "$build_dir/scaffold/scaffold.hyproj"; then
+    echo 'package removal left the dependency in the manifest' >&2
+    exit 1
+fi
 
 "$build_dir/hydrogen-macos-stage2" compile \
     "$source_dir/tests/macos/Hello.hy" --target macos-x64 \

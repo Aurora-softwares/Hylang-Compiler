@@ -2,6 +2,7 @@ public class Program {
     public static int Main(string[] args) {
         if (args.Length != 2 || args[1] != "two words") { return 91; }
         string path = args[0];
+        if (System.IO.File.Exists(path)) { return 97; }
         System.IO.File.WriteAllText(path, "macOS runtime\n");
         if (!System.IO.File.Exists(path)) { return 92; }
         string content = System.IO.File.ReadAllText(path);

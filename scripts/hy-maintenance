@@ -33,6 +33,10 @@ root=$(dirname -- "$(dirname -- "$resolved")")
 case $(uname -s):$(uname -m) in
     Linux:x86_64) platform=linux-x86_64 ;;
     Darwin:x86_64) platform=macos-x86_64 ;;
+    Darwin:arm64)
+        /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1 ||
+            error 'Rosetta 2 is required for the macOS x64 compiler'
+        platform=macos-x86_64 ;;
     *) error 'this release supports Linux and macOS x86-64' ;;
 esac
 [[ $(sed -n 's/^Platform: //p' "$root/BUILD-INFO.txt") == "$platform" ]] || error 'release platform does not match this host'
