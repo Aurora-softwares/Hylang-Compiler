@@ -75,6 +75,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private int provenIndexSlot;
         private int provenArraySlot;
         private int provenBoundSlot;
+        private int promotedIndexSlot;
         private bool provenNonNegative;
         private bool loopStartsAtZero;
         private int maxLocalCount;
@@ -160,6 +161,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             localNames = new string[0]; localTypes = new string[0]; arrayLengthSourceSlots = new int[0];
             localCount = 0; scopeStart = 0; loopStart = -1;
             provenIndexSlot = -1; provenArraySlot = -1; provenBoundSlot = -1;
+            promotedIndexSlot = -1;
             provenNonNegative = false; loopStartsAtZero = false;
             int si = 0;
             while (si < staticCount) {
@@ -596,6 +598,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             scopeStart = 0;
             loopStart = -1;
             provenIndexSlot = -1; provenArraySlot = -1; provenBoundSlot = -1;
+            promotedIndexSlot = -1;
             provenNonNegative = false; loopStartsAtZero = false;
             breakPatches = new int[0];
             breakCount = 0;
@@ -612,6 +615,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.Emit32(0); // mov ecx, frameSlots
             code.EmitByte(0x31); code.EmitByte(0xc0); // xor eax, eax
             code.EmitByte(0xf3); code.EmitByte(0x48); code.EmitByte(0xab); // rep stosq
+            if (!freestanding) {
+                code.EmitByte(0x41); code.EmitByte(0x54); // save r12 below the local frame
+            }
             {
                 IrParameter[] parameters = method.Parameters();
                 if (!method.IsStatic()) {
@@ -688,6 +694,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private void EmitReturn() {
+            if (!freestanding) { code.EmitByte(0x41); code.EmitByte(0x5c); } // restore r12
             code.EmitByte(0xc9); // leave: discard frame/temporaries, restore caller rbp
             code.EmitByte(0xc3); // ret: return to the caller, not the Linux exit syscall
         }
@@ -752,6 +759,21 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return true;
             }
             if (kind == IrStatement.KindExpressionStatement()) {
+                // A proved zero-based strict loop cannot wrap its int index:
+                // it stops at an int bound no greater than int.MaxValue.
+                // The final increment's value is unused, so update its
+                // signed 64-bit local slot directly without a load/store pair.
+                if (provenNonNegative && provenIndexSlot >= 0 &&
+                    CanonicalIncrement(statement.Expression(), provenIndexSlot)) {
+                    if (promotedIndexSlot == provenIndexSlot) {
+                        code.EmitByte(0x49); code.EmitByte(0xff); code.EmitByte(0xc4); // inc r12
+                    } else {
+                        code.EmitByte(0x48); code.EmitByte(0xff); code.EmitByte(0x85);
+                        code.Emit32(-8 * (provenIndexSlot + 1)); // inc qword [rbp-offset]
+                    }
+                    valueType = "int";
+                    return true;
+                }
                 return CompileExpression(statement.Expression());
             }
             if (kind == IrStatement.KindReturnStatement()) {
@@ -786,9 +808,16 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 int previousArray = provenArraySlot;
                 int previousBound = provenBoundSlot;
                 bool previousNonNegative = provenNonNegative;
+                int previousPromoted = promotedIndexSlot;
                 ActivateProvenLoop(statement.Condition(), statement.Body(), null, loopStartsAtZero);
                 int checkedLengthSlot = ProvenLengthConditionSlot(statement.Condition());
                 if (checkedLengthSlot >= 0) { EmitProvenLengthPrecheck(checkedLengthSlot); }
+                int loopIndex = provenIndexSlot;
+                if (!freestanding && loopIndex >= 0 && provenNonNegative && previousPromoted < 0) {
+                    EmitLoadLocal(loopIndex);
+                    code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc4); // mov r12, rax
+                    promotedIndexSlot = loopIndex;
+                }
                 int conditionPosition = code.Position();
                 loopStart = conditionPosition;
                 int exitPatch = CompileConditionJumpFalse(statement.Condition(), checkedLengthSlot);
@@ -799,6 +828,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 int backPatch = EmitJump();
                 PatchRelative(backPatch, conditionPosition);
                 PatchRelative(exitPatch, code.Position());
+                if (promotedIndexSlot == loopIndex && loopIndex >= 0) {
+                    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe0); // mov rax, r12
+                    promotedIndexSlot = -1;
+                    EmitStoreLocal(loopIndex);
+                }
+                promotedIndexSlot = previousPromoted;
                 int bi = savedBreaks;
                 while (bi < breakCount) { PatchRelative(breakPatches[bi], code.Position()); bi = bi + 1; }
                 breakCount = savedBreaks;
@@ -870,7 +905,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         // Only a strict less-than loop with a stable index and immutable
-        // array length can establish an upper bound for indexed accesses.
+        // array or string length can establish an upper bound for indexed accesses.
         // The final increment is excluded from the guarded body. Negative
         // indexes remain checked at each access, including after int wrap.
         private void ActivateProvenLoop(IrExpression condition, IrStatement body, IrExpression forIncrement, bool startsZero) {
@@ -889,7 +924,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 right.MemberName() == "Length" &&
                 right.Receiver() != null && right.Receiver().Kind() == IrExpression.KindName()) {
                 arraySlot = FindLocal(right.Receiver().Name());
-                if (arraySlot < 0 || (localTypes[arraySlot] != "byte[]" && localTypes[arraySlot] != "int[]")) { return; }
+                if (arraySlot < 0 || (localTypes[arraySlot] != "byte[]" &&
+                    localTypes[arraySlot] != "int[]" && localTypes[arraySlot] != "string")) { return; }
             } else if (right.Kind() == IrExpression.KindName()) {
                 boundSlot = FindLocal(right.Name());
                 if (boundSlot < 0 || localTypes[boundSlot] != "int" || boundSlot == indexSlot) { return; }
@@ -903,8 +939,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             } else if (!CanonicalIncrement(forIncrement, indexSlot)) { return; }
             int i = 0;
             while (i < prefixCount) {
-                if (items[i].Kind() != IrStatement.KindExpressionStatement() ||
-                    !GuardedExpressionSafe(items[i].Expression(), indexSlot, arraySlot, boundSlot)) { return; }
+                if (!GuardedStatementSafe(items[i], indexSlot, arraySlot, boundSlot)) { return; }
                 i = i + 1;
             }
             provenIndexSlot = indexSlot;
@@ -942,6 +977,35 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 value.Right().LiteralKind() == "number" && value.Right().LiteralText() == "1";
         }
 
+        private bool GuardedStatementSafe(IrStatement statement, int indexSlot, int arraySlot, int boundSlot) {
+            if (statement == null) { return true; }
+            int kind = statement.Kind();
+            if (kind == IrStatement.KindExpressionStatement()) {
+                return GuardedExpressionSafe(statement.Expression(), indexSlot, arraySlot, boundSlot);
+            }
+            if (kind == IrStatement.KindVariableDeclaration()) {
+                if ((indexSlot >= 0 && statement.Name() == localNames[indexSlot]) ||
+                    (arraySlot >= 0 && statement.Name() == localNames[arraySlot]) ||
+                    (boundSlot >= 0 && statement.Name() == localNames[boundSlot])) { return false; }
+                return GuardedExpressionSafe(statement.Initializer(), indexSlot, arraySlot, boundSlot);
+            }
+            if (kind == IrStatement.KindBlock()) {
+                IrStatement[] items = statement.Statements();
+                int i = 0;
+                while (i < items.Length) {
+                    if (!GuardedStatementSafe(items[i], indexSlot, arraySlot, boundSlot)) { return false; }
+                    i = i + 1;
+                }
+                return true;
+            }
+            if (kind == IrStatement.KindIfStatement()) {
+                return GuardedExpressionSafe(statement.Condition(), indexSlot, arraySlot, boundSlot) &&
+                    GuardedStatementSafe(statement.ThenStatement(), indexSlot, arraySlot, boundSlot) &&
+                    GuardedStatementSafe(statement.ElseStatement(), indexSlot, arraySlot, boundSlot);
+            }
+            return false;
+        }
+
         private bool GuardedExpressionSafe(IrExpression expression, int indexSlot, int arraySlot, int boundSlot) {
             if (expression == null) { return true; }
             int kind = expression.Kind();
@@ -965,7 +1029,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (target.Kind() == IrExpression.KindName()) {
                     int slot = FindLocal(target.Name());
                     if (slot == indexSlot || slot == arraySlot || slot == boundSlot ||
-                        (slot >= 0 && (localTypes[slot] == "byte[]" || localTypes[slot] == "int[]"))) { return false; }
+                        (slot >= 0 && (localTypes[slot] == "byte[]" || localTypes[slot] == "int[]" ||
+                            localTypes[slot] == "string"))) { return false; }
                 } else if (target.Kind() != IrExpression.KindIndex()) { return false; }
                 return GuardedExpressionSafe(target, indexSlot, arraySlot, boundSlot) &&
                     GuardedExpressionSafe(expression.Value(), indexSlot, arraySlot, boundSlot);
@@ -1133,6 +1198,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     int provenSlot = FindLocal(expression.Index().Name());
                     EmitProvenPackedRead(provenSlot, receiverType == "byte[]" ? 1 : 4);
                     valueType = ElementType(receiverType);
+                    if (skip >= 0) { FinishOptional(skip); }
+                    return true;
+                }
+                if (!freestanding && receiverType == "string" &&
+                    ProvenPackedAccess(expression.Receiver(), expression.Index())) {
+                    int provenSlot = FindLocal(expression.Index().Name());
+                    EmitProvenPackedRead(provenSlot, 1);
+                    code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(4);
+                    code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x44);
+                    code.EmitByte(0x07); code.EmitByte(0x40); // cached one-byte string
+                    valueType = "string";
                     if (skip >= 0) { FinishOptional(skip); }
                     return true;
                 }
@@ -1959,8 +2035,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (index.Kind() == IrExpression.KindName()) { indexSlot = FindLocal(index.Name()); }
             if (indexSlot >= 0) {
                 if (!Numeric(localTypes[indexSlot])) { failure = "native index must be integral"; return false; }
-                code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0xb5);
-                code.Emit32(-8 * (indexSlot + 1)); // mov rsi, [rbp-offset]
+                if (indexSlot == promotedIndexSlot) {
+                    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe6); // mov rsi, r12
+                } else {
+                    code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0xb5);
+                    code.Emit32(-8 * (indexSlot + 1)); // mov rsi, [rbp-offset]
+                }
                 MoveRdiRax();
                 return true;
             }
@@ -2005,8 +2085,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private void EmitProvenPackedRead(int indexSlot, int elementBytes) {
-            code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0xb5);
-            code.Emit32(-8 * (indexSlot + 1)); // mov rsi, [rbp-offset]
+            if (indexSlot == promotedIndexSlot) {
+                code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe6); // mov rsi, r12
+            } else {
+                code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0xb5);
+                code.Emit32(-8 * (indexSlot + 1)); // mov rsi, [rbp-offset]
+            }
             if (!provenNonNegative) {
                 code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xf6); // test rsi, rsi
                 code.EmitByte(0x0f); code.EmitByte(0x89); int nonnegative = code.Position(); code.Emit32(0);
@@ -2487,14 +2571,26 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private void EmitStoreLocal(int slot) {
+            if (slot == promotedIndexSlot) {
+                code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc4); // mov r12, rax
+                return;
+            }
             code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0x85); code.Emit32(-8 * (slot + 1)); // mov [rbp-offsetof], rax
         }
 
         private void EmitLoadLocal(int slot) {
+            if (slot == promotedIndexSlot) {
+                code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe0); // mov rax, r12
+                return;
+            }
             code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x85); code.Emit32(-8 * (slot + 1)); // mov rax, [rbp-offsetof]
         }
 
         private void EmitLoadLocalRcx(int slot) {
+            if (slot == promotedIndexSlot) {
+                code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe1); // mov rcx, r12
+                return;
+            }
             code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x8d); code.Emit32(-8 * (slot + 1)); // mov rcx, [rbp-offsetof]
         }
 

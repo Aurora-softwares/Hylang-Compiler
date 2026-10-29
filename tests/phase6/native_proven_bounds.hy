@@ -16,6 +16,16 @@ public class Program {
 
         for (int j = 0; j < bytes.Length; j = j + 1) { sum = sum + bytes[j]; }
         if (sum != 30) { return 1; }
+        string text = "E\nI\nE\n";
+        int matches = 0;
+        i = 0;
+        while (i < text.Length) {
+            string ch = text[i];
+            if (ch == "E") { matches = matches + 1; }
+            if (ch == "\n") { sum = sum + 1; }
+            i = i + 1;
+        }
+        if (matches != 2 || sum != 33) { return 2; }
         System.Console.WriteLine("proven bounds ok");
         return 42;
     }
