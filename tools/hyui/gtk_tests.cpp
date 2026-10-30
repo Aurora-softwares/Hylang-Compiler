@@ -74,6 +74,9 @@ public:
                         check(summary.y > project.y + project.height, "Narrow panels must stack");
                         check(bounds(widget("workers")).y > bounds(widget("target")).y + bounds(widget("target")).height, "Nested row must stack");
                     }
+                } else {
+                    auto logo = bounds(widget("logo")), choices = bounds(widget("channel"));
+                    check(choices.y - logo.y - logo.height <= 64, "Image must not reserve an oversized empty slot");
                 }
                 capture(QString("%1-%2.png").arg(page ? "gallery" : "workspace").arg(width));
                 if ((page == 0 && width == 1120) || (page == 1 && width == 360)) {

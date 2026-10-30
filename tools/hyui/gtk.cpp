@@ -207,6 +207,14 @@ public:
             w = api.call<W>("gtk_picture_new_for_paintable", texture); api.call("g_object_unref", texture);
             api.call("gtk_picture_set_can_shrink", w, 1);
             api.call("gtk_widget_set_size_request", w, -1, height); api.call("gtk_widget_set_halign", w, 3);
+            // A horizontal box measures its non-expanding picture at natural
+            // width. A vertical parent otherwise asks the picture for a height
+            // at the entire column width, reserving a large empty image slot.
+            c->container = api.call<W>("gtk_box_new", 0, 0);
+            api.call("gtk_widget_set_hexpand", c->container, 0);
+            api.call("gtk_widget_set_halign", c->container, 3);
+            api.call("gtk_widget_set_valign", c->container, 1);
+            append(c->container, w);
         } else if (tag == "RowPanel") {
             // A viewport lets the window shrink independently of the current
             // number of columns. Reflow uses its allocated width, so a wide
@@ -334,7 +342,7 @@ public:
             c->container = row; c->label = label;
             append(row, w); append(row, label); return row;
         }
-        return w;
+        return c->container ? c->container : w;
     }
     void update() {
         applying = true;
