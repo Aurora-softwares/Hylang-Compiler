@@ -78,16 +78,29 @@ public:
                 capture(QString("%1-%2.png").arg(page ? "gallery" : "workspace").arg(width));
                 if ((page == 0 && width == 1120) || (page == 1 && width == 360)) {
                     W scroller = view.api.call<W>("gtk_widget_get_ancestor", widget(page ? "showDialog" : "status"), view.api.call<unsigned long>("gtk_scrolled_window_get_type"));
+                    // Row viewports suppress horizontal minimum-width feedback;
+                    // the outer, vertically scrolling document owns this shot.
+                    while (scroller) {
+                        int horizontal = 0, vertical = 0;
+                        view.api.call("gtk_scrolled_window_get_policy", scroller, &horizontal, &vertical);
+                        if (vertical != 2) { break; }
+                        scroller = view.api.call<W>("gtk_widget_get_ancestor", view.api.call<W>("gtk_widget_get_parent", scroller), view.api.call<unsigned long>("gtk_scrolled_window_get_type"));
+                    }
+                    check(scroller != nullptr, "Missing vertically scrolling document");
                     W adjustment = view.api.call<W>("gtk_scrolled_window_get_vadjustment", scroller);
                     double bottom = view.api.call<double>("gtk_adjustment_get_upper", adjustment) - view.api.call<double>("gtk_adjustment_get_page_size", adjustment);
-                    view.api.call("gtk_adjustment_set_value", adjustment, bottom); capture(page ? "gallery-bottom.png" : "workspace-bottom.png");
+                    check(bottom > 0, "Document must overflow the short viewport");
+                    view.api.call("gtk_adjustment_set_value", adjustment, bottom); settle();
+                    check(view.api.call<double>("gtk_adjustment_get_value", adjustment) > 0, "Document failed to scroll");
+                    capture(page ? "gallery-bottom.png" : "workspace-bottom.png");
                     view.api.call("gtk_adjustment_set_value", adjustment, 0.0);
                 }
             }
         }
         view.present(1120, 600); settle();
         check(view.api.call<int>("gtk_widget_get_height", view.controls["logo"]->widget) == 80, "Image must honor its declared height");
-        check(view.api.call<W>("gtk_image_get_paintable", view.controls["logo"]->widget) != nullptr, "Bundled image failed to decode");
+        W logo = view.api.call<W>("gtk_picture_get_paintable", view.controls["logo"]->widget);
+        check(logo != nullptr && view.api.call<int>("gdk_paintable_get_intrinsic_height", logo) == 80, "Bundled image must decode at its declared display size");
         view.api.call("gtk_check_button_set_active", view.controls["channel"]->choices[1], 1); idle();
         check(bridge.state()["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         view.api.call("gtk_list_box_select_row", view.controls["templates"]->widget, view.api.call<W>("gtk_list_box_get_row_at_index", view.controls["templates"]->widget, 2)); idle();

@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix="hydrogen native package ' ") as tempora
     run(compiler, "build", project, "-o", output, success=False)
     preserved()
     (source / "views/main.hyui").write_text(original_xml)
-    project.write_text(project_text.replace('["assets"]', '["../outside"]'))
+    project.write_text(project_text.replace('ui_assets = ["assets", "views/assets"]', 'ui_assets = ["../outside"]'))
     run(compiler, "build", project, "-o", output, success=False)
     preserved()
     project.write_text(project_text)

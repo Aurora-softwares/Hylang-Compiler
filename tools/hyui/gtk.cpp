@@ -195,7 +195,8 @@ public:
             W bitmap = api.call<W>("gdk_pixbuf_new_from_file_at_scale", document.resourcePath(a.value("source")).toUtf8().constData(), -1, height, 1, nullptr);
             if (!bitmap) { throw std::runtime_error("cannot decode image asset"); }
             W texture = api.call<W>("gdk_texture_new_for_pixbuf", bitmap); api.call("g_object_unref", bitmap);
-            w = api.call<W>("gtk_image_new_from_paintable", texture); api.call("g_object_unref", texture);
+            w = api.call<W>("gtk_picture_new_for_paintable", texture); api.call("g_object_unref", texture);
+            api.call("gtk_picture_set_can_shrink", w, 1);
             api.call("gtk_widget_set_size_request", w, -1, height); api.call("gtk_widget_set_halign", w, 3);
         } else if (tag == "RowPanel") {
             // A viewport lets the window shrink independently of the current
