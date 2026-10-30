@@ -64,6 +64,7 @@ void notifyThunk(W, W, W data) { static_cast<Control*>(data)->action(); }
 int closeThunk(W, W) { QCoreApplication::quit(); return 0; }
 
 class GtkView : public NativeView {
+    friend class GtkUiTests;
     Api api;
     const Document& document;
     Bridge& bridge;
@@ -347,7 +348,7 @@ public:
         for (QTimer* timer : timers) { bool run = state.value(timer->objectName() + ".running").toBool(); if (run && !timer->isActive()) { timer->start(); } if (!run) { timer->stop(); } }
         applying = false;
     }
-    void present(int width, int height) {
+    void present(int width, int height) override {
         struct Rect { int x, y, width, height; } area{};
         W display = api.call<W>("gdk_display_get_default");
         W monitors = api.call<W>("gdk_display_get_monitors", display);
@@ -359,7 +360,7 @@ public:
         api.call("gtk_window_set_default_size", window, qMax(200, width), qMax(200, height));
         api.call("gtk_window_present", window);
     }
-    void pump() {
+    void pump() override {
         for (int i = 0; i < 32; ++i) { if (!api.call<int>("g_main_context_iteration", nullptr, 0)) { break; } }
         api.call("gdk_display_flush", api.call<W>("gdk_display_get_default"));
         for (auto& row : rows) {
@@ -392,23 +393,24 @@ public:
             if (it.value()->node->tag == "ProgressBar" && bridge.state().value(it.key() + ".indeterminate").toBool()) { api.call("gtk_progress_bar_pulse", it.value()->widget); }
         }
     }
-    bool screenshot(const QString& path) {
-        W paintable = api.call<W>("gtk_widget_paintable_new", window);
+    bool capture(W captured, const QString& path) {
+        W paintable = api.call<W>("gtk_widget_paintable_new", captured);
         W snapshot = api.call<W>("gtk_snapshot_new");
-        api.call("gdk_paintable_snapshot", paintable, snapshot, double(api.call<int>("gtk_widget_get_width", window)), double(api.call<int>("gtk_widget_get_height", window)));
+        api.call("gdk_paintable_snapshot", paintable, snapshot, double(api.call<int>("gtk_widget_get_width", captured)), double(api.call<int>("gtk_widget_get_height", captured)));
         W node = api.call<W>("gtk_snapshot_free_to_node", snapshot);
         if (!node) {
-            W child = api.call<W>("gtk_widget_get_first_child", window);
-            if (child) { W direct = api.call<W>("gtk_snapshot_new"); api.call("gtk_widget_snapshot_child", window, child, direct); node = api.call<W>("gtk_snapshot_free_to_node", direct); }
+            W child = api.call<W>("gtk_widget_get_first_child", captured);
+            if (child) { W direct = api.call<W>("gtk_snapshot_new"); api.call("gtk_widget_snapshot_child", captured, child, direct); node = api.call<W>("gtk_snapshot_free_to_node", direct); }
         }
         if (!node) { api.call("g_object_unref", paintable); return false; }
-        W renderer = api.call<W>("gtk_native_get_renderer", window);
+        W renderer = api.call<W>("gtk_native_get_renderer", captured);
         W texture = api.call<W>("gsk_renderer_render_texture", renderer, node, nullptr);
         bool saved = texture && api.call<int>("gdk_texture_save_to_png", texture, path.toUtf8().constData());
         if (texture) { api.call("g_object_unref", texture); }
         api.call("gsk_render_node_unref", node); api.call("g_object_unref", paintable);
         return saved;
     }
+    bool screenshot(const QString& path) override { return capture(window, path); }
 };
 
 }

@@ -15,8 +15,20 @@ public partial class App : Application
     public App() { InitializeComponent(); }
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
-        try { window = await NativeWindow.Create(Environment.GetCommandLineArgs().Skip(1).ToArray()); window.Activate(); }
+        string[] arguments = Environment.GetCommandLineArgs().Skip(1).ToArray();
+#if HYDROGEN_UI_TESTS
+        int testIndex = Array.IndexOf(arguments, "--ui-test");
+#endif
+        try {
+            var native = await NativeWindow.Create(arguments); window = native; window.Activate();
+#if HYDROGEN_UI_TESTS
+            if (testIndex >= 0) { await native.RunUiTests(arguments[testIndex + 1]); Environment.Exit(0); }
+#endif
+        }
         catch (Exception error) {
+#if HYDROGEN_UI_TESTS
+            if (testIndex >= 0) { Directory.CreateDirectory(arguments[testIndex + 1]); File.WriteAllText(Path.Combine(arguments[testIndex + 1], "winui-failure.txt"), error.ToString()); Environment.Exit(1); return; }
+#endif
             window = new Window { Title = "Hydrogen application", Content = new TextBlock { Text = error.Message, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(24) } };
             window.Activate();
         }
@@ -25,7 +37,7 @@ public partial class App : Application
 
 // These are Microsoft.UI.Xaml objects, with Microsoft's shared WinUI runtime
 // resources. No Qt styling, HTML rendering, or custom title-bar painting is used.
-public sealed class NativeWindow : Window
+public sealed partial class NativeWindow : Window
 {
     readonly Dictionary<string, XElement> nodes = new();
     readonly Dictionary<string, FrameworkElement> controls = new();

@@ -49,3 +49,6 @@ st
 de_modules
 /releases/
 /safe/
+
+# Python test caches
+__pycache__/

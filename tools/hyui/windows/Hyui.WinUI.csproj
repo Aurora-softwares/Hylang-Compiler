@@ -13,6 +13,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(HydrogenUiTests)' == 'true'">
+    <DefineConstants>$(DefineConstants);HYDROGEN_UI_TESTS</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(HydrogenUiTests)' != 'true'">
+    <Compile Remove="UiTests.cs" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
   </ItemGroup>

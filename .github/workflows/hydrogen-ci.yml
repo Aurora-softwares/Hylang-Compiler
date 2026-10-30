@@ -21,22 +21,86 @@ permissions:
 
 jobs:
   macos-ui:
-    name: macOS native UI layout
+    name: AppKit UI interactions and appearance
     runs-on: macos-15
     timeout-minutes: 20
     steps:
-      - name: Check out Hydrogen source
-        uses: actions/checkout@v4
-      - name: Install Qt Core
-        run: brew install qtbase
-      - name: Build native UI host and layout regression
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install UI test dependencies
+        run: |
+          brew install qtbase
+          python -m pip install Pillow==12.0.0
+      - name: Build native AppKit test application
         run: |
           cmake -S . -B build-ui -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON -DCMAKE_PREFIX_PATH="$(brew --prefix qtbase)"
           cmake --build build-ui --target hy hyui hyui_tests hyui_appkit_tests --parallel 3
-      - name: Validate expanded element contracts
-        run: build-ui/tools/hyui/hyui_tests expandedControlsValidateAndBind expandedResponsesAreAtomic
-      - name: Check layout and sample backend events
-        run: ctest --test-dir build-ui -R '^hyui_(appkit_layout|sdk_integration)$' --output-on-failure
+      - name: Check contracts and visual comparator
+        run: |
+          build-ui/tools/hyui/hyui_tests expandedControlsValidateAndBind expandedResponsesAreAtomic
+          python -m unittest discover -s tests/ui -p 'test_*.py'
+      - name: Launch AppKit and check native interactions and reviewed screenshots
+        run: python tools/hyui/ui_ci.py --platform macos --driver build-ui/tools/hyui/hyui_appkit_tests --compiler build-ui/hy --artifacts build-ui/ui-artifacts
+      - name: Check sample backend integration
+        run: ctest --test-dir build-ui -R '^hyui_sdk_integration$' --output-on-failure
+      - name: Upload AppKit screenshots, geometry, diffs and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-macos-${{ github.run_id }}
+          path: |
+            build-ui/ui-artifacts
+            build-ui/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  linux-ui:
+    name: GTK UI interactions and appearance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install system GTK and virtual desktop
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libgtk-4-1 libadwaita-1-0 xvfb dbus-x11 fonts-dejavu-core libgl1 libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0
+          python -m pip install aqtinstall==3.3.0 Pillow==12.0.0
+          python -m aqt install-qt linux desktop 6.8.3 gcc_64 -O "$RUNNER_TEMP/qt" --archives qtbase
+      - name: Build real GTK test application
+        run: |
+          cmake -S . -B build-ui -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/qt/6.8.3/gcc_64"
+          cmake --build build-ui --target hy hyui hyui_tests hyui_gtk_tests --parallel 3
+      - name: Validate element contracts and visual comparator
+        run: |
+          build-ui/tools/hyui/hyui_tests
+          python -m unittest discover -s tests/ui -p 'test_*.py'
+      - name: Launch GTK on Xvfb and check native interactions and reviewed screenshots
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' python tools/hyui/ui_ci.py --platform linux --driver build-ui/tools/hyui/hyui_gtk_tests --compiler build-ui/hy --artifacts build-ui/ui-artifacts
+      - name: Run GTK sample and packaged-app integration
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' ctest --test-dir build-ui -R '^hyui_sdk_(integration|package)$' --output-on-failure
+      - name: Upload GTK screenshots, geometry, diffs and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-linux-${{ github.run_id }}
+          path: |
+            build-ui/ui-artifacts
+            build-ui/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 14
 
   macos-integration:
     name: macOS x64 compiler and runtime
@@ -50,17 +114,39 @@ jobs:
       - name: Bootstrap and exercise native macOS compiler
         run: bash tests/macos/integration.sh
 
-  windows-ui-build:
-    name: Compile WinUI native controls
-    runs-on: windows-latest
-    timeout-minutes: 15
+  windows-ui:
+    name: WinUI interactions and appearance
+    runs-on: windows-2025
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Build native WinUI host
-        run: dotnet build tools/hyui/windows/Hyui.WinUI.csproj -c Release -p:Platform=x64
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build SDK and self-contained native WinUI application
+        run: |
+          cmake -S . -B build-ui -DHYDROGEN_BUILD_UI=OFF
+          cmake --build build-ui --target hy --config Release --parallel 3
+          dotnet publish tools/hyui/windows/Hyui.WinUI.csproj -c Release -r win-x64 -p:Platform=x64 -p:WindowsAppSDKSelfContained=true -p:HydrogenUiTests=true -o build-ui/native-winui
+          python -m pip install Pillow==12.0.0
+      - name: Check visual comparator
+        run: python -m unittest discover -s tests/ui -p 'test_*.py'
+      - name: Launch real WinUI app and check native interactions and reviewed screenshots
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+          python tools/hyui/ui_ci.py --platform windows --driver build-ui/native-winui/Hyui.WinUI.exe --compiler build-ui/Release/hy.exe --artifacts build-ui/ui-artifacts
+      - name: Upload WinUI screenshots, geometry, diffs and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-windows-${{ github.run_id }}
+          path: build-ui/ui-artifacts
+          if-no-files-found: warn
+          retention-days: 14
 
   windows-lifecycle:
     name: Windows release lifecycle
