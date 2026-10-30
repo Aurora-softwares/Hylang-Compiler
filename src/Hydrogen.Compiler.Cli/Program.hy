@@ -979,6 +979,8 @@ namespace Hydrogen.Compiler.Cli {
 
         private static int Build(string[] args) {
             string output = "";
+            string target = "";
+            bool uiBackend = false;
             bool hideProgress = false;
             bool hideSpinner = false;
             bool hideLog = false;
@@ -991,6 +993,20 @@ namespace Hydrogen.Compiler.Cli {
                     }
                     output = args[option + 1];
                     option = option + 2;
+                } else if (args[option] == "--target") {
+                    if (option + 1 >= args.Length || target != "") {
+                        System.Console.WriteLine("error: missing or repeated target");
+                        return 1;
+                    }
+                    target = args[option + 1];
+                    if (target == "linux" || target == "linux-x64" || target == "exe") { target = "exe"; }
+                    else if (target == "windows" || target == "windows-x64") { target = "windows"; }
+                    else if (target == "mac" || target == "macos" || target == "macos-x64") { target = "macos"; }
+                    else { System.Console.WriteLine("error: unsupported desktop target"); return 1; }
+                    option = option + 2;
+                } else if (args[option] == "--ui-backend") {
+                    uiBackend = true;
+                    option = option + 1;
                 } else if (args[option] == "--hide-progress") {
                     hideProgress = true;
                     option = option + 1;
@@ -1021,19 +1037,40 @@ namespace Hydrogen.Compiler.Cli {
                 System.Console.WriteLine("error: unsupported project format (expected format = 2)");
                 return 1;
             }
+            string projectType = manifest.Type();
+            if (target != "" && projectType != "exe" && projectType != "windows" && projectType != "macos") {
+                System.Console.WriteLine("error: --target is only supported for desktop executable projects");
+                return 1;
+            }
+            if (target != "") { projectType = target; }
+            if (manifest.HasUI() && !uiBackend) {
+                string quotedProject = QuoteCommandPath(projectPath);
+                string quotedOutput = QuoteCommandPath(output);
+                if (quotedProject == "" || quotedOutput == "" ||
+                    (System.Host.Process.IsWindows() &&
+                    (Find(projectPath + output, "%", 0) >= 0 || Find(projectPath + output, "!", 0) >= 0))) {
+                    System.Console.WriteLine("error: unsupported UI package path");
+                    return 1;
+                }
+                if (projectType != "exe" && projectType != "windows" && projectType != "macos") {
+                    System.Console.WriteLine("error: UI projects require a desktop executable target");
+                    return 1;
+                }
+                return System.Host.Process.Run("hyui --package " + quotedProject + " --output " + quotedOutput + " --target " + projectType);
+            }
             BuildProgress progress = new BuildProgress(hideProgress, hideSpinner, hideLog);
             if (manifest.Type() == "os" || manifest.Type() == "collection") {
                 return ProcessCollectionProject(projectPath, manifest, output, false, false, progress, 0);
             }
-            if (manifest.Type() != "exe" &&
-				manifest.Type() != "efi" &&
-				manifest.Type() != "kernel" &&
-				manifest.Type() != "driver" &&
-				manifest.Type() != "australis" &&
-				manifest.Type() != "exec" &&
-				manifest.Type() != "native" &&
-				manifest.Type() != "windows" &&
-				manifest.Type() != "macos") {
+            if (projectType != "exe" &&
+				projectType != "efi" &&
+				projectType != "kernel" &&
+				projectType != "driver" &&
+				projectType != "australis" &&
+				projectType != "exec" &&
+				projectType != "native" &&
+				projectType != "windows" &&
+				projectType != "macos") {
                 System.Console.WriteLine("error: hy build supports exe, windows, efi, kernel, exec, australis, macos, driver, native, and os projects");
                 return 1;
             }
@@ -1041,7 +1078,7 @@ namespace Hydrogen.Compiler.Cli {
             NativeCompiler compiler = new NativeCompiler();
             compiler.SetBuildProgress(progress);
             NativeCompilerResult result;
-            if (manifest.Type() == "exe") {
+            if (projectType == "exe") {
 				result = compiler.BuildProject(projectPath, output);
 			} else if (manifest.Type() == "kernel") {
 				result = compiler.BuildProjectKernel(projectPath, output);
@@ -1049,11 +1086,11 @@ namespace Hydrogen.Compiler.Cli {
 				result = compiler.BuildProjectDriver(projectPath, output);
 			} else if (manifest.Type() == "native") {
                 result = compiler.BuildProjectNativeUser(projectPath, output);
-			} else if (manifest.Type() == "windows") {
+			} else if (projectType == "windows") {
                 result = compiler.BuildProjectWindows(projectPath, output);
 			} else if (manifest.Type() == "australis" || manifest.Type() == "exec") {
 				result = compiler.BuildProjectAustralis(projectPath, output);
-			} else if (manifest.Type() == "macos") {
+			} else if (projectType == "macos") {
 				result = compiler.BuildProjectMacOS(projectPath, output);
 			} else {
 				result = compiler.BuildProjectUefi(projectPath, output);

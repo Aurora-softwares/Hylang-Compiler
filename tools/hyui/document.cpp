@@ -1,17 +1,9 @@
 #include "document.hpp"
-#include <QColor>
-#include <QJsonArray>
-#include <QJsonDocument>
 #include <QRegularExpression>
 #include <QXmlStreamReader>
 #include <functional>
 
 namespace hyui {
-QString quote(const QString& value) {
-    QByteArray json = QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact);
-    return QString::fromUtf8(json.mid(1, json.size() - 2));
-}
-
 static const QMap<QString, QSet<QString>> attributes = {
     {"Window", {"version", "title", "width", "height", "padding", "theme", "onLoad", "material"}},
     {"ColumnPanel", {"gap"}}, {"RowPanel", {"gap", "breakpoint"}},
@@ -150,96 +142,4 @@ bool Document::parse(const QByteArray& xml) {
     return true;
 }
 
-QString Document::emitNode(const Node& n, int depth) const {
-    const auto& a = n.attributes;
-    auto number = [&](const QString& key, const QString& fallback) { return a.value(key, fallback); };
-    auto state = [&](const QString& key) { return "bridge.state[" + quote(n.id + "." + key) + "]"; };
-    auto action = [&](const QString& key) {
-        return a.contains(key) ? "bridge.dispatch(" + quote(a[key]) + ", " + quote(n.id) + ");" : QString();
-    };
-    if (n.tag == "State") { return {}; }
-    if (n.tag == "Timer") {
-        return "Timer { interval: " + number("interval", "1000") + "; repeat: true; running: " + state("running") +
-            "; onTriggered: { " + action("onTick") + " } }\n";
-    }
-    static const QMap<QString, QString> types = {{"ColumnPanel", "ColumnLayout"}, {"RowPanel", "GridLayout"},
-        {"GridPanel", "GridLayout"}, {"Panel", "Frame"}, {"Label", "Label"}, {"Input", "TextField"},
-        {"TextArea", "TextArea"}, {"Button", "Button"}, {"CheckBox", "CheckBox"}, {"Switch", "Switch"},
-        {"Select", "ComboBox"}, {"Slider", "Slider"}, {"NumberInput", "SpinBox"}, {"ProgressBar", "ProgressBar"},
-        {"Spinner", "BusyIndicator"}, {"Separator", "Rectangle"}, {"Spacer", "Item"}};
-    QString result = types.value(n.tag) + " {\nobjectName: " + quote(n.id) + ";\n";
-    result += "Layout.minimumWidth: 0; Layout.fillWidth: " + a.value("fill", n.tag == "Button" || n.tag == "Spinner" ? "false" : "true") + ";\n";
-    if (a.contains("preferredWidth")) { result += "Layout.preferredWidth: " + a["preferredWidth"] + ";\n"; }
-    result += "visible: " + state("visible") + "; enabled: " + state("enabled") + ";\n";
-    if (a.contains("accessibleName")) { result += "Accessible.name: " + quote(a["accessibleName"]) + ";\n"; }
-    if (properties[n.id].contains("text")) { result += "text: " + state("text") + ";\n"; }
-    if (properties[n.id].contains("checked")) {
-        result += "checked: " + state("checked") + "; onToggled: { bridge.store(" + quote(n.id) + ", \"checked\", checked); " + action("onChange") + " }\n";
-    }
-    if (n.tag == "ColumnPanel") { result += "spacing: " + number("gap", "12") + ";\n"; }
-    if (n.tag == "RowPanel" || n.tag == "GridPanel") {
-        int visual = 0;
-        for (const auto& child : n.children) { if (child.tag != "State" && child.tag != "Timer") { ++visual; } }
-        QString columns = n.tag == "RowPanel" ? "(width < " + number("breakpoint", "700") + " ? 1 : " + QString::number(qMax(1, visual)) + ")" :
-            "Math.max(1, Math.min(" + number("columns", "3") + ", Math.floor((width + columnSpacing) / (" + number("minItemWidth", "240") + " + columnSpacing))))";
-        result += "columns: " + columns + "; columnSpacing: " + number("gap", "16") + "; rowSpacing: " + number("gap", "16") + ";\n";
-    }
-    if (n.tag == "Panel") {
-        result += "padding: " + number("padding", "22") + ";\n";
-        result += "background: Rectangle { color: root.palette.base; radius: 14; border.color: root.palette.mid; border.width: 1 }\n";
-        result += "contentItem: ColumnLayout { spacing: " + number("gap", "12") + ";\n";
-        if (a.contains("title")) { result += "Label { text: " + quote(a["title"]) + "; font.bold: true; font.pixelSize: 17; textFormat: Text.PlainText; wrapMode: Text.WordWrap; Layout.fillWidth: true; Layout.minimumWidth: 0 }\n"; }
-    }
-    if (n.tag == "Label") {
-        const QString role = a.value("role", "body");
-        result += "textFormat: Text.PlainText; wrapMode: Text.Wrap;\n";
-        result += "font.pixelSize: " + QString(role == "title" ? "32" : role == "heading" ? "19" : role == "caption" ? "12" : "14") + ";\n";
-        if (role == "title" || role == "heading") { result += "font.bold: true;\n"; }
-        if (a.value("tone") == "muted") { result += "color: root.palette.placeholderText;\n"; }
-        if (a.value("tone") == "accent") { result += "color: root.palette.highlight;\n"; }
-    }
-    if (n.tag == "Button") { result += "highlighted: " + a.value("primary", "false") + "; onClicked: { " + action("onClick") + " }\n"; }
-    if (n.tag == "Input" || n.tag == "TextArea") {
-        result += "placeholderText: " + quote(a.value("placeholder")) + "; selectByMouse: true;\n";
-        if (n.tag == "TextArea") { result += "property bool hyuiReady: false; Component.onCompleted: hyuiReady = true;\n"; }
-        QString guard = n.tag == "TextArea" ? "if (hyuiReady && !bridge.isApplying()) " : "";
-        result += (n.tag == "Input" ? "onTextEdited" : "onTextChanged") + QString(": { ") + guard + "{ bridge.store(" + quote(n.id) + ", \"text\", text); " + action("onChange") + " } }\n";
-        if (n.tag == "Input") { result += "onAccepted: { " + action("onSubmit") + " }\n"; }
-        else { result += "wrapMode: TextEdit.Wrap; Layout.preferredHeight: " + number("height", "100") + ";\n"; }
-    }
-    if (n.tag == "Select") {
-        QJsonArray items;
-        for (const auto& item : a.value("items").split('|')) { items.append(item); }
-        result += "model: " + QString::fromUtf8(QJsonDocument(items).toJson(QJsonDocument::Compact)) + ";\n";
-        result += "currentIndex: " + state("value") + "; onActivated: { bridge.store(" + quote(n.id) + ", \"value\", currentIndex); " + action("onChange") + " }\n";
-    }
-    if (n.tag == "Slider" || n.tag == "NumberInput" || n.tag == "ProgressBar") {
-        result += "from: " + number("minimum", "0") + "; to: " + number("maximum", "100") + "; value: " + state("value") + ";\n";
-        if (n.tag != "ProgressBar") {
-            result += (n.tag == "Slider" ? "stepSize: 1; onMoved" : "editable: true; onValueModified") +
-                QString(": { bridge.store(") + quote(n.id) + ", \"value\", value); " + action("onChange") + " }\n";
-        } else { result += "indeterminate: " + state("indeterminate") + ";\n"; }
-    }
-    if (n.tag == "Spinner") { result += "running: " + state("running") + "; Layout.preferredWidth: 28; Layout.preferredHeight: 28;\n"; }
-    if (n.tag == "Separator") { result += "implicitHeight: 1; color: root.palette.mid;\n"; }
-    if (n.tag == "Spacer") { result += "implicitHeight: " + number("height", "12") + ";\n"; }
-    for (const auto& child : n.children) { result += emitNode(child, depth + 1); }
-    if (n.tag == "Panel") { result += "}\n"; }
-    return result + "}\n";
-}
-
-QString Document::qml() const {
-    QString result = "import QtQuick\nimport QtQuick.Controls\nimport QtQuick.Layouts\nApplicationWindow {\nid: root; visible: false;\n";
-    result += "title: " + quote(window.attributes.value("title", "Hydrogen")) + ";\n";
-    result += "width: " + window.attributes.value("width", "1100") + "; height: " + window.attributes.value("height", "820") + ";\n";
-    // No fixed minimum window size: small monitors remain usable by reflow and scrolling.
-    result += "ScrollView { id: scroll; anchors.fill: parent; clip: true; contentWidth: availableWidth;\n";
-    result += "Pane { width: scroll.availableWidth; padding: Math.min(" + window.attributes.value("padding", "28") + ", Math.max(8, width / 25));\n";
-    result += "contentItem: ColumnLayout { spacing: 20;\n";
-    for (const auto& child : window.children) { result += emitNode(child, 0); }
-    result += "}\n}\n}\n";
-    result += "footer: ToolBar { visible: bridge.error.length > 0; Label { width: parent.width; padding: 10; wrapMode: Text.Wrap; textFormat: Text.PlainText; text: bridge.error; color: root.palette.text } }\n";
-    result += "}\n";
-    return result;
-}
 }

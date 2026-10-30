@@ -7,6 +7,8 @@ namespace Hydrogen.Compiler.Core {
         private string version;
         private string packageId;
         private string output;
+        private bool hasUi;
+        private string ui;
         private string[] sources;
         private string[] projectReferences;
         private string[] dependencyIds;
@@ -27,6 +29,8 @@ namespace Hydrogen.Compiler.Core {
             version = inputVersion;
             packageId = inputPackageId;
             output = inputOutput;
+            hasUi = false;
+            ui = "";
             sources = inputSources;
             projectReferences = inputProjectReferences;
             dependencyIds = inputDependencyIds;
@@ -47,6 +51,8 @@ namespace Hydrogen.Compiler.Core {
         public string Version() { return version; }
         public string PackageId() { return packageId; }
         public string Output() { return output; }
+        public bool HasUI() { return hasUi; }
+        public string UI() { return ui; }
         public string[] Sources() { return sources; }
         public string[] ProjectReferences() { return projectReferences; }
         public string[] DependencyIds() { return dependencyIds; }
@@ -71,6 +77,8 @@ namespace Hydrogen.Compiler.Core {
             string version = "";
             string packageId = "";
             string output = "";
+            string ui = "";
+            bool hasUi = false;
             string[] sources = new string[0];
             string[] projectReferences = new string[0];
             string[] dependencyIds = new string[0];
@@ -147,6 +155,9 @@ namespace Hydrogen.Compiler.Core {
                     version = Unquote(value);
                 } else if (key == "output") {
                     output = Unquote(value);
+                } else if (key == "ui") {
+                    hasUi = true;
+                    ui = Unquote(value);
                 } else if (key == "sources") {
                     sources = ParseStringArray(value);
                 } else if (key == "project_references") {
@@ -162,9 +173,12 @@ namespace Hydrogen.Compiler.Core {
                  driverClass == 255 && driverSubclass == 255 && driverInterface == 255))) {
                 validDriver = false;
             }
-            return new HyprojManifest(format, type, version, packageId, output, sources, projectReferences,
+            HyprojManifest result = new HyprojManifest(format, type, version, packageId, output, sources, projectReferences,
                 dependencyIds, dependencyVersions, validDependencies, driverAbi, driverMatchKind,
                 driverVendor, driverDevice, driverClass, driverSubclass, driverInterface, validDriver);
+            result.hasUi = hasUi;
+            result.ui = ui;
+            return result;
         }
 
         private static int ParseDriverNumber(string value, int maximum) {

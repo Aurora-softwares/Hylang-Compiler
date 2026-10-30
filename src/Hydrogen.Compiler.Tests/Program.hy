@@ -69,6 +69,10 @@ namespace Hydrogen.Compiler.Tests {
             Assert.True(multiline.Sources().Length == 2, "multiline sources should parse both paths");
             Assert.True(multiline.ProjectReferences().Length == 2, "multiline references should parse both projects");
             Assert.Equal("Second.hyproj", multiline.ProjectReferences()[1], "multiline reference order");
+            HyprojManifest graphical = HyprojManifest.Parse("format = 2\ntype = \"exe\"\nui = \"Views/Main.hyui\"\n");
+            Assert.True(graphical.HasUI(), "UI projects must be detected by build");
+            Assert.Equal("Views/Main.hyui", graphical.UI(), "UI entry path must be retained");
+            Assert.True(!multiline.HasUI(), "ordinary projects must retain normal build behavior");
 
             SyntaxTree hello = SyntaxTree.Parse(new SourceText("public class Program { public static void Main(string[] args) { System.Console.WriteLine(\"Hello\"); } }"));
             Assert.Equal("Public", SyntaxFacts.KindName(hello.Tokens().Get(0).Kind()), "first token should be public");

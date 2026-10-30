@@ -11055,6 +11055,8 @@ struct ProjectManifest {
     string name;
     string version = "0.1.0";
     string type = "exe";
+    fs::path ui;
+    vector<fs::path> ui_assets;
     vector<fs::path> sources;
     vector<fs::path> project_references;
     vector<fs::path> members;
@@ -11373,6 +11375,10 @@ std::optional<ProjectManifest> load_project_manifest(const fs::path& path, Diagn
                 manifest.type = parse_manifest_string(path, diagnostics, line_number, value_column, value);
             } else if (key == "sources") {
                 manifest.sources = parse_manifest_path_list(path, diagnostics, line_number, value_column, value);
+            } else if (key == "ui") {
+                manifest.ui = parse_manifest_string(path, diagnostics, line_number, value_column, value);
+            } else if (key == "ui_assets") {
+                manifest.ui_assets = parse_manifest_path_list(path, diagnostics, line_number, value_column, value);
             } else if (key == "references" || key == "project_references") {
                 manifest.project_references = parse_manifest_path_list(path, diagnostics, line_number, value_column, value);
             } else if (key == "members") {
@@ -13393,6 +13399,12 @@ TestResult test_target(const TestOptions& options) {
 
 int run_ui(const fs::path& input, const fs::path& host) {
     return run_process({host.string(), "--source", fs::absolute(input).string()});
+}
+
+int package_ui(const fs::path& input, const fs::path& output, const string& target, const fs::path& host) {
+    vector<string> command = {host.string(), "--package", fs::absolute(input).string(), "--output", fs::absolute(output).string()};
+    if (!target.empty()) { command.insert(command.end(), {"--target", target}); }
+    return run_process(command);
 }
 
 std::string format_diagnostics(const std::vector<Diagnostic>& diagnostics) {

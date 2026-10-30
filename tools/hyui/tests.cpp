@@ -1,10 +1,6 @@
 #include "bridge.hpp"
 #include "document.hpp"
-#include <QGuiApplication>
-#include <QQmlApplicationEngine>
-#include <QQmlContext>
-#include <QQuickItem>
-#include <QQuickWindow>
+#include <QCoreApplication>
 #include <QtTest>
 #include <iostream>
 
@@ -65,38 +61,7 @@ private slots:
         QVERIFY(!b.error().isEmpty());
     }
 
-    void rendersAndReflows() {
-        hyui::Document d;
-        QVERIFY(d.parse(R"(<Window version="1"><RowPanel id="row" breakpoint="700">
-          <Panel id="left" title="Settings"><Input id="entry" text="a &quot;quoted&quot; value"/>
-          <Button text="Click"/><CheckBox/><Switch/><Select items="one|two"/>
-          <Slider/><NumberInput/><TextArea id="notes" text="Initial" onChange="Changed"/><ProgressBar/><Spinner running="false"/>
-          </Panel><Panel id="right"><Label text="Long text wraps instead of overflowing the available screen width."/></Panel>
-          </RowPanel></Window>)"));
-        hyui::Bridge bridge(d, {}, {});
-        QQmlApplicationEngine engine;
-        engine.rootContext()->setContextProperty("bridge", &bridge);
-        engine.loadData(d.qml().toUtf8());
-        QVERIFY(!engine.rootObjects().isEmpty());
-        auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
-        QVERIFY(window);
-        QSignalSpy backendStarted(&bridge, &hyui::Bridge::busyChanged);
-        QVERIFY(bridge.apply("HYUI\tSET\tnotes\ttext\tUpdated by Hydrogen\n"));
-        QCOMPARE(backendStarted.count(), 0);
-        QVERIFY(!bridge.busy());
-        auto* row = window->findChild<QQuickItem*>("row");
-        auto* left = window->findChild<QQuickItem*>("left");
-        auto* right = window->findChild<QQuickItem*>("right");
-        QVERIFY(row && left && right);
-        window->resize(1100, 800); window->show();
-        QTRY_COMPARE(row->property("columns").toInt(), 2);
-        QTRY_VERIFY(right->x() > left->x());
-        window->resize(360, 640);
-        QTRY_COMPARE(row->property("columns").toInt(), 1);
-        QTRY_VERIFY(right->y() > left->y());
-        QVERIFY(left->width() > 0 && left->width() < 360);
-        QVERIFY(right->width() > 0 && right->width() < 360);
-    }
+
 };
 
 int main(int argc, char** argv) {
@@ -109,7 +74,7 @@ int main(int argc, char** argv) {
         std::cout << "HYUI\tSET\tstatus\ttext\t" << hyui::Bridge::encode(value).toStdString() << '\n';
         return 0;
     }
-    QGuiApplication app(argc, argv);
+    QCoreApplication app(argc, argv);
     HyuiTests tests;
     return QTest::qExec(&tests, argc, argv);
 }

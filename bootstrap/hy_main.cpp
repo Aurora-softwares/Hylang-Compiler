@@ -19,6 +19,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
+fs::path ui_host = "hyui";
+
 using std::string;
 using std::vector;
 
@@ -33,6 +35,7 @@ struct CliManifest {
     string name;
     string version = "0.1.0";
     string type = "exe";
+    bool has_ui = false;
     string package_id;
     string description;
     string authors = "[]";
@@ -235,6 +238,8 @@ std::optional<CliManifest> load_cli_manifest(const fs::path& path) {
             if (auto parsed = parse_quoted_string(value)) {
                 manifest.type = *parsed;
             }
+        } else if (current_section.empty() && key == "ui") {
+            manifest.has_ui = true;
         } else if (current_section.empty() && key == "sources") {
             manifest.sources = parse_path_array(value);
         } else if (current_section.empty() && (key == "project_references" || key == "references")) {
@@ -651,7 +656,7 @@ string format_hyproj_v2(const string& input) {
     }
 
     std::ostringstream out;
-    const vector<string> root_order = {"format", "name", "version", "type", "output", "sources", "project_references", "members"};
+    const vector<string> root_order = {"format", "name", "version", "type", "output", "ui", "ui_assets", "sources", "project_references", "members"};
     for (const auto& key : root_order) {
         const auto found = root.find(key);
         if (found != root.end()) {
@@ -817,6 +822,7 @@ int handle_build(int argc, char** argv) {
     bool hide_progress = false;
     bool hide_spinner = false;
     bool hide_log = false;
+    bool ui_backend = false;
     for (int index = 3; index < argc; ++index) {
         const string argument = argv[index];
         if (argument == "--target") {
@@ -831,6 +837,8 @@ int handle_build(int argc, char** argv) {
                 return 1;
             }
             options.output_path = fs::path(argv[++index]);
+        } else if (argument == "--ui-backend") {
+            ui_backend = true;
         } else if (argument == "--debug") {
             options.debug = true;
         } else if (argument == "--hide-progress") {
@@ -845,6 +853,15 @@ int handle_build(int argc, char** argv) {
         }
     }
 
+    if (target.extension() == ".hyproj" && !ui_backend) {
+        const auto manifest = load_cli_manifest(target);
+        if (manifest && manifest->has_ui) {
+            const auto output = options.output_path.value_or(fs::current_path() / manifest->name);
+            int status = hylang::package_ui(target, output, options.forced_target.value_or(""), ui_host);
+            if (status == -1) { std::cerr << "could not start hyui; build with -DHYDROGEN_BUILD_UI=ON\n"; return 1; }
+            return status;
+        }
+    }
     if (target.extension() == ".hyproj" && is_workspace_manifest(target)) {
         if (options.forced_target || options.output_path) {
             std::cerr << "--target and -o are not supported for workspace builds\n";
@@ -1574,6 +1591,11 @@ int main(int argc, char** argv) {
     }
 
     const string command = argv[1];
+    ui_host = fs::path(argv[0]).parent_path() / "hyui";
+#ifdef _WIN32
+    ui_host += ".exe";
+#endif
+    if (!fs::exists(ui_host)) { ui_host = "hyui"; }
     if (command == "ui") {
         if (argc != 3) { print_usage(); return 1; }
         fs::path host = fs::path(argv[0]).parent_path() / "hyui";

@@ -17,6 +17,7 @@ public:
     QVariantMap state() const { return values; }
     QString error() const { return lastError; }
     bool busy() const { return active; }
+    QString executablePath() const { return backend; }
     Q_INVOKABLE void store(const QString& id, const QString& property, const QVariant& value);
     Q_INVOKABLE void dispatch(const QString& handler, const QString& sender);
     Q_INVOKABLE bool isApplying() const { return applying; }

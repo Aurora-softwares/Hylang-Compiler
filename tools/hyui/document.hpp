@@ -18,15 +18,12 @@ struct Node {
 class Document {
 public:
     bool parse(const QByteArray& xml);
-    QString qml() const;
     QString error;
+    QString sourcePath;
     Node window;
     QVariantMap initialState;
     QMap<QString, QSet<QString>> properties;
     QMap<QString, QSet<QString>> handlers;
     QMap<QString, QPair<int, int>> ranges;
-private:
-    QString emitNode(const Node& node, int depth) const;
 };
-QString quote(const QString& value);
 }

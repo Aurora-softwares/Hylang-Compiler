@@ -2,5 +2,6 @@ format = 2
 name = "HydrogenStudio"
 version = "0.1.0"
 type = "exe"
+ui = "Studio.hyui"
 sources = ["Program.hy"]
 project_references = ["../../libraries/Hydrogen.UI/Hydrogen.UI.hyproj"]

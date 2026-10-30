@@ -8,7 +8,10 @@ import sys
 import tempfile
 
 host, compiler, root = map(lambda p: Path(p).resolve(), sys.argv[1:4])
-env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software")
+if sys.platform == "linux" and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+    print("Native GTK integration requires a display; use xvfb-run in CI")
+    sys.exit(77)
+env = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software", GSK_RENDERER="cairo")
 
 
 def run(*args, cwd=None, success=True):
@@ -23,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix="hydrogen ui ' ") as temporary:
     work = Path(temporary)
     app = work / ("application.exe" if os.name == "nt" else "application")
     sample = root / "samples/ui_studio"
-    run(compiler, "build", sample / "Studio.hyproj", "-o", app)
+    run(compiler, "build", sample / "Studio.hyproj", "-o", app, "--ui-backend")
     app.chmod(app.stat().st_mode | 0o100)
     xml = (sample / "Studio.hyui").read_text()
     # Keep Build deterministic; the timer's callback is tested separately below.
