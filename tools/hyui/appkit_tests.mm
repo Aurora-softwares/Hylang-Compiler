@@ -66,8 +66,8 @@ int main(int argc, char** argv) {
             hyui::Bridge bridge(document, temporary.filePath("backend"), QFileInfo(file).absolutePath());
             auto view = hyui::createAppKitView(document, bridge);
             auto show = [&](int width) {
-                view->present(width, 900);
-                [NSApp.windows.firstObject setContentSize:NSMakeSize(width, 900)]; view->pump();
+                view->present(width, 600);
+                [NSApp.windows.firstObject setContentSize:NSMakeSize(width, 600)]; view->pump();
                 NSView* root = NSApp.windows.firstObject.contentView;
                 require(root != nil, "missing native window"); checkSiblings(root); return root;
             };
@@ -86,6 +86,14 @@ int main(int argc, char** argv) {
                             geometry[QString::fromUtf8(id.UTF8String)] = QJsonObject{{"x", bounds.origin.x}, {"y", bounds.origin.y}, {"width", bounds.size.width}, {"height", bounds.size.height}};
                         }
                         captures.append(QJsonObject{{"name", name}, {"controls", geometry}});
+                        if ((page == 0 && width == 1120) || (page == 1 && width == 360)) {
+                            NSScrollView* scroll = (NSScrollView*)find(root, @"projectName").enclosingScrollView;
+                            CGFloat bottom = qMax<CGFloat>(0, scroll.documentView.bounds.size.height - scroll.contentSize.height);
+                            [scroll.contentView scrollToPoint:NSMakePoint(0, bottom)]; [scroll reflectScrolledClipView:scroll.contentView]; view->pump();
+                            QString bottomName = QString("%1-bottom.png").arg(page ? "gallery" : "workspace");
+                            require(view->screenshot(output + '/' + bottomName), "cannot capture scrolled content"); screenshots.append(bottomName);
+                            [scroll.contentView scrollToPoint:NSZeroPoint]; [scroll reflectScrolledClipView:scroll.contentView];
+                        }
                     }
                 }
                 require(bridge.apply("HYUI\tSET\tpages\tvalue\t0\n"), "cannot return to workspace");

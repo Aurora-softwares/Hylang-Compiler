@@ -57,7 +57,7 @@ public:
         for (int page : {0, 1}) {
             view.api.call("gtk_notebook_set_current_page", view.controls["pages"]->widget, page); idle();
             for (int width : {1120, 800, 360}) {
-                view.present(width, 900); settle(350); layout();
+                view.present(width, 600); settle(350); layout();
                 if (page == 0) {
                     auto project = bounds(widget("projectName")), summary = bounds(widget("summary"));
                     if (width == 1120) { check(summary.x > project.x + project.width, "Wide panels must be side by side"); }
@@ -67,9 +67,16 @@ public:
                     }
                 }
                 capture(QString("%1-%2.png").arg(page ? "gallery" : "workspace").arg(width));
+                if ((page == 0 && width == 1120) || (page == 1 && width == 360)) {
+                    W scroller = view.api.call<W>("gtk_widget_get_ancestor", widget(page ? "showDialog" : "status"), view.api.call<unsigned long>("gtk_scrolled_window_get_type"));
+                    W adjustment = view.api.call<W>("gtk_scrolled_window_get_vadjustment", scroller);
+                    double bottom = view.api.call<double>("gtk_adjustment_get_upper", adjustment) - view.api.call<double>("gtk_adjustment_get_page_size", adjustment);
+                    view.api.call("gtk_adjustment_set_value", adjustment, bottom); capture(page ? "gallery-bottom.png" : "workspace-bottom.png");
+                    view.api.call("gtk_adjustment_set_value", adjustment, 0.0);
+                }
             }
         }
-        view.present(1120, 900); settle();
+        view.present(1120, 600); settle();
         check(view.api.call<W>("gtk_picture_get_paintable", view.controls["logo"]->widget) != nullptr, "Bundled image failed to decode");
         view.api.call("gtk_check_button_set_active", view.controls["channel"]->choices[1], 1); idle();
         check(bridge.state()["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");

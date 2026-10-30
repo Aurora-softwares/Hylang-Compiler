@@ -72,14 +72,14 @@ public sealed partial class NativeWindow
         return null;
     }
     public async Task RunUiTests(string output) {
-        Directory.CreateDirectory(output); Root.RequestedTheme = ElementTheme.Light;
+        Directory.CreateDirectory(output); Root.RequestedTheme = ElementTheme.Light; ((ScrollViewer)Root).Background = new SolidColorBrush(Microsoft.UI.Colors.White);
         await Until(() => Root.IsLoaded && Root.ActualWidth > 0, "WinUI window did not load");
         var shots = new List<string>(); var captures = new List<object>();
         var tabs = (TabView)controls["pages"];
         foreach (int page in new[] { 0, 1 }) {
             tabs.SelectedIndex = page; await Idle();
             foreach (int width in new[] { 1120, 800, 360 }) {
-                AppWindow.Resize(new Windows.Graphics.SizeInt32(width + 16, 940)); Root.Width = width; Root.Height = 900;
+                AppWindow.Resize(new Windows.Graphics.SizeInt32(width + 16, 640)); Root.Width = width; Root.Height = 600;
                 await Task.Delay(250); Root.UpdateLayout(); CheckLayout();
                 if (page == 0) {
                     var project = Bounds(controls["projectName"]); var summary = Bounds(controls["summary"]);
@@ -94,9 +94,14 @@ public sealed partial class NativeWindow
                 await Capture(Root, Path.Combine(output, name)); shots.Add(name);
                 var geometry = controls.Where(p => Shown(p.Value) && p.Value.ActualWidth > 0).ToDictionary(p => p.Key, p => new { x = Bounds(p.Value).X, y = Bounds(p.Value).Y, width = p.Value.ActualWidth, height = p.Value.ActualHeight });
                 captures.Add(new { name, controls = geometry });
+                if ((page == 0 && width == 1120) || (page == 1 && width == 360)) {
+                    var scroller = (ScrollViewer)Content; scroller.ChangeView(null, scroller.ScrollableHeight, null, true); await Task.Delay(100);
+                    string bottomName = $"{(page == 0 ? "workspace" : "gallery")}-bottom.png";
+                    await Capture(Root, Path.Combine(output, bottomName)); shots.Add(bottomName); scroller.ChangeView(null, 0, null, true);
+                }
             }
         }
-        Root.Width = 1120; AppWindow.Resize(new Windows.Graphics.SizeInt32(1136, 940)); await Task.Delay(200);
+        Root.Width = 1120; AppWindow.Resize(new Windows.Graphics.SizeInt32(1136, 640)); await Task.Delay(200);
         await Until(() => ((BitmapImage)((Image)controls["logo"]).Source).PixelWidth > 0, "Bundled image did not decode");
         ((RadioButtons)controls["channel"]).SelectedIndex = 1; await Idle(); Check(values["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         ((ListView)controls["templates"]).SelectedIndex = 2; await Idle(); Check(values["selectionText.text"] == "Template index: 2", "List event did not reach Hydrogen");

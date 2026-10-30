@@ -68,6 +68,10 @@ def main():
         differences = artifacts / "diffs"; differences.mkdir(exist_ok=True)
         metrics = {}; failures = []
         for name in report["screenshots"]:
+            actual = artifacts / name
+            with Image.open(actual) as source:
+                rgba = source.convert("RGBA")
+                Image.alpha_composite(Image.new("RGBA", rgba.size, "white"), rgba).convert("RGB").save(actual)
             expected = ROOT / "tests/ui/golden" / args.platform / name
             if not expected.is_file():
                 failures.append(f"Missing reviewed baseline: {expected}; actual screenshot is in {artifacts}")
