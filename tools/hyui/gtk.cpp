@@ -71,7 +71,7 @@ class GtkView : public NativeView {
     Bridge& bridge;
     QMap<QString, Control*> controls;
     std::vector<std::unique_ptr<Control>> owned;
-    struct Row { W widget; const Node* node; int columns = 1; bool homogeneous = true; };
+    struct Row { W widget; W viewport; const Node* node; int columns = 1; bool homogeneous = true; };
     QVector<Row> rows;
     QVector<QTimer*> timers;
     bool applying = false;
@@ -198,9 +198,9 @@ public:
             w = api.call<W>("gtk_image_new_from_paintable", texture); api.call("g_object_unref", texture);
             api.call("gtk_widget_set_size_request", w, -1, height); api.call("gtk_widget_set_halign", w, 3);
         } else if (tag == "RowPanel") {
-            // FlowBox reports the largest child's minimum width rather than
-            // the sum, so a horizontal row cannot lock a window above its
-            // breakpoint. GTK then reflows it during ordinary user resizing.
+            // A viewport lets the window shrink independently of the current
+            // number of columns. Reflow uses its allocated width, so a wide
+            // child's old minimum cannot prevent the next narrow allocation.
             w = api.call<W>("gtk_flow_box_new");
             api.call("gtk_flow_box_set_selection_mode", w, 0);
             api.call("gtk_flow_box_set_min_children_per_line", w, 1u);
@@ -212,7 +212,11 @@ public:
                 W widget = build(child); if (widget) { api.call("gtk_flow_box_insert", w, widget, -1); }
                 if (child.tag != "State" && child.tag != "Timer" && child.attributes.value("fill", child.tag == "Button" || child.tag == "Spinner" ? "false" : "true") != "true") { homogeneous = false; }
             }
-            rows.append({w, &node, 1, homogeneous});
+            W viewport = api.call<W>("gtk_scrolled_window_new");
+            api.call("gtk_scrolled_window_set_policy", viewport, 3, 2); // external horizontal, never vertical
+            api.call("gtk_scrolled_window_set_child", viewport, w);
+            rows.append({w, viewport, &node, 1, homogeneous});
+            c->widget = w; c->container = viewport; return viewport;
         } else if (tag == "ColumnPanel" || tag == "Panel" || tag == "Tab") {
             W box = api.call<W>("gtk_box_new", 1, a.value("gap", "12").toInt());
             w = box;
@@ -390,7 +394,7 @@ public:
         for (int i = 0; i < 32; ++i) { if (!api.call<int>("g_main_context_iteration", nullptr, 0)) { break; } }
         api.call("gdk_display_flush", api.call<W>("gdk_display_get_default"));
         for (auto& row : rows) {
-            int width = api.call<int>("gtk_widget_get_width", row.widget);
+            int width = api.call<int>("gtk_widget_get_width", row.viewport);
             if (width > 0) {
                 int count = 0, minimumSum = 0, largest = 0;
                 for (const Node& child : row.node->children) {

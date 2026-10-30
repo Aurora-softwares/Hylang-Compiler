@@ -92,7 +92,9 @@ private slots:
         b.dispatch("Submit", "go");
         QTRY_VERIFY_WITH_TIMEOUT(!b.busy(), 5000);
         QCOMPARE(b.error(), QString());
-        QCOMPARE(b.state()["status.text"].toString(), input);
+        // Cocoa may canonically decompose argv. Preserve text and shell
+        // metacharacters while allowing equivalent Unicode representations.
+        QCOMPARE(b.state()["status.text"].toString().normalized(QString::NormalizationForm_C), input.normalized(QString::NormalizationForm_C));
         b.dispatch("Unregistered", "go");
         QVERIFY(!b.error().isEmpty());
     }

@@ -43,7 +43,7 @@ jobs:
           cmake --build build-ui --target hy hyui hyui_tests hyui_appkit_tests --parallel 3
       - name: Check contracts and visual comparator
         run: |
-          build-ui/tools/hyui/hyui_tests expandedControlsValidateAndBind expandedResponsesAreAtomic
+          build-ui/tools/hyui/hyui_tests
           python -m unittest discover -s tests/ui -p 'test_*.py'
       - name: Launch AppKit and check native interactions and reviewed screenshots
         run: python tools/hyui/ui_ci.py --platform macos --driver build-ui/tools/hyui/hyui_appkit_tests --compiler build-ui/hy --artifacts build-ui/ui-artifacts
