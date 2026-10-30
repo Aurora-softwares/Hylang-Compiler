@@ -24,11 +24,11 @@ namespace hyui {
 namespace {
 using W = void*;
 class Api {
-    QLibrary gtk{"libgtk-4.so.1"}, adw{"libadwaita-1.so.0"}, object{"libgobject-2.0.so.0"}, glib{"libglib-2.0.so.0"}, gio{"libgio-2.0.so.0"};
+    QLibrary gtk{"libgtk-4.so.1"}, adw{"libadwaita-1.so.0"}, object{"libgobject-2.0.so.0"}, glib{"libglib-2.0.so.0"}, gio{"libgio-2.0.so.0"}, pixbuf{"libgdk_pixbuf-2.0.so.0"};
 public:
     Api() {
-        for (QLibrary* library : {&gtk, &adw, &object, &glib, &gio}) { library->setLoadHints(QLibrary::PreventUnloadHint); }
-        if (!gtk.load() || !adw.load() || !object.load() || !glib.load() || !gio.load()) { throw std::runtime_error("native Linux UI requires the system GTK 4 and libadwaita libraries"); }
+        for (QLibrary* library : {&gtk, &adw, &object, &glib, &gio, &pixbuf}) { library->setLoadHints(QLibrary::PreventUnloadHint); }
+        if (!gtk.load() || !adw.load() || !object.load() || !glib.load() || !gio.load() || !pixbuf.load()) { throw std::runtime_error("native Linux UI requires the system GTK 4 and libadwaita libraries"); }
     }
     template<class R = void, class... A> R call(const char* name, A... args) {
         QFunctionPointer function = gtk.resolve(name);
@@ -36,6 +36,7 @@ public:
         if (!function) { function = object.resolve(name); }
         if (!function) { function = glib.resolve(name); }
         if (!function) { function = gio.resolve(name); }
+        if (!function) { function = pixbuf.resolve(name); }
         if (!function) { throw std::runtime_error(std::string("missing native GTK API: ") + name); }
         return reinterpret_cast<R(*)(A...)>(function)(args...);
     }
@@ -190,8 +191,12 @@ public:
             connect(c, "notify::selected", [this, c, event] { unsigned selection = api.call<unsigned>("gtk_single_selection_get_selected", c->buffer); if (selection < 32768) { event("value", int(selection), "onChange"); } }, true);
             W scroll = api.call<W>("gtk_scrolled_window_new"); api.call("gtk_scrolled_window_set_child", scroll, w); api.call("gtk_widget_set_size_request", scroll, -1, a.value("height", "160").toInt()); c->container = scroll; return scroll;
         } else if (tag == "Image") {
-            w = api.call<W>("gtk_picture_new_for_filename", document.resourcePath(a.value("source")).toUtf8().constData());
-            api.call("gtk_picture_set_can_shrink", w, 1); api.call("gtk_widget_set_size_request", w, -1, a.value("height", "72").toInt());
+            int height = a.value("height", "72").toInt();
+            W bitmap = api.call<W>("gdk_pixbuf_new_from_file_at_scale", document.resourcePath(a.value("source")).toUtf8().constData(), -1, height, 1, nullptr);
+            if (!bitmap) { throw std::runtime_error("cannot decode image asset"); }
+            W texture = api.call<W>("gdk_texture_new_for_pixbuf", bitmap); api.call("g_object_unref", bitmap);
+            w = api.call<W>("gtk_image_new_from_paintable", texture); api.call("g_object_unref", texture);
+            api.call("gtk_widget_set_size_request", w, -1, height); api.call("gtk_widget_set_halign", w, 3);
         } else if (tag == "ColumnPanel" || tag == "RowPanel" || tag == "Panel" || tag == "Tab") {
             W box = api.call<W>("gtk_box_new", 1, a.value("gap", "12").toInt());
             w = box;
@@ -293,6 +298,7 @@ public:
         if (a.contains("accessibleName")) { api.call("gtk_accessible_update_property", w, 4, a["accessibleName"].toUtf8().constData(), -1); }
         api.call("gtk_widget_set_hexpand", w, a.value("fill", tag == "Button" || tag == "Spinner" ? "false" : "true") == "true" ? 1 : 0);
         api.call("gtk_widget_set_valign", w, 1);
+        if (tag == "Image") { api.call("gtk_widget_set_hexpand", w, 0); }
         // A GtkSwitch has no text property: use an ordinary native label beside
         // the actual switch, rather than drawing a simulated toggle.
         if (tag == "Switch") {

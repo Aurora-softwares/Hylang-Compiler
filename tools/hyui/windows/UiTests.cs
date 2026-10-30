@@ -117,12 +117,12 @@ public sealed partial class NativeWindow
         ((Slider)controls["quality"]).Value = 55; await Idle(); Check(values["summary.text"].Contains("55%"), "Slider event failed");
         ((ToggleSwitch)controls["notifications"]).IsOn = false; Check(values["notifications.checked"] == "false", "Switch event failed");
         ((NumberBox)controls["workers"]).Value = 8; Check(values["workers.value"] == "8", "Number input event failed");
-        ((TextBox)controls["notes"]).Text = "Saved by the native UI CI test.";
+        ((TextBox)controls["notes"]).Text = "Saved by the native UI CI test."; await Idle();
         Invoke(controls["build"]); await Idle(); Check(values["build.enabled"] == "false" && timers["buildTimer"].IsEnabled, "Build did not start native progress");
         Invoke(controls["cancel"]); await Idle(); Check(values["build.enabled"] == "true" && !timers["buildTimer"].IsEnabled, "Cancel did not stop progress");
         Invoke(controls["build"]); await Until(() => values["progress.value"] == "100", "Native timer did not complete progress"); await Idle();
         Check(((Button)controls["save"]).IsEnabled, "Completion did not enable Save");
-        string saved = Path.Combine(output, "saved-plan.txt"); ((TextBox)controls["savePath"]).Text = saved; Invoke(controls["save"]); await Idle();
+        string saved = Path.Combine(output, "saved-plan.txt"); ((TextBox)controls["savePath"]).Text = saved; await Idle(); Check(values["savePath.text"] == saved, "Save path edit did not reach the UI state"); Invoke(controls["save"]); await Idle();
         Check(File.ReadAllText(saved).Contains("Saved by the native UI CI test."), "Native Save did not persist input");
         Root.UpdateLayout(); CheckLayout();
         await File.WriteAllTextAsync(Path.Combine(output, "report.json"), JsonSerializer.Serialize(new { passed = true, platform = "windows", screenshots = shots, captures, state = values }, new JsonSerializerOptions { WriteIndented = true }));

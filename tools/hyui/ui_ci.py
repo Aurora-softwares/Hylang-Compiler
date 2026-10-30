@@ -72,6 +72,10 @@ def main():
             actual = artifacts / name
             with Image.open(actual) as source:
                 rgba = source.convert("RGBA")
+                if name != "dialog-confirm.png":
+                    transparent = sum(count for alpha, count in enumerate(rgba.getchannel("A").histogram()) if alpha < 128)
+                    if transparent > rgba.width * rgba.height * 0.02:
+                        raise AssertionError(f"Native screenshot is clipped or unrendered: {name}")
                 Image.alpha_composite(Image.new("RGBA", rgba.size, "white"), rgba).convert("RGB").save(actual)
             expected = ROOT / "tests/ui/golden" / args.platform / name
             if not expected.is_file():

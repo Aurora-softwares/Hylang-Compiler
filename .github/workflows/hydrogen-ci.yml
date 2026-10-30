@@ -141,6 +141,8 @@ jobs:
           python -m pip install Pillow==12.0.0
       - name: Check visual comparator
         run: python -m unittest discover -s tests/ui -p 'test_*.py'
+      - name: Configure virtual desktop for wide WinUI screenshots
+        run: .\tests\ui\set_windows_display.ps1
       - name: Launch real WinUI app and check native interactions and reviewed screenshots
         shell: cmd
         run: |

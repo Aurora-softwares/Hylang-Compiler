@@ -58,6 +58,15 @@ public:
             view.api.call("gtk_notebook_set_current_page", view.controls["pages"]->widget, page); idle();
             for (int width : {1120, 800, 360}) {
                 view.present(width, 600); settle(350); layout();
+                int actualWidth = view.api.call<int>("gtk_widget_get_width", view.window);
+                if (actualWidth > width + 2) {
+                    for (auto c : view.controls) {
+                        if (!c->widget) continue; int minimum = 0, natural = 0;
+                        view.api.call("gtk_widget_measure", c->widget, 0, -1, &minimum, &natural, nullptr, nullptr);
+                        if (minimum > 200) { std::cerr << "GTK minimum width " << c->node->tag.toStdString() << " " << c->node->id.toStdString() << " = " << minimum << " (natural " << natural << ")\n"; }
+                    }
+                    check(false, QString("Native window cannot shrink: requested %1, actual %2").arg(width).arg(actualWidth));
+                }
                 if (page == 0) {
                     auto project = bounds(widget("projectName")), summary = bounds(widget("summary"));
                     if (width == 1120) { check(summary.x > project.x + project.width, "Wide panels must be side by side"); }
@@ -77,7 +86,8 @@ public:
             }
         }
         view.present(1120, 600); settle();
-        check(view.api.call<W>("gtk_picture_get_paintable", view.controls["logo"]->widget) != nullptr, "Bundled image failed to decode");
+        check(view.api.call<int>("gtk_widget_get_height", view.controls["logo"]->widget) == 80, "Image must honor its declared height");
+        check(view.api.call<W>("gtk_image_get_paintable", view.controls["logo"]->widget) != nullptr, "Bundled image failed to decode");
         view.api.call("gtk_check_button_set_active", view.controls["channel"]->choices[1], 1); idle();
         check(bridge.state()["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         view.api.call("gtk_list_box_select_row", view.controls["templates"]->widget, view.api.call<W>("gtk_list_box_get_row_at_index", view.controls["templates"]->widget, 2)); idle();
