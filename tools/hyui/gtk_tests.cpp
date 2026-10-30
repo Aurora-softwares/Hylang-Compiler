@@ -55,7 +55,7 @@ public:
     void run() {
         QDir().mkpath(output);
         for (int page : {0, 1}) {
-            view.api.call("gtk_notebook_set_current_page", view.controls["pages"]->widget, page); idle();
+            view.api.text(view.controls["pages"]->buffer, "gtk_stack_set_visible_child_name", QString::number(page)); idle();
             for (int width : {1120, 800, 360}) {
                 view.present(width, 600); settle(350); layout();
                 int actualWidth = view.api.call<int>("gtk_widget_get_width", view.window);
@@ -83,7 +83,7 @@ public:
                     while (scroller) {
                         int horizontal = 0, vertical = 0;
                         view.api.call("gtk_scrolled_window_get_policy", scroller, &horizontal, &vertical);
-                        if (vertical != 2) { break; }
+                        if (vertical == 0 || vertical == 1) { break; }
                         scroller = view.api.call<W>("gtk_widget_get_ancestor", view.api.call<W>("gtk_widget_get_parent", scroller), view.api.call<unsigned long>("gtk_scrolled_window_get_type"));
                     }
                     check(scroller != nullptr, "Missing vertically scrolling document");
@@ -92,6 +92,8 @@ public:
                     check(bottom > 0, "Document must overflow the short viewport");
                     view.api.call("gtk_adjustment_set_value", adjustment, bottom); settle();
                     check(view.api.call<double>("gtk_adjustment_get_value", adjustment) > 0, "Document failed to scroll");
+                    auto lastControl = bounds(widget(page ? "dialogResult" : "save"));
+                    check(lastControl.y >= 0 && lastControl.y + lastControl.height <= view.api.call<int>("gtk_widget_get_height", view.window), "Scrolling to the end must reveal the final controls");
                     capture(page ? "gallery-bottom.png" : "workspace-bottom.png");
                     view.api.call("gtk_adjustment_set_value", adjustment, 0.0);
                 }

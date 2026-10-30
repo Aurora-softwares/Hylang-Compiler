@@ -152,9 +152,18 @@ public:
             for (const Node& child : node.children) { append(box, build(child)); }
             api.call("gtk_popover_set_child", popover, box); api.call("gtk_menu_button_set_popover", w, popover);
         } else if (tag == "Tabs") {
-            w = api.call<W>("gtk_notebook_new"); c->widget = w; api.call("gtk_notebook_set_scrollable", w, 1);
-            for (const Node& page : node.children) { api.call<int>("gtk_notebook_append_page", w, build(page), api.call<W>("gtk_label_new", page.attributes.value("title").toUtf8().constData())); }
-            connect(c, "notify::page", [this, c, event] { event("value", api.call<int>("gtk_notebook_get_current_page", c->widget), "onChange"); }, true);
+            // Measure only the selected page; GtkNotebook reserves the tallest
+            // hidden page too, leaving a long blank document below shorter tabs.
+            w = api.call<W>("gtk_box_new", 1, 0); c->widget = w;
+            c->buffer = api.call<W>("gtk_stack_new");
+            api.call("gtk_stack_set_hhomogeneous", c->buffer, 0);
+            api.call("gtk_stack_set_vhomogeneous", c->buffer, 0);
+            W switcher = api.call<W>("gtk_stack_switcher_new");
+            api.call("gtk_stack_switcher_set_stack", switcher, c->buffer);
+            int index = 0;
+            for (const Node& page : node.children) { api.call<W>("gtk_stack_add_titled", c->buffer, build(page), QByteArray::number(index++).constData(), page.attributes.value("title").toUtf8().constData()); }
+            append(w, switcher); append(w, c->buffer);
+            connect(c, "notify::visible-child-name", [this, c, event] { event("value", QString::fromUtf8(api.call<const char*>("gtk_stack_get_visible_child_name", c->buffer)).toInt(), "onChange"); }, true);
         } else if (tag == "RadioGroup") {
             w = api.call<W>("gtk_box_new", 1, 8);
             int index = 0; W first = nullptr;
@@ -214,8 +223,10 @@ public:
                 if (child.tag != "State" && child.tag != "Timer" && child.attributes.value("fill", child.tag == "Button" || child.tag == "Spinner" ? "false" : "true") != "true") { homogeneous = false; }
             }
             W viewport = api.call<W>("gtk_scrolled_window_new");
-            api.call("gtk_scrolled_window_set_policy", viewport, 3, 2); // external horizontal, never vertical
+            api.call("gtk_scrolled_window_set_policy", viewport, 3, 3); // external scrolling; reflow owns its height
             api.call("gtk_scrolled_window_set_child", viewport, w);
+            api.call("gtk_widget_set_hexpand", viewport, 1);
+            api.call("gtk_widget_set_valign", viewport, 1);
             rows.append({w, viewport, &node, 1, homogeneous});
             c->widget = w; c->container = viewport; return viewport;
         } else if (tag == "ColumnPanel" || tag == "Panel" || tag == "Tab") {
@@ -363,7 +374,7 @@ public:
             if (tag == "CheckBox" || (tag == "MenuItem" && c->node->attributes.contains("checked"))) { api.text(c->widget, "gtk_check_button_set_label", value("text").toString()); api.call("gtk_check_button_set_active", c->widget, value("checked").toBool() ? 1 : 0); }
             if (tag == "Switch") { api.call("gtk_switch_set_active", c->widget, value("checked").toBool() ? 1 : 0); if (c->label) { api.text(c->label, "gtk_label_set_text", value("text").toString()); } }
             if (tag == "Menu") { api.text(c->widget, "gtk_menu_button_set_label", value("text").toString()); }
-            if (tag == "Tabs") { api.call("gtk_notebook_set_current_page", c->widget, value("value").toInt()); }
+            if (tag == "Tabs") { api.text(c->buffer, "gtk_stack_set_visible_child_name", QString::number(value("value").toInt())); }
             if (tag == "ListBox") { api.call("gtk_list_box_select_row", c->widget, api.call<W>("gtk_list_box_get_row_at_index", c->widget, value("value").toInt())); }
             if (tag == "Table") { api.call("gtk_single_selection_set_selected", c->buffer, value("value").toUInt()); }
             if (tag == "RadioGroup") { for (int index = 0; index < c->choices.size(); ++index) { api.call("gtk_check_button_set_active", c->choices[index], index == value("value").toInt() ? 1 : 0); } }
@@ -418,6 +429,11 @@ public:
                     api.call("gtk_flow_box_set_min_children_per_line", row.widget, unsigned(columns));
                     api.call("gtk_flow_box_set_homogeneous", row.widget, horizontal && row.homogeneous ? 1 : 0);
                 }
+                // Measuring at the allocated width preserves wrapped text's
+                // height-for-width request instead of measuring it at width 0.
+                int minimumHeight = 0, naturalHeight = 0;
+                api.call("gtk_widget_measure", row.widget, 1, width, &minimumHeight, &naturalHeight, nullptr, nullptr);
+                api.call("gtk_widget_set_size_request", row.viewport, -1, naturalHeight);
             }
         }
         W surface = api.call<W>("gtk_native_get_surface", window);
