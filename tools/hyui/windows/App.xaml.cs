@@ -137,7 +137,7 @@ public sealed class NativeWindow : Window
                 string[] columns = Attr(node, "columns").Split('|');
                 Grid Row(string[] cells, bool header) {
                     var grid = new Grid { ColumnSpacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch };
-                    for (int i = 0; i < columns.Length; i++) { grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); var label = new TextBlock { Text = cells[i], TextWrapping = TextWrapping.Wrap, FontWeight = header ? Windows.UI.Text.FontWeights.SemiBold : Windows.UI.Text.FontWeights.Normal }; Grid.SetColumn(label, i); grid.Children.Add(label); }
+                    for (int i = 0; i < columns.Length; i++) { grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); var label = new TextBlock { Text = cells[i], TextWrapping = TextWrapping.Wrap, FontWeight = new() { Weight = (ushort)(header ? 600 : 400) } }; Grid.SetColumn(label, i); grid.Children.Add(label); }
                     return grid;
                 }
                 list.Header = Row(columns, true); foreach (string row in Attr(node, "rows").Split('\n')) list.Items.Add(Row(row.Split('|'), false));
@@ -152,7 +152,7 @@ public sealed class NativeWindow : Window
             foreach (var child in node.Elements()) { var control = Build(child); if (control != null) panel.Children.Add(control); }
             if (tag is "RowPanel" or "GridPanel") {
                 var grid = new Grid { ColumnSpacing = Number(node, "gap", 16), RowSpacing = Number(node, "gap", 16) };
-                var children = panel.Children.ToList(); panel.Children.Clear(); foreach (var child in children) grid.Children.Add(child);
+                var children = panel.Children.OfType<FrameworkElement>().ToList(); panel.Children.Clear(); foreach (var child in children) grid.Children.Add(child);
                 void Reflow() {
                     int columns = tag == "RowPanel" ? (grid.ActualWidth < Number(node, "breakpoint", 700) ? 1 : Math.Max(1, children.Count)) : Math.Max(1, Math.Min(Number(node, "columns", 3), (int)(grid.ActualWidth / Number(node, "minItemWidth", 240))));
                     if (grid.ColumnDefinitions.Count == columns) return;
