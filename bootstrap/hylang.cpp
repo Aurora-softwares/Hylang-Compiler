@@ -7108,11 +7108,11 @@ private:
         // Most interpreted methods use only a few parameters and locals. Keep
         // those values together instead of hashing and allocating a node for
         // every variable access; promote larger frames to the old map path.
-        vector<std::pair<const Symbol*, Value>> small;
+        vector<std::pair<const Symbol*, Value>> inline_slots;
         std::unordered_map<const Symbol*, Value> large;
 
         Value& operator[](const Symbol* symbol) {
-            for (auto& slot : small) {
+            for (auto& slot : inline_slots) {
                 if (slot.first == symbol) {
                     return slot.second;
                 }
@@ -7120,15 +7120,15 @@ private:
             if (!large.empty()) {
                 return large[symbol];
             }
-            if (small.size() < 8) {
-                small.emplace_back(symbol, Value{});
-                return small.back().second;
+            if (inline_slots.size() < 8) {
+                inline_slots.emplace_back(symbol, Value{});
+                return inline_slots.back().second;
             }
             large.reserve(16);
-            for (auto& slot : small) {
+            for (auto& slot : inline_slots) {
                 large.emplace(slot.first, std::move(slot.second));
             }
-            small.clear();
+            inline_slots.clear();
             return large[symbol];
         }
     };

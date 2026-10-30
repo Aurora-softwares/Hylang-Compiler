@@ -129,8 +129,11 @@ jobs:
       - name: Build SDK and self-contained native WinUI application
         run: |
           cmake -S . -B build-ui -DHYDROGEN_BUILD_UI=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build-ui --target hy --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet publish tools/hyui/windows/Hyui.WinUI.csproj -c Release -r win-x64 -p:Platform=x64 -p:WindowsAppSDKSelfContained=true -p:HydrogenUiTests=true -o build-ui/native-winui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip install Pillow==12.0.0
       - name: Check visual comparator
         run: python -m unittest discover -s tests/ui -p 'test_*.py'

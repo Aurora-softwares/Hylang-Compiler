@@ -12,6 +12,10 @@ add_library(hylang
     bootstrap/hylang.cpp
 )
 
+if(WIN32)
+    target_compile_definitions(hylang PUBLIC NOMINMAX)
+endif()
+
 target_include_directories(hylang
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/include
