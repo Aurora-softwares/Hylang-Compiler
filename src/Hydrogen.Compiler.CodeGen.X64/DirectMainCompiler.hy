@@ -76,6 +76,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private int provenArraySlot;
         private int provenBoundSlot;
         private int promotedIndexSlot;
+        private int promotedValueSlot;
+        private int promotedSecondValueSlot;
+        private int promotedArraySlot;
+        private int promotedMagicDivisor;
         private bool provenNonNegative;
         private bool loopStartsAtZero;
         private int maxLocalCount;
@@ -162,6 +166,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             localCount = 0; scopeStart = 0; loopStart = -1;
             provenIndexSlot = -1; provenArraySlot = -1; provenBoundSlot = -1;
             promotedIndexSlot = -1;
+            promotedValueSlot = -1;
+            promotedSecondValueSlot = -1;
+            promotedArraySlot = -1;
+            promotedMagicDivisor = 0;
             provenNonNegative = false; loopStartsAtZero = false;
             int si = 0;
             while (si < staticCount) {
@@ -599,6 +607,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             loopStart = -1;
             provenIndexSlot = -1; provenArraySlot = -1; provenBoundSlot = -1;
             promotedIndexSlot = -1;
+            promotedValueSlot = -1;
+            promotedSecondValueSlot = -1;
+            promotedArraySlot = -1;
+            promotedMagicDivisor = 0;
             provenNonNegative = false; loopStartsAtZero = false;
             breakPatches = new int[0];
             breakCount = 0;
@@ -617,6 +629,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.EmitByte(0xf3); code.EmitByte(0x48); code.EmitByte(0xab); // rep stosq
             if (!freestanding) {
                 code.EmitByte(0x41); code.EmitByte(0x54); // save r12 below the local frame
+                code.EmitByte(0x53); // save rbx for one guarded loop value
+                if (staticCount == 0) { code.EmitByte(0x41); code.EmitByte(0x55); } // save r13 if no statics use it
             }
             {
                 IrParameter[] parameters = method.Parameters();
@@ -694,7 +708,11 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private void EmitReturn() {
-            if (!freestanding) { code.EmitByte(0x41); code.EmitByte(0x5c); } // restore r12
+            if (!freestanding) {
+                if (staticCount == 0) { code.EmitByte(0x41); code.EmitByte(0x5d); } // restore r13
+                code.EmitByte(0x5b); // restore rbx
+                code.EmitByte(0x41); code.EmitByte(0x5c); // restore r12
+            }
             code.EmitByte(0xc9); // leave: discard frame/temporaries, restore caller rbp
             code.EmitByte(0xc3); // ret: return to the caller, not the Linux exit syscall
         }
@@ -809,6 +827,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 int previousBound = provenBoundSlot;
                 bool previousNonNegative = provenNonNegative;
                 int previousPromoted = promotedIndexSlot;
+                int previousValue = promotedValueSlot;
+                int previousSecondValue = promotedSecondValueSlot;
+                int previousArrayPromotion = promotedArraySlot;
+                int previousMagic = promotedMagicDivisor;
                 ActivateProvenLoop(statement.Condition(), statement.Body(), null, loopStartsAtZero);
                 int checkedLengthSlot = ProvenLengthConditionSlot(statement.Condition());
                 if (checkedLengthSlot >= 0) { EmitProvenLengthPrecheck(checkedLengthSlot); }
@@ -817,6 +839,45 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     EmitLoadLocal(loopIndex);
                     code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc4); // mov r12, rax
                     promotedIndexSlot = loopIndex;
+                }
+                int loopArray = -1;
+                if (!freestanding && staticCount == 0 && loopIndex >= 0 &&
+                    previousArrayPromotion < 0) {
+                    loopArray = ProvenLoopArraySlot();
+                    if (loopArray >= 0) {
+                        EmitLoadLocal(loopArray);
+                        code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc5); // mov r13, rax
+                        promotedArraySlot = loopArray;
+                    }
+                }
+                int loopValue = -1;
+                if (promotedIndexSlot == loopIndex && loopIndex >= 0 && previousValue < 0) {
+                    loopValue = FirstWrittenIntLocal(statement.Body(), loopIndex, provenArraySlot, provenBoundSlot);
+                    if (loopValue >= 0) {
+                        EmitLoadLocal(loopValue);
+                        code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc3); // mov rbx, rax
+                        promotedValueSlot = loopValue;
+                    }
+                }
+                int secondLoopValue = -1;
+                if (!freestanding && staticCount == 0 && promotedArraySlot < 0 &&
+                    promotedIndexSlot == loopIndex && loopIndex >= 0 && loopValue >= 0 &&
+                    previousSecondValue < 0) {
+                    secondLoopValue = FirstWrittenIntLocal(statement.Body(), loopIndex, loopValue, provenBoundSlot);
+                    if (secondLoopValue >= 0) {
+                        EmitLoadLocal(secondLoopValue);
+                        code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc5); // mov r13, rax
+                        promotedSecondValueSlot = secondLoopValue;
+                    }
+                }
+                if (!freestanding && previousMagic == 0 && loopIndex >= 0 &&
+                    LoopCanKeepVolatile(statement.Body())) {
+                    int divisor = FirstConstantDivisor(statement.Body());
+                    if (divisor >= 3) {
+                        ulong magic = ((ulong)(-1) / (ulong)divisor) + (ulong)1;
+                        code.EmitByte(0x49); code.EmitByte(0xb8); code.Emit64((long)magic); // mov r8, reciprocal
+                        promotedMagicDivisor = divisor;
+                    }
                 }
                 int conditionPosition = code.Position();
                 loopStart = conditionPosition;
@@ -828,6 +889,20 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 int backPatch = EmitJump();
                 PatchRelative(backPatch, conditionPosition);
                 PatchRelative(exitPatch, code.Position());
+                if (promotedValueSlot == loopValue && loopValue >= 0) {
+                    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd8); // mov rax, rbx
+                    promotedValueSlot = -1;
+                    EmitStoreLocal(loopValue);
+                }
+                if (promotedSecondValueSlot == secondLoopValue && secondLoopValue >= 0) {
+                    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe8); // mov rax, r13
+                    promotedSecondValueSlot = -1;
+                    EmitStoreLocal(secondLoopValue);
+                }
+                promotedValueSlot = previousValue;
+                promotedSecondValueSlot = previousSecondValue;
+                promotedArraySlot = previousArrayPromotion;
+                promotedMagicDivisor = previousMagic;
                 if (promotedIndexSlot == loopIndex && loopIndex >= 0) {
                     code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe0); // mov rax, r12
                     promotedIndexSlot = -1;
@@ -977,6 +1052,174 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 value.Right().LiteralKind() == "number" && value.Right().LiteralText() == "1";
         }
 
+        // r8 is caller-saved, so retain a reciprocal there only when every
+        // operation in the guarded loop lowers without a runtime call.
+        private bool LoopCanKeepVolatile(IrStatement statement) {
+            if (statement == null) { return true; }
+            int kind = statement.Kind();
+            if (kind == IrStatement.KindExpressionStatement()) {
+                return VolatileExpressionSafe(statement.Expression());
+            }
+            if (kind == IrStatement.KindVariableDeclaration()) {
+                return VolatileExpressionSafe(statement.Initializer());
+            }
+            if (kind == IrStatement.KindIfStatement()) {
+                return false;
+            }
+            if (kind == IrStatement.KindBlock()) {
+                IrStatement[] items = statement.Statements();
+                int i = 0;
+                while (i < items.Length) {
+                    if (!LoopCanKeepVolatile(items[i])) { return false; }
+                    i = i + 1;
+                }
+                return true;
+            }
+            return false;
+        }
+
+        private bool VolatileExpressionSafe(IrExpression expression) {
+            if (expression == null) { return true; }
+            int kind = expression.Kind();
+            if (kind == IrExpression.KindName() || kind == IrExpression.KindLiteral()) { return true; }
+            if (kind == IrExpression.KindBinary()) {
+                if (expression.ResultType() == "string" || expression.Left().ResultType() == "string" ||
+                    expression.Right().ResultType() == "string") { return false; }
+                return VolatileExpressionSafe(expression.Left()) && VolatileExpressionSafe(expression.Right());
+            }
+            if (kind == IrExpression.KindIndex()) {
+                return ProvenPackedAccess(expression.Receiver(), expression.Index()) &&
+                    VolatileExpressionSafe(expression.Receiver()) && VolatileExpressionSafe(expression.Index());
+            }
+            if (kind == IrExpression.KindMemberAccess()) {
+                return expression.MemberName() == "Length" && VolatileExpressionSafe(expression.Receiver());
+            }
+            if (kind == IrExpression.KindAssignment()) {
+                IrExpression target = expression.Target();
+                if (target.Kind() != IrExpression.KindName() && target.Kind() != IrExpression.KindIndex()) { return false; }
+                return VolatileExpressionSafe(target) && VolatileExpressionSafe(expression.Value());
+            }
+            return false;
+        }
+
+        private bool PurePackedStoreRhs(IrExpression expression) {
+            if (expression == null) { return false; }
+            int kind = expression.Kind();
+            if (kind == IrExpression.KindName() || kind == IrExpression.KindLiteral()) { return true; }
+            if (kind == IrExpression.KindBinary()) {
+                if (expression.ResultType() == "string" || expression.Left().ResultType() == "string" ||
+                    expression.Right().ResultType() == "string") { return false; }
+                return PurePackedStoreRhs(expression.Left()) && PurePackedStoreRhs(expression.Right());
+            }
+            if (kind == IrExpression.KindIndex()) {
+                return ProvenPackedAccess(expression.Receiver(), expression.Index()) &&
+                    PurePackedStoreRhs(expression.Receiver()) && PurePackedStoreRhs(expression.Index());
+            }
+            return false;
+        }
+
+        private int FirstConstantDivisor(IrStatement statement) {
+            if (statement == null) { return 0; }
+            int kind = statement.Kind();
+            if (kind == IrStatement.KindExpressionStatement()) { return ConstantDivisorIn(statement.Expression()); }
+            if (kind == IrStatement.KindVariableDeclaration()) { return ConstantDivisorIn(statement.Initializer()); }
+            if (kind == IrStatement.KindIfStatement()) {
+                int divisor = ConstantDivisorIn(statement.Condition());
+                if (divisor == 0) { divisor = FirstConstantDivisor(statement.ThenStatement()); }
+                if (divisor == 0) { divisor = FirstConstantDivisor(statement.ElseStatement()); }
+                return divisor;
+            }
+            if (kind == IrStatement.KindBlock()) {
+                IrStatement[] items = statement.Statements();
+                int i = 0;
+                while (i < items.Length) {
+                    int divisor = FirstConstantDivisor(items[i]);
+                    if (divisor != 0) { return divisor; }
+                    i = i + 1;
+                }
+            }
+            return 0;
+        }
+
+        private int ConstantDivisorIn(IrExpression expression) {
+            if (expression == null) { return 0; }
+            int kind = expression.Kind();
+            if (kind == IrExpression.KindBinary()) {
+                int op = expression.OperatorKind();
+                IrExpression right = expression.Right();
+                if ((op == IrOperator.SlashToken() || op == IrOperator.PercentToken()) &&
+                    right.Kind() == IrExpression.KindLiteral() && right.LiteralKind() == "number" &&
+                    expression.Left().ResultType() == "int") {
+                    int divisor = ParseInt(right.LiteralText());
+                    if (divisor >= 3) { return divisor; }
+                }
+                int divisor = ConstantDivisorIn(expression.Left());
+                if (divisor == 0) { divisor = ConstantDivisorIn(right); }
+                return divisor;
+            }
+            if (kind == IrExpression.KindAssignment()) { return ConstantDivisorIn(expression.Value()); }
+            if (kind == IrExpression.KindIndex()) { return ConstantDivisorIn(expression.Index()); }
+            return 0;
+        }
+
+        private int FirstWrittenIntLocal(IrStatement statement, int indexSlot, int arraySlot, int boundSlot) {
+            if (statement == null) { return -1; }
+            int kind = statement.Kind();
+            if (kind == IrStatement.KindExpressionStatement()) {
+                return FirstWrittenIntExpression(statement.Expression(), indexSlot, arraySlot, boundSlot);
+            }
+            if (kind == IrStatement.KindVariableDeclaration()) {
+                return FirstWrittenIntExpression(statement.Initializer(), indexSlot, arraySlot, boundSlot);
+            }
+            if (kind == IrStatement.KindIfStatement()) {
+                int found = FirstWrittenIntExpression(statement.Condition(), indexSlot, arraySlot, boundSlot);
+                if (found < 0) { found = FirstWrittenIntLocal(statement.ThenStatement(), indexSlot, arraySlot, boundSlot); }
+                if (found < 0) { found = FirstWrittenIntLocal(statement.ElseStatement(), indexSlot, arraySlot, boundSlot); }
+                return found;
+            }
+            if (kind == IrStatement.KindBlock()) {
+                IrStatement[] items = statement.Statements();
+                int i = 0;
+                while (i < items.Length) {
+                    int found = FirstWrittenIntLocal(items[i], indexSlot, arraySlot, boundSlot);
+                    if (found >= 0) { return found; }
+                    i = i + 1;
+                }
+            }
+            return -1;
+        }
+
+        private int FirstWrittenIntExpression(IrExpression expression, int indexSlot, int arraySlot, int boundSlot) {
+            if (expression == null) { return -1; }
+            int kind = expression.Kind();
+            if (kind == IrExpression.KindAssignment()) {
+                IrExpression target = expression.Target();
+                if (target.Kind() == IrExpression.KindName()) {
+                    int slot = FindLocal(target.Name());
+                    if (slot >= 0 && slot != indexSlot && slot != arraySlot && slot != boundSlot &&
+                        localTypes[slot] == "int") { return slot; }
+                }
+                return FirstWrittenIntExpression(expression.Value(), indexSlot, arraySlot, boundSlot);
+            }
+            if (kind == IrExpression.KindBinary()) {
+                int found = FirstWrittenIntExpression(expression.Left(), indexSlot, arraySlot, boundSlot);
+                if (found >= 0) { return found; }
+                return FirstWrittenIntExpression(expression.Right(), indexSlot, arraySlot, boundSlot);
+            }
+            if (kind == IrExpression.KindCast()) {
+                return FirstWrittenIntExpression(expression.CastExpression(), indexSlot, arraySlot, boundSlot);
+            }
+            if (kind == IrExpression.KindIndex()) {
+                int found = FirstWrittenIntExpression(expression.Receiver(), indexSlot, arraySlot, boundSlot);
+                if (found >= 0) { return found; }
+                return FirstWrittenIntExpression(expression.Index(), indexSlot, arraySlot, boundSlot);
+            }
+            if (kind == IrExpression.KindMemberAccess()) {
+                return FirstWrittenIntExpression(expression.Receiver(), indexSlot, arraySlot, boundSlot);
+            }
+            return -1;
+        }
+
         private bool GuardedStatementSafe(IrStatement statement, int indexSlot, int arraySlot, int boundSlot) {
             if (statement == null) { return true; }
             int kind = statement.Kind();
@@ -1046,6 +1289,18 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 (provenBoundSlot >= 0 && arrayLengthSourceSlots[arraySlot] == provenBoundSlot));
         }
 
+        private int ProvenLoopArraySlot() {
+            if (provenArraySlot >= 0) { return provenArraySlot; }
+            if (provenBoundSlot < 0) { return -1; }
+            int slot = 0;
+            while (slot < localCount) {
+                if (arrayLengthSourceSlots[slot] == provenBoundSlot &&
+                    (localTypes[slot] == "byte[]" || localTypes[slot] == "int[]")) { return slot; }
+                slot = slot + 1;
+            }
+            return -1;
+        }
+
         private int ProvenLengthConditionSlot(IrExpression condition) {
             if (provenArraySlot < 0 || condition == null || condition.Kind() != IrExpression.KindBinary()) { return -1; }
             IrExpression right = condition.Right();
@@ -1071,6 +1326,38 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 int op = condition.OperatorKind();
                 if (op == IrOperator.LessToken() || op == IrOperator.LessEqualsToken() ||
                     op == IrOperator.GreaterToken() || op == IrOperator.GreaterEqualsToken()) {
+                    // A guarded loop keeps its index in r12. Compare it with
+                    // the stable bound directly instead of materialising both
+                    // operands through rax and rcx on every iteration.
+                    if (op == IrOperator.LessToken() && promotedIndexSlot >= 0 &&
+                        condition.Left().Kind() == IrExpression.KindName() &&
+                        FindLocal(condition.Left().Name()) == promotedIndexSlot) {
+                        if (checkedLengthSlot >= 0) {
+                            if (checkedLengthSlot == promotedArraySlot) {
+                                code.EmitByte(0x4d); code.EmitByte(0x3b);
+                                code.EmitByte(0x65); code.EmitByte(0); // cmp r12, [r13]
+                            } else {
+                                EmitLoadLocal(checkedLengthSlot);
+                                code.EmitByte(0x4c); code.EmitByte(0x3b); code.EmitByte(0x20); // cmp r12, [rax]
+                            }
+                            code.EmitByte(0x0f); code.EmitByte(0x8d);
+                            int patch = code.Position(); code.Emit32(0);
+                            valueType = "bool";
+                            return patch;
+                        }
+                        IrExpression bound = condition.Right();
+                        if (bound.Kind() == IrExpression.KindName()) {
+                            int boundSlot = FindLocal(bound.Name());
+                            if (boundSlot >= 0 && localTypes[boundSlot] == "int") {
+                                code.EmitByte(0x4c); code.EmitByte(0x3b); code.EmitByte(0xa5);
+                                code.Emit32(-8 * (boundSlot + 1)); // cmp r12, [rbp-offset]
+                                code.EmitByte(0x0f); code.EmitByte(0x8d);
+                                int patch = code.Position(); code.Emit32(0);
+                                valueType = "bool";
+                                return patch;
+                            }
+                        }
+                    }
                     if (!CompileExpression(condition.Left())) { return -1; }
                     string leftType = valueType;
                     IrExpression right = condition.Right();
@@ -1181,6 +1468,31 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return true;
             }
             if (kind == IrExpression.KindIndex()) {
+                if (!freestanding && !expression.NullConditional() && promotedArraySlot >= 0 &&
+                    expression.Receiver().Kind() == IrExpression.KindName() &&
+                    expression.Index().Kind() == IrExpression.KindName() &&
+                    FindLocal(expression.Receiver().Name()) == promotedArraySlot &&
+                    FindLocal(expression.Index().Name()) == promotedIndexSlot &&
+                    ProvenPackedAccess(expression.Receiver(), expression.Index())) {
+                    string promotedType = localTypes[promotedArraySlot];
+                    if (promotedType == "byte[]" || promotedType == "string") {
+                        code.EmitByte(0x43); code.EmitByte(0x0f); code.EmitByte(0xb6);
+                        code.EmitByte(0x44); code.EmitByte(0x25); code.EmitByte(8); // byte [r13+r12+8]
+                        if (promotedType == "string") {
+                            code.EmitByte(0x48); code.EmitByte(0xc1); code.EmitByte(0xe0); code.EmitByte(4);
+                            code.EmitByte(0x49); code.EmitByte(0x8d); code.EmitByte(0x44);
+                            code.EmitByte(0x07); code.EmitByte(0x40); // cached one-byte string
+                            valueType = "string";
+                        } else { valueType = "byte"; }
+                        return true;
+                    }
+                    if (promotedType == "int[]") {
+                        code.EmitByte(0x4b); code.EmitByte(0x63); code.EmitByte(0x44);
+                        code.EmitByte(0xa5); code.EmitByte(8); // dword [r13+r12*4+8]
+                        valueType = "int";
+                        return true;
+                    }
+                }
                 if (!CompileExpression(expression.Receiver())) { return false; }
                 string receiverType = valueType;
                 int skip = -1;
@@ -1358,6 +1670,26 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             if (op == IrOperator.AmpersandAmpersandToken() || op == IrOperator.PipePipeToken()) {
                 return CompileLogical(expression);
+            }
+            // Reading a cached int local has no side effect. When the right
+            // side cannot change it, add straight into the expression result
+            // instead of pushing and restoring the cached left operand.
+            IrExpression left = expression.Left();
+            int cachedLeftSlot = -1;
+            if (left.Kind() == IrExpression.KindName()) { cachedLeftSlot = FindLocal(left.Name()); }
+            if (op == IrOperator.PlusToken() &&
+                (cachedLeftSlot == promotedValueSlot || cachedLeftSlot == promotedSecondValueSlot) &&
+                cachedLeftSlot >= 0 && localTypes[cachedLeftSlot] == "int" &&
+                expression.ResultType() == "int" &&
+                GuardedExpressionSafe(expression.Right(), -1, cachedLeftSlot, -1)) {
+                if (!CompileExpression(expression.Right())) { return false; }
+                if (!Numeric(valueType)) { failure = "native integer addition requires numeric operands"; return false; }
+                if (cachedLeftSlot == promotedValueSlot) {
+                    code.EmitByte(0x48); code.EmitByte(0x01); code.EmitByte(0xd8); // add rax, rbx
+                } else {
+                    code.EmitByte(0x4c); code.EmitByte(0x01); code.EmitByte(0xe8); // add rax, r13
+                }
+                NormalizeRax("int"); valueType = "int"; return true;
             }
             if (!CompileExpression(expression.Left())) { return false; }
             string leftType = valueType;
@@ -1577,30 +1909,36 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             ulong magic = ((ulong)(-1) / (ulong)divisor) + (ulong)1;
             code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc9); // test rcx, rcx
             code.EmitByte(0x0f); code.EmitByte(0x88); int negativePatch = code.Position(); code.Emit32(0); // js negative
-            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
-            code.EmitByte(0x49); code.EmitByte(0xb9); code.Emit64((long)magic); // mov r9, reciprocal
-            code.EmitByte(0x49); code.EmitByte(0xf7); code.EmitByte(0xe1); // mul r9; quotient in rdx
-            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd0); // mov rax, rdx
+            if (divisor != promotedMagicDivisor) {
+                code.EmitByte(0x49); code.EmitByte(0xb9); code.Emit64((long)magic); // mov r9, reciprocal
+            }
+            code.EmitByte(0x49); code.EmitByte(0xf7);
+            code.EmitByte(divisor == promotedMagicDivisor ? 0xe0 : 0xe1); // mul r8/r9; quotient in rdx
             if (remainder) {
-                code.EmitByte(0x48); code.EmitByte(0x69); code.EmitByte(0xc0); code.Emit32(divisor); // quotient * divisor
-                code.EmitByte(0x48); code.EmitByte(0x29); code.EmitByte(0xc1); // sub rcx, rax
+                code.EmitByte(0x48); code.EmitByte(0x69); code.EmitByte(0xd2); code.Emit32(divisor); // quotient * divisor
+                code.EmitByte(0x48); code.EmitByte(0x29); code.EmitByte(0xd1); // sub rcx, rdx
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
+            } else {
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd0); // mov rax, rdx
             }
             code.EmitByte(0xe9); int donePatch = code.Position(); code.Emit32(0);
             PatchRelative(negativePatch, code.Position());
             code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
             code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xd8); // neg rax
-            code.EmitByte(0x49); code.EmitByte(0xb9); code.Emit64((long)magic);
-            code.EmitByte(0x49); code.EmitByte(0xf7); code.EmitByte(0xe1); // mul r9
-            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd0); // mov rax, rdx
+            if (divisor != promotedMagicDivisor) {
+                code.EmitByte(0x49); code.EmitByte(0xb9); code.Emit64((long)magic);
+            }
+            code.EmitByte(0x49); code.EmitByte(0xf7);
+            code.EmitByte(divisor == promotedMagicDivisor ? 0xe0 : 0xe1); // mul r8/r9
             if (remainder) {
-                code.EmitByte(0x48); code.EmitByte(0x69); code.EmitByte(0xc0); code.Emit32(divisor);
-                code.EmitByte(0x48); code.EmitByte(0x01); code.EmitByte(0xc8); // negative dividend + quotient * divisor
+                code.EmitByte(0x48); code.EmitByte(0x69); code.EmitByte(0xd2); code.Emit32(divisor);
+                code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x04); code.EmitByte(0x11); // rcx + rdx
             } else {
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd0); // mov rax, rdx
                 code.EmitByte(0x48); code.EmitByte(0xf7); code.EmitByte(0xd8); // neg quotient
             }
             PatchRelative(donePatch, code.Position());
-            NormalizeRax("int");
+            // Both quotient and remainder fit signed int and are already sign-extended.
         }
 
         private bool CompileLogical(IrExpression expression) {
@@ -2037,6 +2375,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (!Numeric(localTypes[indexSlot])) { failure = "native index must be integral"; return false; }
                 if (indexSlot == promotedIndexSlot) {
                     code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe6); // mov rsi, r12
+                } else if (indexSlot == promotedValueSlot) {
+                    code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xde); // mov rsi, rbx
+                } else if (indexSlot == promotedSecondValueSlot) {
+                    code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xee); // mov rsi, r13
                 } else {
                     code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0xb5);
                     code.Emit32(-8 * (indexSlot + 1)); // mov rsi, [rbp-offset]
@@ -2085,6 +2427,16 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         private void EmitProvenPackedRead(int indexSlot, int elementBytes) {
+            if (indexSlot == promotedIndexSlot && provenNonNegative) {
+                if (elementBytes == 1) {
+                    code.EmitByte(0x42); code.EmitByte(0x0f); code.EmitByte(0xb6);
+                    code.EmitByte(0x44); code.EmitByte(0x20); code.EmitByte(8); // movzx eax, byte [rax+r12+8]
+                } else {
+                    code.EmitByte(0x4a); code.EmitByte(0x63); code.EmitByte(0x44);
+                    code.EmitByte(0xa0); code.EmitByte(8); // movsxd rax, dword [rax+r12*4+8]
+                }
+                return;
+            }
             if (indexSlot == promotedIndexSlot) {
                 code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe6); // mov rsi, r12
             } else {
@@ -2360,7 +2712,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 if (!receiverAlreadyLoaded && !CompileExpression(receiver)) { return false; }
                 owner = valueType;
             }
-            MoveRdiRax(); EmitRuntime("rt_check");
+            if (!receiverAlreadyLoaded) {
+                code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc0); // test rax, rax
+                code.EmitByte(0x0f); code.EmitByte(0x85); int nonNull = code.Position(); code.Emit32(0);
+                EmitRuntime("rt_null_error");
+                PatchRelative(nonNull, code.Position());
+            }
             addressReadOnly = false;
             if (name == "Length" && (owner == "string" || IsArray(owner))) { addressReadOnly = true; valueType = "int"; return true; }
             declaredOwner = FieldOwner(owner, name);
@@ -2380,6 +2737,31 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             int assignmentOp = expression.AssignmentOperatorKind();
             bool compound = assignmentOp != IrOperator.EqualsToken();
             bool returnsOld = expression.ReturnsOld();
+            if (!freestanding && !compound && !returnsOld && promotedArraySlot >= 0 &&
+                target.Kind() == IrExpression.KindIndex() &&
+                target.Receiver().Kind() == IrExpression.KindName() &&
+                target.Index().Kind() == IrExpression.KindName() &&
+                FindLocal(target.Receiver().Name()) == promotedArraySlot &&
+                FindLocal(target.Index().Name()) == promotedIndexSlot &&
+                ProvenPackedAccess(target.Receiver(), target.Index()) &&
+                PurePackedStoreRhs(expression.Value())) {
+                string packedType = localTypes[promotedArraySlot];
+                if (packedType == "byte[]" || packedType == "int[]") {
+                    string elementType = packedType == "byte[]" ? "byte" : "int";
+                    if (!CompileExpression(expression.Value())) { return false; }
+                    if (!Assignable(valueType, elementType)) { failure = "native assignment type mismatch"; return false; }
+                    PrepareValue(elementType);
+                    if (packedType == "byte[]") {
+                        code.EmitByte(0x43); code.EmitByte(0x88); code.EmitByte(0x44);
+                        code.EmitByte(0x25); code.EmitByte(8); // mov [r13+r12+8], al
+                    } else {
+                        code.EmitByte(0x43); code.EmitByte(0x89); code.EmitByte(0x44);
+                        code.EmitByte(0xa5); code.EmitByte(8); // mov [r13+r12*4+8], eax
+                    }
+                    valueType = elementType;
+                    return true;
+                }
+            }
             int slot = -1;
             string expected = "";
             bool packedByteTarget = false;
@@ -2393,22 +2775,38 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                     if (!CompileFieldAddress(target.Receiver(), target.MemberName(), target.ResolvedOwner())) { return false; }
                     if (addressReadOnly) { failure = "Length is read-only"; return false; }
                 } else if (target.Kind() == IrExpression.KindIndex()) {
-                    if (!CompileExpression(target.Receiver())) { return false; }
-                    if (!IsArray(valueType)) { failure = "native indexed assignment requires array"; return false; }
-                    packedByteTarget = !freestanding && valueType == "byte[]";
-                    packedIntTarget = !freestanding && valueType == "int[]";
-                    expected = ElementType(valueType);
-                    if (!CompileIndexOperands(target.Index())) { return false; }
-                    if (packedByteTarget) {
-                        if (ProvenPackedAccess(target.Receiver(), target.Index())) { EmitProvenPackedIndex(1); }
-                        else { EmitCheckedPackedIndex(1); }
+                    bool promotedPackedTarget = !freestanding && promotedArraySlot >= 0 &&
+                        target.Receiver().Kind() == IrExpression.KindName() &&
+                        target.Index().Kind() == IrExpression.KindName() &&
+                        FindLocal(target.Receiver().Name()) == promotedArraySlot &&
+                        FindLocal(target.Index().Name()) == promotedIndexSlot &&
+                        ProvenPackedAccess(target.Receiver(), target.Index()) &&
+                        (localTypes[promotedArraySlot] == "byte[]" || localTypes[promotedArraySlot] == "int[]");
+                    if (promotedPackedTarget) {
+                        packedByteTarget = localTypes[promotedArraySlot] == "byte[]";
+                        packedIntTarget = !packedByteTarget;
+                        expected = packedByteTarget ? "byte" : "int";
+                        code.EmitByte(0x4b); code.EmitByte(0x8d); code.EmitByte(0x44);
+                        code.EmitByte(packedByteTarget ? 0x25 : 0xa5); code.EmitByte(8); // [r13+r12*width+8]
+                        valueType = expected;
+                    } else {
+                        if (!CompileExpression(target.Receiver())) { return false; }
+                        if (!IsArray(valueType)) { failure = "native indexed assignment requires array"; return false; }
+                        packedByteTarget = !freestanding && valueType == "byte[]";
+                        packedIntTarget = !freestanding && valueType == "int[]";
+                        expected = ElementType(valueType);
+                        if (!CompileIndexOperands(target.Index())) { return false; }
+                        if (packedByteTarget) {
+                            if (ProvenPackedAccess(target.Receiver(), target.Index())) { EmitProvenPackedIndex(1); }
+                            else { EmitCheckedPackedIndex(1); }
+                        }
+                        else if (packedIntTarget) {
+                            if (ProvenPackedAccess(target.Receiver(), target.Index())) { EmitProvenPackedIndex(4); }
+                            else { EmitCheckedPackedIndex(4); }
+                        }
+                        else { EmitRuntime("rt_index"); }
+                        valueType = expected;
                     }
-                    else if (packedIntTarget) {
-                        if (ProvenPackedAccess(target.Receiver(), target.Index())) { EmitProvenPackedIndex(4); }
-                        else { EmitCheckedPackedIndex(4); }
-                    }
-                    else { EmitRuntime("rt_index"); }
-                    valueType = expected;
                 } else { failure = "unsupported native assignment target"; return false; }
                 expected = valueType;
                 code.EmitByte(0x50); // retain interior lvalue pointer as a GC root during RHS evaluation
@@ -2512,6 +2910,23 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0xc7); code.Emit32(8 * (fields + 1));
             EmitRuntime("rt_alloc");
             code.EmitByte(0x48); code.EmitByte(0xc7); code.EmitByte(0x00); code.Emit32(ci + 1); // object type id
+            IrStatement constructorBody = functions[constructor].Declaration().Body();
+            bool trivialConstructor = functions[constructor].Declaration().ConstructorInitializerKind() == "";
+            IrField[] ownerFields = classDeclarations[ci].Fields();
+            int fieldIndex = 0;
+            while (fieldIndex < ownerFields.Length) {
+                if (!ownerFields[fieldIndex].IsStatic() && ownerFields[fieldIndex].Initializer() != null) {
+                    trivialConstructor = false;
+                }
+                fieldIndex = fieldIndex + 1;
+            }
+            if (arguments.Length == 0 && classDeclarations[ci].BaseType() == "" &&
+                trivialConstructor &&
+                constructorBody != null && constructorBody.Kind() == IrStatement.KindBlock() &&
+                constructorBody.Statements().Length == 0) {
+                valueType = owner;
+                return true;
+            }
             code.EmitByte(0x50);
             int i = 0;
             while (i < arguments.Length) {
@@ -2575,6 +2990,14 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc4); // mov r12, rax
                 return;
             }
+            if (slot == promotedValueSlot) {
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc3); // mov rbx, rax
+                return;
+            }
+            if (slot == promotedSecondValueSlot) {
+                code.EmitByte(0x49); code.EmitByte(0x89); code.EmitByte(0xc5); // mov r13, rax
+                return;
+            }
             code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0x85); code.Emit32(-8 * (slot + 1)); // mov [rbp-offsetof], rax
         }
 
@@ -2583,12 +3006,32 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe0); // mov rax, r12
                 return;
             }
+            if (slot == promotedArraySlot) {
+                code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe8); // mov rax, r13
+                return;
+            }
+            if (slot == promotedValueSlot) {
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd8); // mov rax, rbx
+                return;
+            }
+            if (slot == promotedSecondValueSlot) {
+                code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe8); // mov rax, r13
+                return;
+            }
             code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x85); code.Emit32(-8 * (slot + 1)); // mov rax, [rbp-offsetof]
         }
 
         private void EmitLoadLocalRcx(int slot) {
             if (slot == promotedIndexSlot) {
                 code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe1); // mov rcx, r12
+                return;
+            }
+            if (slot == promotedValueSlot) {
+                code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd9); // mov rcx, rbx
+                return;
+            }
+            if (slot == promotedSecondValueSlot) {
+                code.EmitByte(0x4c); code.EmitByte(0x89); code.EmitByte(0xe9); // mov rcx, r13
                 return;
             }
             code.EmitByte(0x48); code.EmitByte(0x8b); code.EmitByte(0x8d); code.Emit32(-8 * (slot + 1)); // mov rcx, [rbp-offsetof]
