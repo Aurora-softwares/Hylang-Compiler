@@ -63,7 +63,8 @@ def main():
         if result.returncode:
             raise AssertionError(f"{args.platform} native interaction/layout tests failed ({result.returncode}); see native-test.log")
         report = json.loads((artifacts / "report.json").read_text())
-        if not report.get("passed") or len(report.get("screenshots", [])) < 7:
+        required = {f"{page}-{width}.png" for page in ["workspace", "gallery"] for width in [1120, 800, 360]} | {"dialog-confirm.png", "workspace-bottom.png", "gallery-bottom.png"}
+        if not report.get("passed") or set(report.get("screenshots", [])) != required or len(report["screenshots"]) != len(required):
             raise AssertionError("Native test did not complete all required captures")
         differences = artifacts / "diffs"; differences.mkdir(exist_ok=True)
         metrics = {}; failures = []

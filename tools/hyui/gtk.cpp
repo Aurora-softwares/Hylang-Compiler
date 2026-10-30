@@ -222,7 +222,7 @@ public:
             api.call("gtk_flow_box_set_homogeneous", w, 1);
             for (const auto& child : node.children) {
                 W widget = build(child);
-                if (widget) { api.call("gtk_flow_box_insert", w, widget, -1); }
+                if (widget) { api.call("gtk_widget_set_size_request", widget, a.value("minItemWidth", "240").toInt(), -1); api.call("gtk_flow_box_insert", w, widget, -1); }
             }
         } else if (tag == "Label") {
             w = api.call<W>("gtk_label_new", "");
@@ -269,6 +269,16 @@ public:
             for (const auto& item : a.value("items").split('|')) { items.append(item.toUtf8()); }
             for (const auto& item : items) { strings.push_back(item.constData()); } strings.push_back(nullptr);
             w = api.call<W>("gtk_drop_down_new_from_strings", strings.data()); c->widget = w;
+            W factory = api.call<W>("gtk_signal_list_item_factory_new");
+            for (const char* signal : {"setup", "bind"}) {
+                auto hook = std::make_unique<Control>(); bool setup = QByteArray(signal) == "setup";
+                hook->itemAction = [this, setup](W item) {
+                    if (setup) { W label = api.call<W>("gtk_label_new", ""); api.call("gtk_label_set_ellipsize", label, 3); api.call("gtk_label_set_xalign", label, 0.0f); api.call("gtk_list_item_set_child", item, label); }
+                    else { W text = api.call<W>("gtk_list_item_get_item", item); api.text(api.call<W>("gtk_list_item_get_child", item), "gtk_label_set_text", QString::fromUtf8(api.call<const char*>("gtk_string_object_get_string", text))); }
+                };
+                api.call<unsigned long>("g_signal_connect_data", factory, signal, reinterpret_cast<void(*)()>(factoryThunk), hook.get(), nullptr, 0); owned.push_back(std::move(hook));
+            }
+            api.call("gtk_drop_down_set_factory", w, factory); api.call("g_object_unref", factory);
             connect(c, "notify::selected", [this, c, event] { event("value", api.call<unsigned>("gtk_drop_down_get_selected", c->widget), "onChange"); }, true);
         } else if (tag == "Slider" || tag == "NumberInput") {
             w = tag == "Slider" ? api.call<W>("gtk_scale_new_with_range", 0, double(minimum), double(maximum), 1.0) : api.call<W>("gtk_spin_button_new_with_range", double(minimum), double(maximum), 1.0); c->widget = w;
@@ -349,6 +359,15 @@ public:
         applying = false;
     }
     void present(int width, int height) override {
+        // Reflow before GTK negotiates its minimum size: a horizontal row's
+        // combined minimum must not prevent a narrow window from being created.
+        int available = qMax(1, width - 2 * document.window.attributes.value("padding", "24").toInt());
+        for (auto& row : rows) {
+            bool horizontal = available >= row.node->attributes.value("breakpoint", "700").toInt();
+            row.orientation = horizontal ? 0 : 1;
+            api.call("gtk_orientable_set_orientation", row.widget, row.orientation);
+            api.call("gtk_box_set_homogeneous", row.widget, horizontal && row.homogeneous ? 1 : 0);
+        }
         struct Rect { int x, y, width, height; } area{};
         W display = api.call<W>("gdk_display_get_default");
         W monitors = api.call<W>("gdk_display_get_monitors", display);

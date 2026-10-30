@@ -16,6 +16,10 @@ on:
         required: false
         type: string
 
+concurrency:
+  group: hydrogen-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -141,6 +145,9 @@ jobs:
         shell: cmd
         run: |
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+          set "PATH=C:\Program Files\LLVM\bin;%PATH%"
+          set "CC=clang"
+          where clang
           python tools/hyui/ui_ci.py --platform windows --driver build-ui/native-winui/Hyui.WinUI.exe --compiler build-ui/Release/hy.exe --artifacts build-ui/ui-artifacts
       - name: Upload WinUI screenshots, geometry, diffs and logs
         if: always()
