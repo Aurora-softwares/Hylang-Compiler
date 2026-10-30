@@ -70,7 +70,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake libgtk-4-1 libadwaita-1-0 xvfb dbus-x11 fonts-dejavu-core libgl1 libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0
           python -m pip install aqtinstall==3.3.0 Pillow==12.0.0
-          python -m aqt install-qt linux desktop 6.8.3 gcc_64 -O "$RUNNER_TEMP/qt" --archives qtbase
+          python -m aqt install-qt linux desktop 6.8.3 linux_gcc_64 -O "$RUNNER_TEMP/qt" --archives qtbase icu
       - name: Build real GTK test application
         run: |
           cmake -S . -B build-ui -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/qt/6.8.3/gcc_64"
