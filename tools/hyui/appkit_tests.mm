@@ -1,6 +1,10 @@
 #include "native_runtime.hpp"
 #include <QCoreApplication>
 #include <QFile>
+#include <QFileInfo>
+#include <QTemporaryDir>
+#include <QElapsedTimer>
+#include <QThread>
 #include <iostream>
 #include <stdexcept>
 #import <AppKit/AppKit.h>
@@ -21,6 +25,7 @@ NSRect rect(NSView* root, NSString* identifier) {
     return [view convertRect:view.bounds toView:document];
 }
 void checkSiblings(NSView* root) {
+    if (root.hidden) { return; }
     // Every content group uses a flipped document view. Its visible siblings
     // must stay in bounds and must not intersect, including below the viewport.
     if ([NSStringFromClass(root.class) isEqualToString:@"HYLayoutView"]) {
@@ -44,10 +49,14 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     @autoreleasepool {
         try {
-            require(argc == 2, "expected Studio.hyui path");
+            require(argc == 3, "expected Studio.hyui and compiler paths");
+            QTemporaryDir temporary; QProcess compiler;
+            compiler.start(QString::fromUtf8(argv[2]), {"build", QFileInfo(QString::fromUtf8(argv[1])).absoluteDir().filePath("Studio.hyproj"), "-o", temporary.filePath("backend"), "--ui-backend", "--hide-progress", "--hide-log", "--hide-spinner"});
+            require(compiler.waitForFinished(120000) && compiler.exitCode() == 0, "cannot build sample backend");
             QFile file(QString::fromUtf8(argv[1])); require(file.open(QIODevice::ReadOnly), "cannot open sample");
             hyui::Document document; require(document.parse(file.readAll()), "cannot parse sample");
-            hyui::Bridge bridge(document, {}, {});
+            document.sourcePath = QFileInfo(file).absoluteFilePath();
+            hyui::Bridge bridge(document, temporary.filePath("backend"), QFileInfo(file).absolutePath());
             auto view = hyui::createAppKitView(document, bridge);
             auto show = [&](int width) {
                 view->present(width, 900); view->pump();
@@ -72,7 +81,36 @@ int main(int argc, char** argv) {
             show(800); show(1120); show(360); show(1120);
             require(bridge.apply("HYUI\tSET\tquality\tvisible\tfalse\n"), "cannot hide slider");
             view->pump(); checkSiblings(NSApp.windows.firstObject.contentView);
-            std::cout << "AppKit layout passed: wide/narrow panels, wrapping, bounds, non-overlap, scrolling, resize, backend updates, hidden controls\n";
+            require(bridge.apply("HYUI\tSET\tpages\tvalue\t1\n"), "cannot select gallery"); view->pump();
+            show(360); show(1120);
+            NSView* gallery = NSApp.windows.firstObject.contentView; checkSiblings(gallery);
+            require([(NSImageView*)find(gallery, @"logo") image] != nil, "bundled image did not load");
+            auto finish = [&] { QElapsedTimer timeout; timeout.start(); while (bridge.busy() && timeout.elapsed() < 5000) { app.processEvents(); view->pump(); QThread::msleep(1); } require(!bridge.busy() && bridge.error().isEmpty(), "sample event failed"); };
+            NSView* radio = find(gallery, @"channel"); require(radio.subviews.count == 3, "radio choices missing");
+            [(NSButton*)radio.subviews[1] performClick:nil]; finish();
+            require(bridge.state()["channel.value"].toInt() == 1 && bridge.state()["channelText.text"].toString() == "Preview channel selected.", "radio event failed");
+            NSScrollView* list = (NSScrollView*)find(gallery, @"templates"); NSTableView* table = (NSTableView*)list.documentView;
+            [table selectRowIndexes:[NSIndexSet indexSetWithIndex:2] byExtendingSelection:NO]; finish();
+            require(bridge.state()["selectionText.text"].toString() == "Template index: 2", "list event failed");
+            NSScrollView* projects = (NSScrollView*)find(gallery, @"projects");
+            [(NSTableView*)projects.documentView selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO]; finish();
+            require(bridge.state()["selectionText.text"].toString() == "Project index: 1", "table event failed");
+            [(NSButton*)find(gallery, @"showDialog") performClick:nil]; finish(); app.processEvents(); view->pump();
+            NSWindow* window = NSApp.windows.firstObject;
+            if (!window.attachedSheet) { for (NSWindow* candidate in NSApp.windows) { if (candidate.attachedSheet) { window = candidate; break; } } }
+            require(window.attachedSheet != nil, "native confirmation sheet did not open");
+            [window endSheet:window.attachedSheet returnCode:NSAlertFirstButtonReturn];
+            for (int i = 0; i < 100; ++i) { app.processEvents(); view->pump(); QThread::msleep(2); } finish();
+            require(!bridge.state()["confirmation.open"].toBool() && bridge.state()["dialogResult.text"].toString().startsWith("Confirmed."), "dialog result event failed");
+            NSSegmentedControl* tabs = (NSSegmentedControl*)find(gallery, @"pages").subviews.firstObject;
+            tabs.selectedSegment = 0; [tabs sendAction:tabs.action to:tabs.target]; finish();
+            require(bridge.state()["pages.value"].toInt() == 0, "tab selection event failed");
+            tabs.selectedSegment = 1; [tabs sendAction:tabs.action to:tabs.target]; finish();
+            require(bridge.state()["pages.value"].toInt() == 1, "tab return event failed");
+            NSMenuItem* menu = [NSApp.mainMenu itemAtIndex:1]; NSMenuItem* workspaceItem = [menu.submenu itemAtIndex:0];
+            [workspaceItem.target performSelector:workspaceItem.action withObject:workspaceItem]; finish();
+            require(bridge.state()["pages.value"].toInt() == 0, "menu event failed");
+            std::cout << "AppKit layout passed: wide/narrow panels, wrapping, bounds, non-overlap, scrolling, resize, backend updates, hidden controls, menus, tabs, list/table/radio events, images, native dialog responses\n";
             return 0;
         } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
     }

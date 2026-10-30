@@ -18,6 +18,7 @@ struct Node {
 class Document {
 public:
     bool parse(const QByteArray& xml);
+    QString resourcePath(const QString& relative) const;
     QString error;
     QString sourcePath;
     Node window;

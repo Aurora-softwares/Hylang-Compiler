@@ -34,16 +34,18 @@ public sealed class NativeWindow : Window
     readonly List<Action> layouts = new();
     readonly Queue<(string Handler, string Sender)> pending = new();
     readonly TextBlock errors = new() { TextWrapping = TextWrapping.Wrap };
-    string backend = "", directory = "";
+    readonly Dictionary<string, ContentDialog> dialogs = new();
+    string backend = "", directory = "", documentDirectory = "";
     bool applying, busy;
     static string Attr(XElement n, string key, string fallback = "") => (string?)n.Attribute(key) ?? fallback;
     static int Number(XElement n, string key, int fallback) => int.TryParse(Attr(n, key), out int result) ? result : fallback;
     static bool Allowed(XElement node, string property) => property switch {
         "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer"),
-        "text" => node.Name.LocalName is "Label" or "Input" or "TextArea" or "Button" or "CheckBox" or "Switch",
-        "value" => node.Name.LocalName is "State" or "Select" or "Slider" or "NumberInput" or "ProgressBar",
-        "checked" => node.Name.LocalName is "CheckBox" or "Switch",
+        "text" => node.Name.LocalName is "Label" or "Input" or "TextArea" or "Button" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog",
+        "value" => node.Name.LocalName is "State" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog",
+        "checked" => node.Name.LocalName is "CheckBox" or "Switch" or "MenuItem",
         "running" => node.Name.LocalName is "Spinner" or "Timer",
+        "open" => node.Name.LocalName == "Dialog",
         "indeterminate" => node.Name.LocalName == "ProgressBar",
         _ => false
     };
@@ -73,13 +75,14 @@ public sealed class NativeWindow : Window
         using var reader = XmlReader.Create(view, settings);
         XElement document = XDocument.Load(reader).Root ?? throw new InvalidDataException("Missing Window");
         if (document.Name != "Window" || Attr(document, "version") != "1") throw new InvalidDataException("Unsupported HYUI document");
+        app.documentDirectory = Path.GetDirectoryName(view)!;
         app.nodes[Attr(document, "id", "window")] = document;
         app.Title = Attr(document, "title", "Hydrogen");
         var body = new StackPanel { Spacing = 20, Padding = new Thickness(Number(document, "padding", 24)) };
         foreach (var child in document.Elements()) { var widget = app.Build(child); if (widget != null) body.Children.Add(widget); }
         body.Children.Add(app.errors);
         var scroll = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        app.Content = scroll;
+        app.Content = scroll; scroll.Loaded += (_, _) => app.ShowDialogs();
         body.SizeChanged += (_, _) => { foreach (var layout in app.layouts) layout(); };
         // Preserve the platform's complete caption bar and native system menu.
         app.ExtendsContentIntoTitleBar = false;
@@ -103,15 +106,47 @@ public sealed class NativeWindow : Window
         string tag = node.Name.LocalName, id = Attr(node, "id", "_hyui" + nodes.Count);
         if (nodes.Count > 512 || node.Ancestors().Count() > 32 || nodes.ContainsKey(id)) throw new InvalidDataException("Duplicate control or excessive document size");
         nodes[id] = node;
-        foreach (string prop in new[] { "text", "value", "checked", "running", "indeterminate", "enabled", "visible" }) values[id + "." + prop] = Attr(node, prop, prop is "enabled" or "visible" ? "true" : prop == "value" ? "0" : prop == "text" ? "" : prop == "running" && tag == "Spinner" ? "true" : "false");
+        foreach (string prop in new[] { "text", "value", "checked", "running", "indeterminate", "enabled", "visible", "open" }) values[id + "." + prop] = Attr(node, prop, prop is "enabled" or "visible" ? "true" : prop == "value" ? "0" : prop == "text" ? "" : prop == "running" && tag == "Spinner" ? "true" : "false");
         FrameworkElement? element;
-        void Changed(string property, string value, string action = "onChange") { if (applying) return; values[id + "." + property] = value; if (node.Attribute(action) != null) Dispatch(Attr(node, action), id); }
-        if (tag == "State") return null;
+        void Changed(string property, string value, string action = "onChange") { if (applying || (property == "value" && value == "-1") || values.GetValueOrDefault(id + "." + property) == value) return; values[id + "." + property] = value; if (node.Attribute(action) != null) Dispatch(Attr(node, action), id); }
+        if (tag is "State" or "Dialog") return null;
         if (tag == "Timer") {
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(Math.Max(100, Number(node, "interval", 1000))) };
             timer.Tick += (_, _) => Dispatch(Attr(node, "onTick"), id); timers[id] = timer; return null;
         }
-        if (tag is "Panel" or "ColumnPanel" or "RowPanel" or "GridPanel") {
+        if (tag == "MenuBar") {
+            var bar = new MenuBar(); foreach (var child in node.Elements()) bar.Items.Add((MenuBarItem)Build(child)!); element = bar;
+        } else if (tag == "Menu") {
+            var menu = new MenuBarItem { Title = Attr(node, "text") }; foreach (var child in node.Elements()) menu.Items.Add((MenuFlyoutItemBase)Build(child)!); element = menu;
+        } else if (tag == "MenuItem") {
+            if (node.Attribute("checked") != null) {
+                var item = new ToggleMenuFlyoutItem { Text = Attr(node, "text"), IsChecked = Attr(node, "checked") == "true" };
+                item.Click += (_, _) => { if (!applying) { values[id + ".checked"] = item.IsChecked ? "true" : "false"; Dispatch(Attr(node, "onClick"), id); } }; element = item;
+            } else { var item = new MenuFlyoutItem { Text = Attr(node, "text") }; item.Click += (_, _) => Dispatch(Attr(node, "onClick"), id); element = item; }
+        } else if (tag == "Tabs") {
+            var tabs = new TabView { IsAddTabButtonVisible = false, CanDragTabs = false, CanReorderTabs = false };
+            foreach (var page in node.Elements()) tabs.TabItems.Add(new TabViewItem { Header = Attr(page, "title"), IsClosable = false, Content = Build(page) });
+            tabs.SelectionChanged += (_, _) => Changed("value", tabs.SelectedIndex.ToString()); element = tabs;
+        } else if (tag == "RadioGroup") {
+            var group = new RadioButtons { ItemsSource = Attr(node, "items").Split('|'), SelectedIndex = Number(node, "value", 0) };
+            group.SelectionChanged += (_, _) => Changed("value", group.SelectedIndex.ToString()); element = group;
+        } else if (tag is "ListBox" or "Table") {
+            var list = new ListView { Height = Number(node, "height", 160), SelectionMode = ListViewSelectionMode.Single };
+            if (tag == "ListBox") list.ItemsSource = Attr(node, "items").Split('|');
+            else {
+                string[] columns = Attr(node, "columns").Split('|');
+                Grid Row(string[] cells, bool header) {
+                    var grid = new Grid { ColumnSpacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch };
+                    for (int i = 0; i < columns.Length; i++) { grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); var label = new TextBlock { Text = cells[i], TextWrapping = TextWrapping.Wrap, FontWeight = header ? Windows.UI.Text.FontWeights.SemiBold : Windows.UI.Text.FontWeights.Normal }; Grid.SetColumn(label, i); grid.Children.Add(label); }
+                    return grid;
+                }
+                list.Header = Row(columns, true); foreach (string row in Attr(node, "rows").Split('\n')) list.Items.Add(Row(row.Split('|'), false));
+                list.ItemContainerStyle = new Style(typeof(ListViewItem)); list.ItemContainerStyle.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+            }
+            list.SelectionChanged += (_, _) => { if (list.SelectedIndex >= 0) Changed("value", list.SelectedIndex.ToString()); else list.SelectedIndex = int.Parse(values.GetValueOrDefault(id + ".value", "0")); }; element = list;
+        } else if (tag == "Image") {
+            element = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(Resource(documentDirectory, Attr(node, "source")))), Height = Number(node, "height", 72), Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform };
+        } else if (tag is "Panel" or "ColumnPanel" or "RowPanel" or "GridPanel" or "Tab") {
             var panel = new StackPanel { Spacing = Number(node, "gap", 12) };
             if (tag == "Panel" && node.Attribute("title") != null) panel.Children.Add(new TextBlock { Text = Attr(node, "title"), Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] });
             foreach (var child in node.Elements()) { var control = Build(child); if (control != null) panel.Children.Add(control); }
@@ -194,12 +229,32 @@ public sealed class NativeWindow : Window
             var next = pending.Dequeue(); var arguments = new List<string> { "--hyui-event", next.Handler, next.Sender };
             if (nodes[next.Sender].Name == "Timer" && values.GetValueOrDefault(next.Sender + ".running") != "true") continue;
             foreach (var pair in nodes) {
-                string property = pair.Value.Name.LocalName is "State" or "Select" or "NumberInput" or "ProgressBar" or "Slider" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "Switch" ? "checked" : "text";
+                string property = pair.Value.Name.LocalName is "State" or "Select" or "NumberInput" or "ProgressBar" or "Slider" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "Switch" or "MenuItem" ? "checked" : "text";
                 arguments.Add(pair.Key); arguments.Add(values.GetValueOrDefault(pair.Key + "." + property, ""));
             }
             if (arguments.Sum(a => a.Length) > 24000) throw new InvalidOperationException("Value snapshot too large");
             Apply(await Run(arguments));
         } } catch (Exception error) { errors.Text = error.Message; } finally { busy = false; }
+    }
+    async void ShowDialogs() {
+        if (Content is not FrameworkElement root || root.XamlRoot == null) return;
+        foreach (var pair in nodes.Where(p => p.Value.Name.LocalName == "Dialog")) {
+            string id = pair.Key;
+            if (values.GetValueOrDefault(id + ".open") != "true") { if (dialogs.TryGetValue(id, out var active)) active.Hide(); continue; }
+            if (dialogs.ContainsKey(id) || dialogs.Count != 0) continue;
+            string[] buttons = Attr(pair.Value, "buttons", "OK").Split('|');
+            var dialog = new ContentDialog { Title = Attr(pair.Value, "title", "Hydrogen"), Content = values[id + ".text"], CloseButtonText = buttons[^1], XamlRoot = root.XamlRoot };
+            if (buttons.Length > 1) dialog.PrimaryButtonText = buttons[0];
+            if (buttons.Length > 2) dialog.SecondaryButtonText = buttons[1];
+            dialogs[id] = dialog;
+            try {
+                var result = await dialog.ShowAsync(); dialogs.Remove(id);
+                if (values[id + ".open"] != "true") continue;
+                values[id + ".open"] = "false";
+                values[id + ".value"] = (result == ContentDialogResult.Primary ? 0 : result == ContentDialogResult.Secondary ? 1 : buttons.Length - 1).ToString();
+                Dispatch(Attr(pair.Value, "onClose"), id);
+            } catch (Exception error) { dialogs.Remove(id); values[id + ".open"] = "false"; errors.Text = error.Message; }
+        }
     }
     void Apply(string output)
     {
@@ -210,8 +265,12 @@ public sealed class NativeWindow : Window
             if (parts.Length != 5 || parts[1] != "SET" || !nodes.ContainsKey(Decode(parts[2]))) throw new InvalidDataException("Invalid Hydrogen response");
             string id = Decode(parts[2]), prop = Decode(parts[3]), value = Decode(parts[4]);
             if (!Allowed(nodes[id], prop)) throw new InvalidDataException("Unknown control property");
-            if (prop is "checked" or "running" or "indeterminate" or "enabled" or "visible") { if (value != "true" && value != "false") throw new InvalidDataException("Invalid boolean"); }
-            if (prop == "value" && nodes[id].Name != "State" && (!double.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out double number) || number < Number(nodes[id], "minimum", 0) || number > Number(nodes[id], "maximum", nodes[id].Name == "Select" ? Attr(nodes[id], "items").Split('|').Length - 1 : 100))) throw new InvalidDataException("Value outside range");
+            if (prop is "checked" or "running" or "indeterminate" or "enabled" or "visible" or "open") { if (value != "true" && value != "false") throw new InvalidDataException("Invalid boolean"); }
+            if (prop == "value" && nodes[id].Name != "State") {
+                var n = nodes[id]; string tag = n.Name.LocalName;
+                int maximum = tag is "Select" or "ListBox" or "RadioGroup" ? Attr(n, "items").Split('|').Length - 1 : tag == "Tabs" ? n.Elements().Count() - 1 : tag == "Table" ? Attr(n, "rows").Split('\n').Length - 1 : tag == "Dialog" ? Attr(n, "buttons", "OK").Split('|').Length - 1 : Number(n, "maximum", 100);
+                if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int number) || number < Number(n, "minimum", 0) || number > maximum) throw new InvalidDataException("Value outside range");
+            }
             updates[id + "." + prop] = value;
         }
         applying = true; values.Clear(); foreach (var item in updates) values[item.Key] = item.Value;
@@ -220,6 +279,12 @@ public sealed class NativeWindow : Window
             item.Value.Visibility = Value("visible") == "true" ? Visibility.Visible : Visibility.Collapsed;
             if (item.Value is Control control) control.IsEnabled = Value("enabled") == "true";
             switch (item.Value) {
+                case MenuBarItem menu: menu.Title = Value("text"); break;
+                case ToggleMenuFlyoutItem menu: menu.Text = Value("text"); menu.IsChecked = Value("checked") == "true"; break;
+                case MenuFlyoutItem menu: menu.Text = Value("text"); break;
+                case TabView tabs: tabs.SelectedIndex = int.Parse(Value("value")); break;
+                case RadioButtons group: group.SelectedIndex = int.Parse(Value("value")); break;
+                case ListView list: list.SelectedIndex = int.Parse(Value("value")); break;
                 case TextBlock label: label.Text = Value("text"); break;
                 case TextBox input: if (input.Text != Value("text")) input.Text = Value("text"); break;
                 case CheckBox check: check.IsChecked = Value("checked") == "true"; check.Content = Value("text"); break;
@@ -233,6 +298,6 @@ public sealed class NativeWindow : Window
             }
         }
         foreach (var timer in timers) { if (values[timer.Key + ".running"] == "true") timer.Value.Start(); else timer.Value.Stop(); }
-        applying = false; errors.Text = "";
+        applying = false; errors.Text = ""; ShowDialogs();
     }
 }

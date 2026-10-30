@@ -1,5 +1,6 @@
 """Exercise the real Hydrogen compiler, XML host, and demo event handlers."""
 import json
+import shutil
 import os
 from pathlib import Path
 import struct
@@ -28,6 +29,7 @@ with tempfile.TemporaryDirectory(prefix="hydrogen ui ' ") as temporary:
     sample = root / "samples/ui_studio"
     run(compiler, "build", sample / "Studio.hyproj", "-o", app, "--ui-backend")
     app.chmod(app.stat().st_mode | 0o100)
+    shutil.copytree(sample / "assets", work / "assets")
     xml = (sample / "Studio.hyui").read_text()
     # Keep Build deterministic; the timer's callback is tested separately below.
     (work / "Studio.hyui").write_text(xml.replace('interval="350"', 'interval="30000"'))
@@ -45,6 +47,13 @@ with tempfile.TemporaryDirectory(prefix="hydrogen ui ' ") as temporary:
         assert 0 < actual_width <= width and actual_height <= 740
         return json.loads((work / "state.json").read_text())
 
+    gallery = state("ShowControls:showControls")
+    assert gallery["pages.value"] == 1
+    assert state("ShowWorkspace:showWorkspace")["pages.value"] == 0
+    assert "Template index: 0" in state("ChooseTemplate:templates")["selectionText.text"]
+    assert "Project index: 0" in state("ChooseProject:projects")["selectionText.text"]
+    assert "Stable channel" in state("ChooseChannel:channel")["channelText.text"]
+    assert "Confirmed." in state("Confirmed:confirmation")["dialogResult.text"]
     initial = state(width=360)
     assert initial["projectName.text"] == "Aurora Notes"
     preview = state("Preview:projectName")

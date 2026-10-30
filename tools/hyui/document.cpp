@@ -1,5 +1,8 @@
 #include "document.hpp"
 #include <QRegularExpression>
+#include <QDir>
+#include <QFileInfo>
+#include <stdexcept>
 #include <QXmlStreamReader>
 #include <functional>
 
@@ -9,6 +12,13 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"ColumnPanel", {"gap"}}, {"RowPanel", {"gap", "breakpoint"}},
     {"GridPanel", {"gap", "columns", "minItemWidth"}},
     {"Panel", {"title", "padding", "gap"}},
+    {"MenuBar", {}}, {"Menu", {"text"}}, {"MenuItem", {"text", "onClick", "checked"}},
+    {"Tabs", {"value", "onChange"}}, {"Tab", {"title", "gap"}},
+    {"ListBox", {"items", "value", "height", "onChange"}},
+    {"Table", {"columns", "rows", "value", "height", "onChange"}},
+    {"RadioGroup", {"items", "value", "onChange"}},
+    {"Image", {"source", "height"}},
+    {"Dialog", {"title", "text", "buttons", "open", "value", "onClose"}},
     {"Label", {"text", "role", "tone"}},
     {"Button", {"text", "onClick", "primary"}},
     {"Input", {"text", "placeholder", "onChange", "onSubmit"}},
@@ -23,11 +33,18 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"State", {"value"}}, {"Timer", {"interval", "running", "onTick"}}
 };
 static const QSet<QString> common = {"id", "visible", "enabled", "fill", "preferredWidth", "accessibleName"};
-static const QSet<QString> booleans = {"visible", "enabled", "fill", "primary", "checked", "running", "indeterminate"};
+static const QSet<QString> booleans = {"visible", "enabled", "fill", "primary", "checked", "running", "indeterminate", "open"};
 static const QSet<QString> numbers = {"width", "height", "padding", "gap", "breakpoint", "columns", "minItemWidth",
                                       "preferredWidth", "minimum", "maximum", "interval"};
 static bool container(const QString& tag) {
-    return tag == "Window" || tag == "Panel" || tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel";
+    return tag == "Tabs" || tag == "Tab" || tag == "MenuBar" || tag == "Menu" || tag == "Window" || tag == "Panel" || tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel";
+}
+
+QString Document::resourcePath(const QString& relative) const {
+    const QString root = QFileInfo(sourcePath).absoluteDir().canonicalPath();
+    const QString file = QFileInfo(QDir(root).filePath(relative)).canonicalFilePath();
+    if (root.isEmpty() || file.isEmpty() || !file.startsWith(root + '/') || !QFileInfo(file).isFile()) { throw std::runtime_error("image asset is missing or outside the document directory"); }
+    return file;
 }
 
 bool Document::parse(const QByteArray& xml) {
@@ -55,7 +72,7 @@ bool Document::parse(const QByteArray& xml) {
             }
             if (value.size() > 16384) { return invalid("attribute exceeds 16384 characters"); }
             if (booleans.contains(key) && value != "true" && value != "false") { return invalid(key + " must be true or false"); }
-            if (numbers.contains(key) || (key == "value" && node.tag != "State")) {
+            if ((numbers.contains(key) && !(key == "columns" && node.tag == "Table")) || (key == "value" && node.tag != "State")) {
                 bool ok = false; int n = value.toInt(&ok);
                 if (!ok || n < 0 || n > 32767 || ((key == "columns" || key == "minItemWidth" || key == "width" || key == "height") && n == 0)) {
                     return invalid(key + " must be an integer in its supported range (0..32767)");
@@ -87,7 +104,7 @@ bool Document::parse(const QByteArray& xml) {
         ids.insert(node.id);
         QSet<QString> props;
         if (node.tag != "Window" && node.tag != "Timer" && node.tag != "State") { props = {"visible", "enabled"}; }
-        for (const QString& prop : {"text", "value", "checked", "running", "indeterminate"}) {
+        for (const QString& prop : {"text", "value", "checked", "running", "indeterminate", "open"}) {
             if (attributes[node.tag].contains(prop)) { props.insert(prop); }
         }
         properties.insert(node.id, props);
@@ -108,7 +125,11 @@ bool Document::parse(const QByteArray& xml) {
         }
         if (props.contains("value") && node.tag != "State") {
             int minimum = node.attributes.value("minimum", "0").toInt();
-            int maximum = node.tag == "Select" ? node.attributes.value("items").split('|').size() - 1 : node.attributes.value("maximum", "100").toInt();
+            int maximum = node.attributes.value("maximum", "100").toInt();
+            if (node.tag == "Select" || node.tag == "ListBox" || node.tag == "RadioGroup") { maximum = node.attributes.value("items").split('|').size() - 1; }
+            if (node.tag == "Table") { maximum = node.attributes.value("rows").split('\n').size() - 1; }
+            if (node.tag == "Dialog") { maximum = node.attributes.value("buttons", "OK").split('|').size() - 1; }
+            if (node.tag == "Tabs") { maximum = 32767; } // Child count is checked after parsing.
             int value = initialState[node.id + ".value"].toInt();
             if (value < minimum || value > maximum) { return invalid("value is outside the control's range"); }
             ranges[node.id] = qMakePair(minimum, maximum);
@@ -118,10 +139,37 @@ bool Document::parse(const QByteArray& xml) {
             auto token = reader.readNext();
             if (token == QXmlStreamReader::StartElement) {
                 if (!container(node.tag)) { return invalid(node.tag + " cannot have children"); }
+                const QString childTag = reader.name().toString();
+                if ((node.tag == "Tabs" && childTag != "Tab") || (node.tag == "MenuBar" && childTag != "Menu") ||
+                    (node.tag == "Menu" && childTag != "MenuItem") ||
+                    (childTag == "Tab" && node.tag != "Tabs") || (childTag == "Menu" && node.tag != "MenuBar") ||
+                    (childTag == "MenuItem" && node.tag != "Menu") || (childTag == "MenuBar" && node.tag != "Window") ||
+                    (childTag == "Dialog" && node.tag != "Window")) { return invalid("invalid placement of " + childTag); }
                 Node child;
                 if (!read(child, depth + 1)) { return false; }
                 node.children.push_back(std::move(child));
-            } else if (token == QXmlStreamReader::EndElement) { return true; }
+            } else if (token == QXmlStreamReader::EndElement) {
+                if (node.tag == "Window") {
+                    int menus = 0; for (const Node& child : node.children) { if (child.tag == "MenuBar") { ++menus; } }
+                    if (menus > 1) { return invalid("Window permits one MenuBar"); }
+                }
+                if (node.tag == "Tabs") {
+                    if (node.children.empty() || initialState[node.id + ".value"].toInt() >= int(node.children.size())) { return invalid("Tabs requires pages and a valid selected value"); }
+                    ranges[node.id] = qMakePair(0, int(node.children.size()) - 1);
+                }
+                if ((node.tag == "ListBox" || node.tag == "RadioGroup") && node.attributes.value("items").isEmpty()) { return invalid(node.tag + " requires items"); }
+                if (node.tag == "Table") {
+                    const auto columns = node.attributes.value("columns").split('|');
+                    if (node.attributes.value("columns").isEmpty() || node.attributes.value("rows").isEmpty()) { return invalid("Table requires columns and rows"); }
+                    for (const auto& row : node.attributes.value("rows").split('\n')) { if (row.split('|').size() != columns.size()) { return invalid("Table row must match column count"); } }
+                }
+                if (node.tag == "Dialog" && (node.attributes.value("buttons", "OK").isEmpty() || node.attributes.value("buttons", "OK").split('|').size() > 3)) { return invalid("Dialog requires one to three buttons"); }
+                if (node.tag == "Image") {
+                    QString source = node.attributes.value("source");
+                    if (source.isEmpty() || QDir::isAbsolutePath(source) || source.contains(':') || source.contains('\\') || source.split('/').contains("..")) { return invalid("Image source must be a relative asset path"); }
+                }
+                return true;
+            }
             else if (token == QXmlStreamReader::DTD || token == QXmlStreamReader::EntityReference) { return invalid("DTD and entities are not supported"); }
             else if (token == QXmlStreamReader::Characters && !reader.isWhitespace()) { return invalid("use the text attribute for content"); }
         }

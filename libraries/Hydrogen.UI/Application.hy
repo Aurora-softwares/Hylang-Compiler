@@ -40,6 +40,7 @@ namespace Hydrogen.UI {
         public static void SetChecked(string id, bool value) { Set(id, "checked", "" + value); }
         public static void SetEnabled(string id, bool value) { Set(id, "enabled", "" + value); }
         public static void SetVisible(string id, bool value) { Set(id, "visible", "" + value); }
+        public static void SetOpen(string id, bool value) { Set(id, "open", "" + value); }
         public static void SetRunning(string id, bool value) { Set(id, "running", "" + value); }
 
         private static string Escape(string value) {

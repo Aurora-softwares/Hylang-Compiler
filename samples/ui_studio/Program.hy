@@ -10,6 +10,22 @@ namespace HydrogenStudio {
                 return 0;
             }
             string handler = Application.Handler(args);
+            if (handler == "ShowControls") { Application.SetValue("pages", 1); }
+            if (handler == "ShowWorkspace") { Application.SetValue("pages", 0); }
+            if (handler == "About") { Application.SetOpen("about", true); }
+            if (handler == "ChooseTemplate") { Application.SetText("selectionText", "Template index: " + Application.Value(args, "templates")); }
+            if (handler == "ChooseProject") { Application.SetText("selectionText", "Project index: " + Application.Value(args, "projects")); }
+            if (handler == "ChooseChannel") {
+                string channel = "Stable";
+                if (Application.Value(args, "channel") == "1") { channel = "Preview"; }
+                if (Application.Value(args, "channel") == "2") { channel = "Nightly"; }
+                Application.SetText("channelText", channel + " channel selected.");
+            }
+            if (handler == "Confirm") { Application.SetOpen("confirmation", true); }
+            if (handler == "Confirmed") {
+                if (Application.Value(args, "confirmation") == "0") { Application.SetText("dialogResult", "Confirmed. Your template is ready."); }
+                else { Application.SetText("dialogResult", "Cancelled. Your settings are preserved."); }
+            }
             if (handler == "Preview") {
                 Application.SetText("summary", Summary(args));
             }

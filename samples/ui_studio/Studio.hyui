@@ -1,10 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Window version="1" id="studio" title="Hydrogen Studio" width="1120" height="900" theme="system" material="auto">
+  <MenuBar>
+    <Menu text="Studio">
+      <MenuItem id="showWorkspace" text="Workspace" onClick="ShowWorkspace" />
+      <MenuItem id="showControls" text="Control gallery" onClick="ShowControls" />
+    </Menu>
+    <Menu text="Help"><MenuItem id="aboutMenu" text="About Hydrogen Studio" onClick="About" /></Menu>
+  </MenuBar>
   <ColumnPanel gap="6">
     <Label text="H  /  HYDROGEN STUDIO" role="caption" tone="accent" />
     <Label text="Build something native." role="title" />
     <Label text="A small workspace. A real Hydrogen backend. Your desktop, by design." tone="muted" />
   </ColumnPanel>
+  <Tabs id="pages" value="0" onChange="PageChanged">
+  <Tab id="workspacePage" title="Workspace" gap="16">
   <GridPanel columns="3" minItemWidth="240" gap="14">
     <Panel padding="18" gap="5">
       <Label text="01  /  DESCRIBE" role="caption" tone="accent" />
@@ -65,5 +74,28 @@
     </Panel>
   </RowPanel>
   <Label text="HYUI v1  /  XML frontend + Hydrogen backend  /  Resize this window to see it adapt" role="caption" tone="muted" />
+  </Tab>
+  <Tab id="controlsPage" title="Control gallery" gap="18">
+    <RowPanel breakpoint="760" gap="20">
+      <Panel title="Collections" preferredWidth="580" gap="12">
+        <Label text="LIST BOX" role="caption" tone="muted" />
+        <ListBox id="templates" items="Notes application|Project tracker|Photo library" value="0" height="120" onChange="ChooseTemplate" accessibleName="Application templates" />
+        <Label text="PROJECT TABLE" role="caption" tone="muted" />
+        <Table id="projects" columns="Project|Target|Status" rows="Aurora Notes|macOS|Ready&#10;Orbit Tasks|Linux|Building&#10;Prism Photos|Windows|Planned" value="0" height="160" onChange="ChooseProject" accessibleName="Recent projects" />
+        <Label id="selectionText" text="Choose a template or project to preview its selection." tone="muted" />
+      </Panel>
+      <Panel title="Choices and dialogs" preferredWidth="360" gap="12">
+        <Image id="logo" source="assets/hydrogen.png" height="80" accessibleName="Hydrogen logo" />
+        <Label text="RELEASE CHANNEL" role="caption" tone="muted" />
+        <RadioGroup id="channel" items="Stable|Preview|Nightly" value="0" onChange="ChooseChannel" accessibleName="Release channel" />
+        <Label id="channelText" text="Stable channel selected." tone="muted" />
+        <Button id="showDialog" text="Show confirmation dialog" onClick="Confirm" primary="true" fill="true" />
+        <Label id="dialogResult" text="Dialog results return to Hydrogen as a button index." tone="muted" />
+      </Panel>
+    </RowPanel>
+  </Tab>
+  </Tabs>
+  <Dialog id="confirmation" title="Create an application?" text="Your settings are ready. Continue with this template?" buttons="Continue|Cancel" open="false" value="0" onClose="Confirmed" />
+  <Dialog id="about" title="Hydrogen Studio" text="Native menus, tabs, lists, tables, radio groups, images and dialogs, connected to Hydrogen." buttons="OK" open="false" value="0" />
   <Timer id="buildTimer" interval="350" running="false" onTick="Tick" />
 </Window>

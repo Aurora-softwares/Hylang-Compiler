@@ -31,9 +31,11 @@ with tempfile.TemporaryDirectory(prefix="hydrogen native package ' ") as tempora
     (source / "assets").mkdir()
     (source / "assets/message.txt").write_text("copied application resource")
     shutil.copy(repo / "samples/ui_studio/Studio.hyui", source / "views/main.hyui")
+    shutil.copytree(repo / "samples/ui_studio/assets", source / "views/assets", dirs_exist_ok=True)
+    shutil.copytree(repo / "samples/ui_studio/assets", source / "assets", dirs_exist_ok=True)
     project = source / "app.hyproj"
     project_text = ('format = 2\nname = "PackagedStudio"\ntype = "exe"\n'
-                    'ui = "views/main.hyui"\nui_assets = ["assets"]\n'
+                    'ui = "views/main.hyui"\nui_assets = ["assets", "views/assets"]\n'
                     f'sources = ["{repo / "samples/ui_studio/Program.hy"}"]\n'
                     f'project_references = ["{repo / "libraries/Hydrogen.UI/Hydrogen.UI.hyproj"}"]\n')
     project.write_text(project_text)

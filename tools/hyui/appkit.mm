@@ -13,9 +13,10 @@
 - (BOOL)isFlipped { return YES; }
 @end
 
-@interface HYAction : NSObject<NSTextFieldDelegate, NSTextViewDelegate, NSWindowDelegate> {
+@interface HYAction : NSObject<NSTextFieldDelegate, NSTextViewDelegate, NSWindowDelegate, NSTableViewDelegate, NSTableViewDataSource> {
 @public
     std::function<void(id)> callback;
+    NSArray* tableRows;
 }
 - (void)fire:(id)sender;
 @end
@@ -23,6 +24,11 @@
 - (void)fire:(id)sender { if (callback) { callback(sender); } }
 - (void)controlTextDidChange:(NSNotification*)note { [self fire:note.object]; }
 - (void)textDidChange:(NSNotification*)note { [self fire:note.object]; }
+- (NSInteger)numberOfRowsInTableView:(NSTableView*)table { return tableRows.count; }
+- (NSView*)tableView:(NSTableView*)table viewForTableColumn:(NSTableColumn*)column row:(NSInteger)row {
+    return [NSTextField labelWithString:tableRows[row][column.identifier.integerValue]];
+}
+- (void)tableViewSelectionDidChange:(NSNotification*)note { [self fire:note.object]; }
 - (BOOL)windowShouldClose:(NSWindow*)window { QCoreApplication::quit(); return YES; }
 @end
 
@@ -51,6 +57,9 @@ class AppKitView : public NativeView {
     NSView* body;
     NSScrollView* scroll;
     QVector<QTimer*> timers;
+    QMap<QString, NSMenuItem*> menuItems;
+    QVector<const Node*> dialogs;
+    QMap<QString, NSAlert*> alerts;
     bool applying = false;
     bool layoutDirty = true;
     NSSize viewportSize = NSZeroSize;
@@ -132,6 +141,8 @@ class AppKitView : public NativeView {
         else if (tag == "Spinner") { height = 20; }
         else if (tag == "ProgressBar") { height = 8; }
         else if (tag == "Separator") { height = 1; }
+        else if (tag == "ListBox" || tag == "Table") { height = node->attributes.value("height", "160").toInt(); }
+        else if (tag == "Image") { height = node->attributes.value("height", "72").toInt(); }
         else if (tag == "Spacer") { height = node->attributes.value("height", "12").toInt(); }
         [view setFrameSize:NSMakeSize(width, height)];
         if (tag == "TextArea") {
@@ -150,19 +161,93 @@ class AppKitView : public NativeView {
         [scroll.documentView setFrameSize:NSMakeSize(scroll.contentSize.width, qMax(scroll.contentSize.height, height + 48))];
     }
     void handleEvent(const Node& node, QString property, QVariant value, QString event) {
-        if (applying || bridge.isApplying()) { return; }
+        if (applying || bridge.isApplying() || (event == "onChange" && bridge.state().value(node.id + '.' + property) == value)) { return; }
         bridge.store(node.id, property, value);
         if (node.attributes.contains(event)) { bridge.dispatch(node.attributes[event], node.id); }
+    }
+    void buildMenu(const Node& node) {
+        NSMenu* bar = [[[NSMenu alloc] init] autorelease]; bar.autoenablesItems = NO;
+        NSMenuItem* application = [[[NSMenuItem alloc] initWithTitle:@"Hydrogen" action:nil keyEquivalent:@""] autorelease];
+        NSMenu* appMenu = [[[NSMenu alloc] initWithTitle:@"Hydrogen"] autorelease];
+        [appMenu addItemWithTitle:@"Quit" action:@selector(terminate:) keyEquivalent:@"q"]; application.submenu = appMenu; [bar addItem:application];
+        for (const Node& menu : node.children) {
+            NSMenuItem* heading = [[[NSMenuItem alloc] initWithTitle:text(menu.attributes.value("text")) action:nil keyEquivalent:@""] autorelease];
+            NSMenu* submenu = [[[NSMenu alloc] initWithTitle:heading.title] autorelease]; submenu.autoenablesItems = NO;
+            for (const Node& entry : menu.children) {
+                NSMenuItem* item = [[[NSMenuItem alloc] initWithTitle:text(entry.attributes.value("text")) action:@selector(fire:) keyEquivalent:@""] autorelease];
+                item.target = action([this, &entry](id) { if (entry.attributes.contains("checked")) { bridge.store(entry.id, "checked", !bridge.state().value(entry.id + ".checked").toBool()); update(); } if (entry.attributes.contains("onClick")) { bridge.dispatch(entry.attributes["onClick"], entry.id); } });
+                [submenu addItem:item]; menuItems.insert(entry.id, item);
+            }
+            heading.submenu = submenu; [bar addItem:heading]; menuItems.insert(menu.id, heading);
+        }
+        NSApp.mainMenu = bar;
+    }
+    void updateDialogs() {
+        for (const Node* node : dialogs) {
+            const bool open = bridge.state().value(node->id + ".open").toBool();
+            if (!open && alerts.contains(node->id)) { [window endSheet:alerts[node->id].window returnCode:NSModalResponseCancel]; }
+            if (!open || !alerts.isEmpty()) { continue; }
+            NSAlert* alert = [[[NSAlert alloc] init] autorelease]; [retained addObject:alert]; alerts.insert(node->id, alert);
+            alert.messageText = text(node->attributes.value("title", "Hydrogen"));
+            alert.informativeText = text(bridge.state().value(node->id + ".text").toString());
+            for (const QString& button : node->attributes.value("buttons", "OK").split('|')) { [alert addButtonWithTitle:text(button)]; }
+            QTimer::singleShot(0, &bridge, [this, node, alert] {
+                [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse response) {
+                    alerts.remove(node->id);
+                    if (!bridge.state().value(node->id + ".open").toBool()) { updateDialogs(); return; }
+                    bridge.store(node->id, "open", false);
+                    int count = node->attributes.value("buttons", "OK").split('|').size();
+                    handleEvent(*node, "value", response >= NSAlertFirstButtonReturn ? int(response - NSAlertFirstButtonReturn) : count - 1, "onClose"); updateDialogs();
+                }];
+            });
+        }
     }
     NSView* build(const Node& node) {
         const auto& a = node.attributes; QString tag = node.tag;
         if (tag == "State") { return nil; }
+        if (tag == "MenuBar") { buildMenu(node); return nil; }
+        if (tag == "Dialog") { dialogs.append(&node); return nil; }
         if (tag == "Timer") {
             QTimer* timer = new QTimer(&bridge); timer->setObjectName(node.id); timer->setInterval(a.value("interval", "1000").toInt());
             QObject::connect(timer, &QTimer::timeout, &bridge, [this, &node] { bridge.dispatch(node.attributes["onTick"], node.id); }); timers.append(timer); return nil;
         }
         NSView* view = nil; id control = nil; id extra = nil;
-        if (tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel" || tag == "Panel") {
+        if (tag == "Tabs") {
+            view = stack(); NSSegmentedControl* tabs = [[[NSSegmentedControl alloc] init] autorelease];
+            tabs.segmentCount = node.children.size(); tabs.segmentDistribution = NSSegmentDistributionFill;
+            tabs.trackingMode = NSSegmentSwitchTrackingSelectOne; int index = 0;
+            for (const Node& page : node.children) { [tabs setLabel:text(page.attributes.value("title")) forSegment:index++]; }
+            tabs.target = action([this, &node](id sender) { handleEvent(node, "value", int([(NSSegmentedControl*)sender selectedSegment]), "onChange"); update(); }); tabs.action = @selector(fire:);
+            add(view, tabs); for (const Node& page : node.children) { add(view, build(page)); }
+            control = tabs;
+        } else if (tag == "RadioGroup") {
+            view = stack();
+            int index = 0;
+            for (const QString& label : a.value("items").split('|')) {
+                NSButton* radio = [NSButton radioButtonWithTitle:text(label) target:nil action:@selector(fire:)]; radio.tag = index++;
+                radio.target = action([this, &node](id sender) { handleEvent(node, "value", int([(NSButton*)sender tag]), "onChange"); }); add(view, radio);
+            }
+        } else if (tag == "ListBox" || tag == "Table") {
+            NSTableView* table = [[[NSTableView alloc] init] autorelease]; table.allowsEmptySelection = NO; table.columnAutoresizingStyle = NSTableViewUniformColumnAutoresizingStyle;
+            QStringList headings = tag == "Table" ? a.value("columns").split('|') : QStringList{""};
+            int index = 0; for (const QString& heading : headings) {
+                NSTableColumn* column = [[[NSTableColumn alloc] initWithIdentifier:text(QString::number(index++))] autorelease]; column.title = text(heading); [table addTableColumn:column];
+            }
+            if (tag == "ListBox") { table.headerView = nil; }
+            NSMutableArray* rows = [NSMutableArray array];
+            for (const QString& row : a.value(tag == "Table" ? "rows" : "items").split(tag == "Table" ? '\n' : '|')) {
+                NSMutableArray* cells = [NSMutableArray array]; for (const QString& cell : (tag == "Table" ? row.split('|') : QStringList{row})) { [cells addObject:text(cell)]; } [rows addObject:cells];
+            }
+            [retained addObject:rows]; HYAction* delegate = action([this, &node](id sender) {
+                NSInteger selection = [(NSTableView*)sender selectedRow]; if (selection >= 0) { handleEvent(node, "value", int(selection), "onChange"); }
+            }); delegate->tableRows = rows; table.delegate = delegate; table.dataSource = delegate;
+            NSScrollView* area = [[[NSScrollView alloc] init] autorelease]; area.documentView = table; area.hasVerticalScroller = YES; area.hasHorizontalScroller = YES;
+            area.borderType = NSBezelBorder; view = area; control = table;
+        } else if (tag == "Image") {
+            NSImageView* image = [[[NSImageView alloc] init] autorelease]; image.image = [[[NSImage alloc] initWithContentsOfFile:text(doc.resourcePath(a.value("source")))] autorelease];
+            if (!image.image) { throw std::runtime_error("cannot decode image asset"); }
+            image.imageScaling = NSImageScaleProportionallyUpOrDown; view = image;
+        } else if (tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel" || tag == "Panel" || tag == "Tab") {
             NSView* contents = stack();
             layouts[contents].tag = tag; layouts[contents].gap = a.value("gap", "12").toInt();
             layouts[contents].breakpoint = a.value("breakpoint", "700").toInt();
@@ -238,19 +323,30 @@ class AppKitView : public NativeView {
     }
     void update() {
         applying = true; auto state = bridge.state();
+        for (auto it = menuItems.cbegin(); it != menuItems.cend(); ++it) {
+            it.value().title = text(state.value(it.key() + ".text").toString());
+            it.value().enabled = state.value(it.key() + ".enabled").toBool(); it.value().hidden = !state.value(it.key() + ".visible").toBool();
+            it.value().state = state.value(it.key() + ".checked").toBool() ? NSControlStateValueOn : NSControlStateValueOff;
+        }
         for (auto it = items.cbegin(); it != items.cend(); ++it) {
             Item c = it.value(); auto value = [&](QString p) { return state.value(it.key() + '.' + p); }; QString tag = c.node->tag;
-            c.view.hidden = !value("visible").toBool(); if ([c.control respondsToSelector:@selector(setEnabled:)]) { [c.control setEnabled:value("enabled").toBool()]; }
+            if (tag != "Tab") { c.view.hidden = !value("visible").toBool(); } if ([c.control respondsToSelector:@selector(setEnabled:)]) { [c.control setEnabled:value("enabled").toBool()]; }
             if (tag == "Label" || tag == "Input") { if (string([c.control stringValue]) != value("text").toString()) { [c.control setStringValue:text(value("text").toString())]; } }
             if (tag == "TextArea") { if (string([(NSTextView*)c.control string]) != value("text").toString()) { [(NSTextView*)c.control setString:text(value("text").toString())]; } }
             if (tag == "Button" || tag == "CheckBox") { [(NSButton*)c.control setTitle:text(value("text").toString())]; }
             if (tag == "CheckBox" || tag == "Switch") { [c.control setState:value("checked").toBool() ? NSControlStateValueOn : NSControlStateValueOff]; }
+            if (tag == "Tabs") {
+                [(NSSegmentedControl*)c.control setSelectedSegment:value("value").toInt()]; int index = 0;
+                for (const Node& page : c.node->children) { items[page.id].view.hidden = index++ != value("value").toInt() || !state.value(page.id + ".visible").toBool(); }
+            }
+            if (tag == "ListBox" || tag == "Table") { [(NSTableView*)c.control selectRowIndexes:[NSIndexSet indexSetWithIndex:value("value").toUInt()] byExtendingSelection:NO]; }
+            if (tag == "RadioGroup") { for (NSButton* button in layouts[c.view].children) { button.enabled = value("enabled").toBool(); button.state = button.tag == value("value").toInt() ? NSControlStateValueOn : NSControlStateValueOff; } }
             if (tag == "Select") { [(NSPopUpButton*)c.control selectItemAtIndex:value("value").toInt()]; }
             if (tag == "Slider" || tag == "NumberInput" || tag == "ProgressBar") { [c.control setDoubleValue:value("value").toDouble()]; if (c.extra) { [c.extra setDoubleValue:value("value").toDouble()]; } }
             if (tag == "Spinner" || tag == "ProgressBar") { NSProgressIndicator* p = c.control; p.indeterminate = tag == "Spinner" || value("indeterminate").toBool(); if ((tag == "Spinner" && value("running").toBool()) || (tag == "ProgressBar" && p.indeterminate)) { [p startAnimation:nil]; } else { [p stopAnimation:nil]; } }
         }
         for (QTimer* timer : timers) { bool running = state.value(timer->objectName() + ".running").toBool(); if (running && !timer->isActive()) { timer->start(); } if (!running) { timer->stop(); } }
-        applying = false; layoutDirty = true;
+        applying = false; layoutDirty = true; updateDialogs();
     }
 public:
     AppKitView(const Document& document, Bridge& backend) : doc(document), bridge(backend) {
