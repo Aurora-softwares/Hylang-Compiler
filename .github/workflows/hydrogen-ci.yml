@@ -20,6 +20,22 @@ permissions:
   contents: read
 
 jobs:
+  macos-ui:
+    name: macOS native UI layout
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+      - name: Install Qt Core
+        run: brew install qtbase
+      - name: Build native UI host and layout regression
+        run: |
+          cmake -S . -B build-ui -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON -DCMAKE_PREFIX_PATH="$(brew --prefix qtbase)"
+          cmake --build build-ui --target hy hyui hyui_appkit_tests --parallel 3
+      - name: Check layout and sample backend events
+        run: ctest --test-dir build-ui -R '^hyui_(appkit_layout|sdk_integration)$' --output-on-failure
+
   macos-integration:
     name: macOS x64 compiler and runtime
     runs-on: macos-15-intel

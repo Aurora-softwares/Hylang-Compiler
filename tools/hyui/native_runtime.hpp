@@ -13,6 +13,7 @@ public:
 };
 using NativeFactory = std::function<std::unique_ptr<NativeView>(const Document&, Bridge&)>;
 int nativeMain(int argc, char** argv, NativeFactory factory);
+std::unique_ptr<NativeView> createAppKitView(const Document& document, Bridge& bridge);
 int appkitMain(int argc, char** argv);
 int windowsMain(int argc, char** argv);
 }
