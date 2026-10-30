@@ -83,18 +83,18 @@ jobs:
         run: |
           build-ui/tools/hyui/hyui_tests
           python -m unittest discover -s tests/ui -p 'test_*.py'
-      - name: Launch GTK on Xvfb and check native interactions and reviewed screenshots
-        env:
-          GSK_RENDERER: cairo
-          GDK_BACKEND: x11
-          GTK_A11Y: none
-        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' python tools/hyui/ui_ci.py --platform linux --driver build-ui/tools/hyui/hyui_gtk_tests --compiler build-ui/hy --artifacts build-ui/ui-artifacts
       - name: Run GTK sample and packaged-app integration
         env:
           GSK_RENDERER: cairo
           GDK_BACKEND: x11
           GTK_A11Y: none
         run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' ctest --test-dir build-ui -R '^hyui_sdk_(integration|package)$' --output-on-failure
+      - name: Launch GTK on Xvfb and check native interactions and reviewed screenshots
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' python tools/hyui/ui_ci.py --platform linux --driver build-ui/tools/hyui/hyui_gtk_tests --compiler build-ui/hy --artifacts build-ui/ui-artifacts
       - name: Upload GTK screenshots, geometry, diffs and logs
         if: always()
         uses: actions/upload-artifact@v4
