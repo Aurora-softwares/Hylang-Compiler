@@ -80,7 +80,7 @@ public sealed partial class NativeWindow
             tabs.SelectedIndex = page; await Idle();
             foreach (int width in new[] { 1120, 800, 360 }) {
                 AppWindow.Resize(new Windows.Graphics.SizeInt32(width + 16, 640)); Root.Width = width; Root.Height = 600;
-                await Task.Delay(250); Root.UpdateLayout(); CheckLayout();
+                await Task.Delay(250); Root.UpdateLayout(); Check(Root.XamlRoot.Size.Width >= width && Root.XamlRoot.Size.Height >= 600, "Native WinUI viewport is smaller than the fixture"); CheckLayout();
                 if (page == 0) {
                     var project = Bounds(controls["projectName"]); var summary = Bounds(controls["summary"]);
                     if (width == 1120) Check(summary.X > project.Right, "Wide workspace panels must be side by side");
@@ -114,6 +114,7 @@ public sealed partial class NativeWindow
         Invoke(controls["showWorkspace"]); await Idle(); Check(tabs.SelectedIndex == 0, "Menu failed to select workspace");
         ((TextBox)controls["projectName"]).Text = "CI Notes"; await Idle(); Check(values["summary.text"].StartsWith("CI Notes"), "Input event failed");
         ((CheckBox)controls["symbols"]).IsChecked = false; await Idle(); Check(values["summary.text"].Contains("Debug symbols: false"), "Checkbox event failed");
+        ((ComboBox)controls["target"]).SelectedIndex = 2; await Idle(); Check(values["summary.text"].Contains("macOS"), "Select event failed");
         ((Slider)controls["quality"]).Value = 55; await Idle(); Check(values["summary.text"].Contains("55%"), "Slider event failed");
         ((ToggleSwitch)controls["notifications"]).IsOn = false; Check(values["notifications.checked"] == "false", "Switch event failed");
         ((NumberBox)controls["workers"]).Value = 8; Check(values["workers.value"] == "8", "Number input event failed");
@@ -121,6 +122,7 @@ public sealed partial class NativeWindow
         Invoke(controls["build"]); await Idle(); Check(values["build.enabled"] == "false" && timers["buildTimer"].IsEnabled, "Build did not start native progress");
         Invoke(controls["cancel"]); await Idle(); Check(values["build.enabled"] == "true" && !timers["buildTimer"].IsEnabled, "Cancel did not stop progress");
         Invoke(controls["build"]); await Until(() => values["progress.value"] == "100", "Native timer did not complete progress"); await Idle();
+        Check(((ProgressBar)controls["progress"]).Value == 100 && !((ProgressRing)controls["activity"]).IsActive, "Native progress widgets did not complete");
         Check(((Button)controls["save"]).IsEnabled, "Completion did not enable Save");
         string saved = Path.Combine(output, "saved-plan.txt"); ((TextBox)controls["savePath"]).Text = saved; await Idle(); Check(values["savePath.text"] == saved, "Save path edit did not reach the UI state"); Invoke(controls["save"]); await Idle();
         Check(File.ReadAllText(saved).Contains("Saved by the native UI CI test."), "Native Save did not persist input");

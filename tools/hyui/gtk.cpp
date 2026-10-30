@@ -392,11 +392,25 @@ public:
         for (auto& row : rows) {
             int width = api.call<int>("gtk_widget_get_width", row.widget);
             if (width > 0) {
-                bool horizontal = width >= row.node->attributes.value("breakpoint", "700").toInt();
-                int columns = horizontal ? qMax(1, int(row.node->children.size())) : 1;
+                int count = 0, minimumSum = 0, largest = 0;
+                for (const Node& child : row.node->children) {
+                    Control* control = controls.value(child.id, nullptr);
+                    W widget = control ? (control->container ? control->container : control->widget) : nullptr;
+                    if (!widget || !bridge.state().value(child.id + ".visible").toBool()) { continue; }
+                    int minimum = 0, natural = 0; api.call("gtk_widget_measure", widget, 0, -1, &minimum, &natural, nullptr, nullptr);
+                    ++count; minimumSum += minimum; largest = qMax(largest, minimum);
+                }
+                int gap = row.node->attributes.value("gap", "12").toInt();
+                // Include FlowBoxChild padding and a small resize margin. The
+                // row must collapse before its horizontal minimum is reached.
+                int needed = (row.homogeneous ? largest * count : minimumSum) + qMax(0, count - 1) * gap + count * 6 + 12;
+                bool horizontal = width >= qMax(row.node->attributes.value("breakpoint", "700").toInt(), needed);
+                int columns = horizontal ? qMax(1, count) : 1;
                 if (row.columns != columns) {
                     row.columns = columns;
+                    if (columns == 1) { api.call("gtk_flow_box_set_min_children_per_line", row.widget, 1u); }
                     api.call("gtk_flow_box_set_max_children_per_line", row.widget, unsigned(columns));
+                    api.call("gtk_flow_box_set_min_children_per_line", row.widget, unsigned(columns));
                     api.call("gtk_flow_box_set_homogeneous", row.widget, horizontal && row.homogeneous ? 1 : 0);
                 }
             }

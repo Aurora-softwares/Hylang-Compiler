@@ -163,6 +163,8 @@ int main(int argc, char** argv) {
             edit(@"projectName", @"CI Notes"); require(bridge.state()["summary.text"].toString().startsWith("CI Notes"), "input event failed");
             [(NSButton*)find(gallery, @"symbols") performClick:nil]; finish();
             require(bridge.state()["summary.text"].toString().contains("Debug symbols: false"), "checkbox event failed");
+            NSPopUpButton* target = (NSPopUpButton*)find(gallery, @"target"); [target selectItemAtIndex:2]; [target sendAction:target.action to:target.target]; finish();
+            require(bridge.state()["summary.text"].toString().contains("macOS"), "select event failed");
             NSSlider* slider = (NSSlider*)find(gallery, @"quality"); slider.intValue = 55; [slider sendAction:slider.action to:slider.target]; finish();
             require(bridge.state()["summary.text"].toString().contains("55%"), "slider event failed");
             NSSwitch* toggle = (NSSwitch*)find(gallery, @"notifications").subviews.firstObject; toggle.state = NSControlStateValueOff; [toggle sendAction:toggle.action to:toggle.target];
@@ -175,6 +177,7 @@ int main(int argc, char** argv) {
             [(NSButton*)find(gallery, @"cancel") performClick:nil]; finish(); require(bridge.state()["build.enabled"].toBool() && !bridge.state()["buildTimer.running"].toBool(), "native Cancel did not stop progress");
             [(NSButton*)find(gallery, @"build") performClick:nil];
             waitFor([&] { return bridge.state()["progress.value"].toInt() == 100; }, "native timer did not complete progress");
+            require([(NSProgressIndicator*)find(gallery, @"progress") doubleValue] == 100, "native progress bar did not complete");
             require([(NSButton*)find(gallery, @"save") isEnabled], "completion did not enable Save");
             QString savedPath = (output.isEmpty() ? temporary.path() : output) + "/saved-plan.txt";
             edit(@"savePath", [NSString stringWithUTF8String:savedPath.toUtf8().constData()]); [(NSButton*)find(gallery, @"save") performClick:nil]; finish();

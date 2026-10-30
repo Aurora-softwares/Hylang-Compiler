@@ -105,6 +105,8 @@ public:
         check(bridge.state()["summary.text"].toString().startsWith("CI Notes"), "Input event failed");
         view.api.call("gtk_check_button_set_active", view.controls["symbols"]->widget, 0); idle();
         check(bridge.state()["summary.text"].toString().contains("Debug symbols: false"), "Checkbox event failed");
+        view.api.call("gtk_drop_down_set_selected", view.controls["target"]->widget, 2u); idle();
+        check(bridge.state()["summary.text"].toString().contains("macOS"), "Select event failed");
         view.api.call("gtk_range_set_value", view.controls["quality"]->widget, 55.0); idle();
         check(bridge.state()["summary.text"].toString().contains("55%"), "Slider event failed");
         view.api.call("gtk_switch_set_active", view.controls["notifications"]->widget, 0);
@@ -114,6 +116,7 @@ public:
         click("build"); check(!bridge.state()["build.enabled"].toBool() && bridge.state()["buildTimer.running"].toBool(), "Build did not start progress");
         click("cancel"); check(bridge.state()["build.enabled"].toBool() && !bridge.state()["buildTimer.running"].toBool(), "Cancel did not stop progress");
         click("build"); until([&] { return bridge.state()["progress.value"].toInt() == 100; }, "Timer did not complete progress"); idle();
+        check(view.api.call<double>("gtk_progress_bar_get_fraction", view.controls["progress"]->widget) == 1.0 && !view.api.call<int>("gtk_spinner_get_spinning", view.controls["activity"]->widget), "Native progress widgets did not complete");
         check(view.api.call<int>("gtk_widget_get_sensitive", view.controls["save"]->widget), "Save did not become enabled");
         view.api.text(view.controls["savePath"]->widget, "gtk_editable_set_text", output + "/saved-plan.txt"); click("save");
         QFile saved(output + "/saved-plan.txt"); check(saved.open(QIODevice::ReadOnly) && saved.readAll().contains("Saved by the native UI CI test."), "Save did not persist text input");
