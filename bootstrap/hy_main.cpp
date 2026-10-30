@@ -1555,6 +1555,7 @@ void print_usage() {
     std::cerr << "  hy new app|lib|tool|test|workspace <name>\n";
     std::cerr << "  hy build <file.hy|project.hyproj> [--target exe|lib|uefi-x64] [-o output] [--debug] [--hide-progress] [--hide-spinner] [--hide-log]\n";
     std::cerr << "  hy run <file.hy|project.hyproj> [-- args...]\n";
+    std::cerr << "  hy ui <file.hy|project.hyproj> (requires the optional hyui desktop host)\n";
     std::cerr << "  hy test [project.hyproj]\n";
     std::cerr << "  hy fmt <path...> [--check]\n";
     std::cerr << "  hy check <file.hy|project.hyproj> [--json]\n";
@@ -1573,6 +1574,20 @@ int main(int argc, char** argv) {
     }
 
     const string command = argv[1];
+    if (command == "ui") {
+        if (argc != 3) { print_usage(); return 1; }
+        fs::path host = fs::path(argv[0]).parent_path() / "hyui";
+#ifdef _WIN32
+        host += ".exe";
+#endif
+        if (!fs::exists(host)) { host = "hyui"; }
+        const int result = hylang::run_ui(argv[2], host);
+        if (result == -1) {
+            std::cerr << "could not start hyui; build with -DHYDROGEN_BUILD_UI=ON and add its directory to PATH\n";
+            return 1;
+        }
+        return result;
+    }
     if (command == "new") {
         if (argc < 4) {
             print_usage();

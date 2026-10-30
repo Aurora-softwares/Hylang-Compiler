@@ -75,6 +75,7 @@ RunResult run_target(const RunOptions& options);
 BuildResult build_target(const BuildOptions& options);
 CheckResult check_target(const CheckOptions& options);
 TestResult test_target(const TestOptions& options);
+int run_ui(const std::filesystem::path& input, const std::filesystem::path& host);
 std::string format_diagnostics(const std::vector<Diagnostic>& diagnostics);
 
 }  // namespace hylang

@@ -13391,6 +13391,10 @@ TestResult test_target(const TestOptions& options) {
     return TestResult{!diagnostics.has_errors(), std::move(diagnostics.items), std::move(runs)};
 }
 
+int run_ui(const fs::path& input, const fs::path& host) {
+    return run_process({host.string(), "--source", fs::absolute(input).string()});
+}
+
 std::string format_diagnostics(const std::vector<Diagnostic>& diagnostics) {
     std::ostringstream out;
     for (const auto& diagnostic : diagnostics) {

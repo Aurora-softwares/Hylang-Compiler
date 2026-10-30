@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Window version="1" id="studio" title="Hydrogen Studio" width="1120" height="900" theme="system" material="auto">
+  <ColumnPanel gap="6">
+    <Label text="H  /  HYDROGEN STUDIO" role="caption" tone="accent" />
+    <Label text="Build something native." role="title" />
+    <Label text="A small workspace. A real Hydrogen backend. Your desktop, by design." tone="muted" />
+  </ColumnPanel>
+  <GridPanel columns="3" minItemWidth="240" gap="14">
+    <Panel padding="18" gap="5">
+      <Label text="01  /  DESCRIBE" role="caption" tone="accent" />
+      <Label text="Your interface in XML" role="heading" />
+      <Label text="Readable .hyui views with system controls." tone="muted" />
+    </Panel>
+    <Panel padding="18" gap="5">
+      <Label text="02  /  CONNECT" role="caption" tone="accent" />
+      <Label text="Logic in Hydrogen" role="heading" />
+      <Label text="Typed backend code responds to your actions." tone="muted" />
+    </Panel>
+    <Panel padding="18" gap="5">
+      <Label text="03  /  ADAPT" role="caption" tone="accent" />
+      <Label text="Room for every screen" role="heading" />
+      <Label text="Flexible rows, fluid grids, automatic scrolling." tone="muted" />
+    </Panel>
+  </GridPanel>
+  <RowPanel breakpoint="760" gap="20">
+    <Panel title="Application settings" preferredWidth="600" gap="12">
+      <Label text="PROJECT NAME" role="caption" tone="muted" />
+      <Input id="projectName" text="Aurora Notes" placeholder="Give your next idea a name" onChange="Preview" accessibleName="Project name" />
+      <RowPanel breakpoint="480" gap="16">
+        <ColumnPanel gap="7">
+          <Label text="DESKTOP TARGET" role="caption" tone="muted" />
+          <Select id="target" items="Linux desktop|Windows / Fluent WinUI 3|macOS / Liquid Glass" value="0" onChange="Preview" accessibleName="Desktop target" />
+        </ColumnPanel>
+        <ColumnPanel gap="7">
+          <Label text="WORKER LIMIT" role="caption" tone="muted" />
+          <NumberInput id="workers" minimum="1" maximum="16" value="4" accessibleName="Worker limit" />
+        </ColumnPanel>
+      </RowPanel>
+      <Label text="OPTIMISATION BUDGET" role="caption" tone="muted" />
+      <Slider id="quality" value="70" onChange="Preview" accessibleName="Optimisation budget" />
+      <CheckBox id="symbols" text="Include debug symbols" checked="true" onChange="Preview" />
+      <Switch id="notifications" text="Desktop notifications preference" checked="true" />
+      <Label text="PROJECT NOTES" role="caption" tone="muted" />
+      <TextArea id="notes" text="A calm place for everyday ideas." placeholder="What are you making?" height="70" accessibleName="Project notes" />
+      <Separator />
+      <RowPanel breakpoint="400" gap="10">
+        <Button id="build" text="Create application plan" primary="true" onClick="Build" fill="true" />
+        <Button id="cancel" text="Cancel" enabled="false" onClick="Cancel" fill="true" />
+      </RowPanel>
+    </Panel>
+    <Panel title="Your workspace" preferredWidth="340" gap="14">
+      <Label text="AURORA / NEW APPLICATION" role="caption" tone="accent" />
+      <Label id="summary" text="Aurora Notes&#10;Linux desktop&#10;Optimisation: 70%&#10;Debug symbols: true&#10;Responsive layout: enabled" />
+      <Separator />
+      <RowPanel breakpoint="0" gap="10">
+        <Spinner id="activity" running="false" accessibleName="Creating application plan" />
+        <Label id="status" text="Ready when you are. Configure your project and create an application plan." tone="muted" />
+      </RowPanel>
+      <ProgressBar id="progress" value="0" accessibleName="Plan progress" />
+      <Label id="progressText" text="0% / Waiting to start" role="caption" tone="muted" />
+      <Label text="SAVE YOUR PLAN" role="caption" tone="muted" />
+      <Input id="savePath" text="hydrogen-build-plan.txt" accessibleName="Save path" />
+      <Button id="save" text="Save application plan" onClick="Save" enabled="false" fill="true" />
+      <Label text="This demo creates a project plan; it does not compile a new app. Every action is handled by Program.hy." role="caption" tone="muted" />
+    </Panel>
+  </RowPanel>
+  <Label text="HYUI v1  /  XML frontend + Hydrogen backend  /  Resize this window to see it adapt" role="caption" tone="muted" />
+  <Timer id="buildTimer" interval="350" running="false" onTick="Tick" />
+</Window>

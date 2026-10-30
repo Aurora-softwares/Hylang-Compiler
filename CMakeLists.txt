@@ -44,6 +44,13 @@ set_target_properties(hylang PROPERTIES
 
 enable_testing()
 
+# The compiler stays usable without a desktop SDK (including freestanding builds).
+# Opt in to build the HYUI desktop host with Qt Quick Controls 6.8 or newer.
+option(HYDROGEN_BUILD_UI "Build the Hydrogen XML desktop UI host" OFF)
+if(HYDROGEN_BUILD_UI)
+    add_subdirectory(tools/hyui)
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_program(HYDROGEN_BASH_EXECUTABLE bash)
     if(HYDROGEN_BASH_EXECUTABLE)
@@ -1520,6 +1527,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
         VERBATIM
     )
     set(stage1_test_dir "${CMAKE_CURRENT_BINARY_DIR}/tmp/phase6/stage1")
+    if(HYDROGEN_BUILD_UI AND Python3_Interpreter_FOUND)
+        add_test(NAME hyui_native_integration
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/hyui/integration.py
+                $<TARGET_FILE:hyui> ${stage1_test_dir}/hydrogen-stage1 ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(hyui_native_integration PROPERTIES
+            FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 180)
+    endif()
     add_test(NAME hy_stage1_project_closure
         COMMAND ${CMAKE_COMMAND}
             -DHY_BINARY=$<TARGET_FILE:hy>

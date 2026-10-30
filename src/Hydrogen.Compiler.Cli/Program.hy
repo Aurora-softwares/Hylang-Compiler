@@ -29,6 +29,19 @@ namespace Hydrogen.Compiler.Cli {
             if (command == "stage-compare") {
                 return StageCompare(args);
             }
+            if (command == "ui") {
+                if (args.Length != 2) {
+                    System.Console.WriteLine("usage: hy ui <file.hy|project.hyproj>");
+                    return 1;
+                }
+                string source = QuoteCommandPath(args[1]);
+                if (source == "" || (System.Host.Process.IsWindows() &&
+                    (Find(args[1], "%", 0) >= 0 || Find(args[1], "!", 0) >= 0))) {
+                    System.Console.WriteLine("error: unsupported UI source path");
+                    return 1;
+                }
+                return System.Host.Process.Run("hyui --source " + source);
+            }
 
 			// From here the commands need a file path to operate on, so we check for existence of the file.
             string path = args[1];
@@ -1244,6 +1257,7 @@ namespace Hydrogen.Compiler.Cli {
         }
 
         private static void PrintUsage() {
+            System.Console.WriteLine("usage: hy ui <file.hy|project.hyproj> (requires hyui on PATH)");
             System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|collection|os|efi|kernel|driver|exec|windows|macos <name>");
             System.Console.WriteLine("usage: hy <tokens|parse|check|build> <file.hy|project.hyproj>");
             System.Console.WriteLine("usage: hy check <file.hy> --emit-ir");
