@@ -71,7 +71,7 @@ class GtkView : public NativeView {
     Bridge& bridge;
     QMap<QString, Control*> controls;
     std::vector<std::unique_ptr<Control>> owned;
-    struct Row { W widget; const Node* node; int orientation = 1; bool homogeneous = true; };
+    struct Row { W widget; const Node* node; int columns = 1; bool homogeneous = true; };
     QVector<Row> rows;
     QVector<QTimer*> timers;
     bool applying = false;
@@ -197,7 +197,23 @@ public:
             W texture = api.call<W>("gdk_texture_new_for_pixbuf", bitmap); api.call("g_object_unref", bitmap);
             w = api.call<W>("gtk_image_new_from_paintable", texture); api.call("g_object_unref", texture);
             api.call("gtk_widget_set_size_request", w, -1, height); api.call("gtk_widget_set_halign", w, 3);
-        } else if (tag == "ColumnPanel" || tag == "RowPanel" || tag == "Panel" || tag == "Tab") {
+        } else if (tag == "RowPanel") {
+            // FlowBox reports the largest child's minimum width rather than
+            // the sum, so a horizontal row cannot lock a window above its
+            // breakpoint. GTK then reflows it during ordinary user resizing.
+            w = api.call<W>("gtk_flow_box_new");
+            api.call("gtk_flow_box_set_selection_mode", w, 0);
+            api.call("gtk_flow_box_set_min_children_per_line", w, 1u);
+            api.call("gtk_flow_box_set_max_children_per_line", w, 1u);
+            api.call("gtk_flow_box_set_column_spacing", w, a.value("gap", "12").toUInt());
+            api.call("gtk_flow_box_set_row_spacing", w, a.value("gap", "12").toUInt());
+            bool homogeneous = true;
+            for (const auto& child : node.children) {
+                W widget = build(child); if (widget) { api.call("gtk_flow_box_insert", w, widget, -1); }
+                if (child.tag != "State" && child.tag != "Timer" && child.attributes.value("fill", child.tag == "Button" || child.tag == "Spinner" ? "false" : "true") != "true") { homogeneous = false; }
+            }
+            rows.append({w, &node, 1, homogeneous});
+        } else if (tag == "ColumnPanel" || tag == "Panel" || tag == "Tab") {
             W box = api.call<W>("gtk_box_new", 1, a.value("gap", "12").toInt());
             w = box;
             if (tag == "Panel") {
@@ -210,13 +226,6 @@ public:
                 }
             }
             for (const auto& child : node.children) { append(box, build(child)); }
-            if (tag == "RowPanel") {
-                bool homogeneous = true;
-                for (const auto& child : node.children) {
-                    if (child.tag != "State" && child.tag != "Timer" && child.attributes.value("fill", child.tag == "Button" || child.tag == "Spinner" ? "false" : "true") != "true") { homogeneous = false; }
-                }
-                rows.append({box, &node, 1, homogeneous});
-            }
         } else if (tag == "GridPanel") {
             w = api.call<W>("gtk_flow_box_new");
             api.call("gtk_flow_box_set_selection_mode", w, 0);
@@ -320,7 +329,8 @@ public:
                 bool open = state.value(it.key() + ".open").toBool();
                 if (!open && c->dialog) { api.call("gtk_window_destroy", c->dialog); c->dialog = nullptr; }
                 if (open && !c->dialog) {
-                    c->dialog = api.call<W>("gtk_message_dialog_new", window, 3, 0, 0, "%s", state.value(it.key() + ".text").toString().toUtf8().constData());
+                    c->dialog = api.call<W>("gtk_message_dialog_new", window, 3, 0, 0, "%s", c->node->attributes.value("title", "Hydrogen").toUtf8().constData());
+                    api.call("gtk_message_dialog_format_secondary_text", c->dialog, "%s", state.value(it.key() + ".text").toString().toUtf8().constData());
                     api.text(c->dialog, "gtk_window_set_title", c->node->attributes.value("title", "Hydrogen"));
                     int count = 0; for (const QString& button : c->node->attributes.value("buttons", "OK").split('|')) { api.call<W>("gtk_dialog_add_button", c->dialog, button.toUtf8().constData(), count++); }
                     c->responseAction = [this, c, count](int response) {
@@ -365,15 +375,6 @@ public:
         applying = false;
     }
     void present(int width, int height) override {
-        // Reflow before GTK negotiates its minimum size: a horizontal row's
-        // combined minimum must not prevent a narrow window from being created.
-        int available = qMax(1, width - 2 * document.window.attributes.value("padding", "24").toInt());
-        for (auto& row : rows) {
-            bool horizontal = available >= row.node->attributes.value("breakpoint", "700").toInt();
-            row.orientation = horizontal ? 0 : 1;
-            api.call("gtk_orientable_set_orientation", row.widget, row.orientation);
-            api.call("gtk_box_set_homogeneous", row.widget, horizontal && row.homogeneous ? 1 : 0);
-        }
         struct Rect { int x, y, width, height; } area{};
         W display = api.call<W>("gdk_display_get_default");
         W monitors = api.call<W>("gdk_display_get_monitors", display);
@@ -392,11 +393,11 @@ public:
             int width = api.call<int>("gtk_widget_get_width", row.widget);
             if (width > 0) {
                 bool horizontal = width >= row.node->attributes.value("breakpoint", "700").toInt();
-                int orientation = horizontal ? 0 : 1;
-                if (row.orientation != orientation) {
-                    row.orientation = orientation;
-                    api.call("gtk_orientable_set_orientation", row.widget, orientation);
-                    api.call("gtk_box_set_homogeneous", row.widget, horizontal && row.homogeneous ? 1 : 0);
+                int columns = horizontal ? qMax(1, int(row.node->children.size())) : 1;
+                if (row.columns != columns) {
+                    row.columns = columns;
+                    api.call("gtk_flow_box_set_max_children_per_line", row.widget, unsigned(columns));
+                    api.call("gtk_flow_box_set_homogeneous", row.widget, horizontal && row.homogeneous ? 1 : 0);
                 }
             }
         }

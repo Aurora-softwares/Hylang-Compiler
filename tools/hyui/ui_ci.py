@@ -61,7 +61,10 @@ def main():
         result = subprocess.run(command, capture_output=True, text=True, timeout=240, env=dict(os.environ, GSK_RENDERER="cairo"))
         (artifacts / "native-test.log").write_text(result.stdout + result.stderr, encoding="utf-8")
         if result.returncode:
-            raise AssertionError(f"{args.platform} native interaction/layout tests failed ({result.returncode}); see native-test.log")
+            detail = result.stdout + result.stderr
+            windows_failure = artifacts / "winui-failure.txt"
+            if windows_failure.exists(): detail += windows_failure.read_text(encoding="utf-8")
+            raise AssertionError(f"{args.platform} native interaction/layout tests failed ({result.returncode}):\n{detail[-6000:]}")
         report = json.loads((artifacts / "report.json").read_text())
         required = {f"{page}-{width}.png" for page in ["workspace", "gallery"] for width in [1120, 800, 360]} | {"dialog-confirm.png", "workspace-bottom.png", "gallery-bottom.png"}
         if not report.get("passed") or set(report.get("screenshots", [])) != required or len(report["screenshots"]) != len(required):
