@@ -977,6 +977,78 @@ namespace Hydrogen.Compiler.Cli {
             return 0;
         }
 
+        // Development checkout discovery: a user building from the repository root
+        // should not need to export PATH or HYUI_COMPILER. Installed toolchains
+        // can still resolve hyui (and its sibling hy compiler) through PATH.
+        private static string FindUIBuildTool(string projectPath, string kind) {
+            bool windows = System.Host.Process.IsWindows();
+            string executable = windows ? "hyui.exe" : "hyui";
+            string[] directories = new string[] {
+                "build/ui", "build-ui", "build-ui/tools/hyui",
+                "build/bootstrap", "build/bootstrap/Release",
+                "build/ui/Release", "build-ui/Release",
+                "build/self_hosting/linux", "build/self_hosting/windows",
+                "build/self_hosting/macos"
+            };
+            string[] compilers = windows
+                ? new string[] {
+                    "build/self_hosting/windows/hydrogen-stage1.exe",
+                    "build-ui/hydrogen-stage1.exe",
+                    "build-ui/Release/hydrogen-stage1.exe",
+                    "build/bootstrap/hy.exe",
+                    "build-ui/Release/hy.exe"
+                }
+                : new string[] {
+                    "build/self_hosting/linux/hydrogen-stage1",
+                    "build/self_hosting/macos/hydrogen-stage1",
+                    "build/self_hosting/hydrogen-stage1",
+                    "build-ui/hydrogen-stage1",
+                    "build/ui/hydrogen-stage1",
+                    "build/bootstrap/hy"
+                };
+            string folder = PathUtils.DirName(projectPath);
+            int depth = 0;
+            while (depth < 10) {
+                if (kind == "hyui") {
+                    int i = 0;
+                    while (i < directories.Length) {
+                        string candidate = PathUtils.Join(folder,
+                            PathUtils.Join(directories[i], executable));
+                        if (System.IO.File.Exists(candidate)) { return candidate; }
+                        i = i + 1;
+                    }
+                } else {
+                    int j = 0;
+                    while (j < compilers.Length) {
+                        string candidate2 = PathUtils.Join(folder, compilers[j]);
+                        if (System.IO.File.Exists(candidate2)) { return candidate2; }
+                        j = j + 1;
+                    }
+                }
+                string parent = PathUtils.DirName(folder);
+                if (parent == folder) { break; }
+                folder = parent;
+                depth = depth + 1;
+            }
+            // For project trees not inside a checkout, search the current build
+            // working directory as well (e.g. hy build /tmp/app/App.hyproj).
+            if (kind == "hyui") {
+                int k = 0;
+                while (k < directories.Length) {
+                    string candidate3 = PathUtils.Join(directories[k], executable);
+                    if (System.IO.File.Exists(candidate3)) { return candidate3; }
+                    k = k + 1;
+                }
+                return executable;
+            }
+            int m = 0;
+            while (m < compilers.Length) {
+                if (System.IO.File.Exists(compilers[m])) { return compilers[m]; }
+                m = m + 1;
+            }
+            return "";
+        }
+
         private static int Build(string[] args) {
             string output = "";
             string target = "";
@@ -1056,7 +1128,26 @@ namespace Hydrogen.Compiler.Cli {
                     System.Console.WriteLine("error: UI projects require a desktop executable target");
                     return 1;
                 }
-                return System.Host.Process.Run("hyui --package " + quotedProject + " --output " + quotedOutput + " --target " + projectType);
+                // Discover the UI SDK alongside a source checkout, or fall back to
+                // the installed hyui tool. Normal builds never require --ui-backend.
+                string packager = FindUIBuildTool(projectPath, "hyui");
+                string compiler = FindUIBuildTool(projectPath, "compiler");
+                string quotedPackager = QuoteCommandPath(packager);
+                if (quotedPackager == "") {
+                    System.Console.WriteLine("error: unsupported UI packager path");
+                    return 1;
+                }
+                string command = quotedPackager + " --package " + quotedProject +
+                    " --output " + quotedOutput + " --target " + projectType;
+                if (compiler != "") {
+                    string quotedCompiler = QuoteCommandPath(compiler);
+                    if (quotedCompiler == "") {
+                        System.Console.WriteLine("error: unsupported UI compiler path");
+                        return 1;
+                    }
+                    command = command + " --compiler " + quotedCompiler;
+                }
+                return System.Host.Process.Run(command);
             }
             BuildProgress progress = new BuildProgress(hideProgress, hideSpinner, hideLog);
             if (manifest.Type() == "os" || manifest.Type() == "collection") {
