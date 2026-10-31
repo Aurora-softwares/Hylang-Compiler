@@ -89,6 +89,18 @@ jobs:
           GDK_BACKEND: x11
           GTK_A11Y: none
         run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' ctest --test-dir build-ui -R '^hyui_sdk_(integration|package)$' --output-on-failure
+      # This is the user-facing workflow: build a .hyproj with the self-hosted
+      # Stage 1 compiler, then run the packaged executable. No HYUI_* exports,
+      # PATH additions or manual UI launcher are allowed.
+      - name: Build self-hosted Stage 1 for automatic UI packaging
+        run: build-ui/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-ui/hydrogen-stage1
+      - name: Verify two-command Hydrogen UI packaging and launch
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' python tools/hyui/auto_package_integration.py build-ui/hydrogen-stage1 build-ui/auto-ui-ci
+
       - name: Launch GTK on Xvfb and check native interactions and reviewed screenshots
         env:
           GSK_RENDERER: cairo

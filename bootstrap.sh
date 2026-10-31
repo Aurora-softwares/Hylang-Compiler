@@ -807,6 +807,24 @@ bootstrap_target Linux "$LINUX_PROJECT_FILE" native "$LINUX_DIR" "" || true
 bootstrap_target Windows "$WINDOWS_PROJECT_FILE" wine "$WINDOWS_DIR" .exe || true
 bootstrap_target macOS "$MACOS_PROJECT_FILE" darling "$MACOS_DIR" "" || true
 
+# The UI SDK is an optional desktop dependency, not a prerequisite for a
+# freestanding compiler. When Qt 6.8+ is installed, build its native host here,
+# so 'hydrogen-stage1 build <ui.hyproj> -o app' works with no environment setup.
+# Set HYDROGEN_BOOTSTRAP_UI=off to skip this optional step on headless systems.
+if [[ -x "$LINUX_STAGE1" && "${HYDROGEN_BOOTSTRAP_UI:-auto}" != off ]]; then
+    UI_BUILD_DIR="$BUILD_DIR/ui"
+    if cmake -S "$PROJECT_DIR" -B "$UI_BUILD_DIR" \
+        -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON \
+        >"$STEP_LOG_DIR/hyui-configure.log" 2>&1 &&
+       cmake --build "$UI_BUILD_DIR" --target hyui --parallel \
+        >"$STEP_LOG_DIR/hyui-build.log" 2>&1; then
+        success "Native HYUI desktop tools ready in $UI_BUILD_DIR"
+    else
+        warning "Optional HYUI SDK not built (requires Qt 6.8+); see $STEP_LOG_DIR/hyui-configure.log and hyui-build.log"
+    fi
+fi
+
+
 # ------------------------------------------------------------------------------
 # Full report -- only count artifacts produced during this invocation.
 # ------------------------------------------------------------------------------
