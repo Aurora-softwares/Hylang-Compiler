@@ -109,7 +109,9 @@ public sealed partial class NativeWindow
         Check(controls["templateSearch"] is AutoSuggestBox, "SearchInput must use a WinUI AutoSuggestBox");
         var search = (AutoSuggestBox)controls["templateSearch"];
         Check(search.Visibility == Visibility.Visible && ToolTipService.GetToolTip(search)?.ToString() == "Enter a template search term", "Native search visibility or tooltip failed");
-        search.Text = "café"; await Idle(); Check(values["selectionText.text"].Normalize(System.Text.NormalizationForm.FormC) == "Template search: café", "SearchInput event did not reach Hydrogen: " + values["selectionText.text"] + " / " + errors.Text);
+        search.Text = "café";
+        await Until(() => values["selectionText.text"].Normalize(System.Text.NormalizationForm.FormC) == "Template search: café", "SearchInput event did not reach Hydrogen; text=" + search.Text + ", state=" + values["templateSearch.text"]);
+        await Idle();
         Check(ToolTipService.GetToolTip(controls["save"])?.ToString() == "Write the current plan to the chosen path", "Native button tooltip is missing");
         Check(controls["templateDetails"] is ScrollViewer, "ScrollView must use a WinUI ScrollViewer");
         var details = (ScrollViewer)controls["templateDetails"];

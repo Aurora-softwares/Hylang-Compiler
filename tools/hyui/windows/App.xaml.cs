@@ -192,6 +192,7 @@ public sealed partial class NativeWindow : Window
         } else if (tag == "SearchInput") {
             var search = new AutoSuggestBox { Text = Attr(node, "text"), PlaceholderText = Attr(node, "placeholder"), QueryIcon = new SymbolIcon(Symbol.Find) };
             search.TextChanged += (_, _) => Changed("text", search.Text);
+            search.RegisterPropertyChangedCallback(AutoSuggestBox.TextProperty, (_, _) => Changed("text", search.Text));
             search.QuerySubmitted += (_, _) => { if (node.Attribute("onSubmit") != null) Dispatch(Attr(node, "onSubmit"), id); };
             element = search;
         } else if (tag is "Input" or "TextArea") {
