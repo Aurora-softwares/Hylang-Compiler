@@ -120,6 +120,22 @@ namespace Hydrogen.Compiler.Tests {
             Assert.True(image[2] == (byte)0x4c, "ELF magic byte 2 should be valid");
             Assert.True(image[3] == (byte)0x46, "ELF magic byte 3 should be valid");
 
+            X64Assembler immediates = new X64Assembler();
+            immediates.Emit32(-2147483647);
+            immediates.Emit32(-2147483647 - 1);
+            immediates.Emit32(2147483647);
+            byte[] immediateBytes = immediates.ToArray();
+            Assert.True(immediateBytes.Length == 12, "three 32-bit immediates should occupy 12 bytes");
+            Assert.True(immediateBytes[0] == (byte)1 && immediateBytes[1] == (byte)0 &&
+                immediateBytes[2] == (byte)0 && immediateBytes[3] == (byte)128,
+                "negative signed magic must retain its high byte");
+            Assert.True(immediateBytes[4] == (byte)0 && immediateBytes[5] == (byte)0 &&
+                immediateBytes[6] == (byte)0 && immediateBytes[7] == (byte)128,
+                "minimum signed integer must encode without overflow");
+            Assert.True(immediateBytes[8] == (byte)255 && immediateBytes[9] == (byte)255 &&
+                immediateBytes[10] == (byte)255 && immediateBytes[11] == (byte)127,
+                "maximum signed integer must preserve all bytes");
+
             NativeRuntimeContract runtime = new NativeRuntimeContract();
             Assert.Equal("linux-x64-elf phase6c-managed-runtime", runtime.Describe(), "runtime model should name the native target");
 

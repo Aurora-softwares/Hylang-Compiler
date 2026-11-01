@@ -85,7 +85,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
         private int DivideSignedByte(int value) {
             if (value < 0) {
-                return (value - 255) / 256;
+                return (int)(((long)value - 255) / 256);
             }
             return value / 256;
         }
