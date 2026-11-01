@@ -287,8 +287,8 @@ class AppKitView : public NativeView {
                     else if (node.attributes.contains("onClick")) { bridge.dispatch(node.attributes["onClick"], node.id); }
                 }); view = button; control = button;
             }
-        } else if (tag == "Input" || tag == "NumberInput") {
-            NSTextField* input = [[[NSTextField alloc] init] autorelease]; input.placeholderString = text(a.value("placeholder"));
+        } else if (tag == "Input" || tag == "SearchInput" || tag == "NumberInput") {
+            NSTextField* input = tag == "SearchInput" ? (NSTextField*)[[[NSSearchField alloc] init] autorelease] : [[[NSTextField alloc] init] autorelease]; input.placeholderString = text(a.value("placeholder"));
             input.delegate = action([this, &node, tag](id sender) { handleEvent(node, tag == "NumberInput" ? "value" : "text", tag == "NumberInput" ? QVariant(int([(NSTextField*)sender intValue])) : QVariant(string([(NSTextField*)sender stringValue])), "onChange"); });
             input.target = action([this, &node](id) { if (node.attributes.contains("onSubmit")) { bridge.dispatch(node.attributes["onSubmit"], node.id); } }); input.action = @selector(fire:);
             view = input; control = input;
@@ -317,6 +317,7 @@ class AppKitView : public NativeView {
         } else { view = [[[NSView alloc] init] autorelease]; }
         if (view) {
             if (a.contains("accessibleName")) { [view setAccessibilityLabel:text(a["accessibleName"])]; }
+            if (a.contains("tooltip")) { view.toolTip = text(a["tooltip"]); }
             view.identifier = text(node.id); nodes.insert(view, &node); [retained addObject:view]; if (control) { [retained addObject:control]; } items[node.id] = {view, control, extra, &node};
         }
         return view;
@@ -331,7 +332,7 @@ class AppKitView : public NativeView {
         for (auto it = items.cbegin(); it != items.cend(); ++it) {
             Item c = it.value(); auto value = [&](QString p) { return state.value(it.key() + '.' + p); }; QString tag = c.node->tag;
             if (tag != "Tab") { c.view.hidden = !value("visible").toBool(); } if ([c.control respondsToSelector:@selector(setEnabled:)]) { [c.control setEnabled:value("enabled").toBool()]; }
-            if (tag == "Label" || tag == "Input") { if (string([c.control stringValue]) != value("text").toString()) { [c.control setStringValue:text(value("text").toString())]; } }
+            if (tag == "Label" || tag == "Input" || tag == "SearchInput") { if (string([c.control stringValue]) != value("text").toString()) { [c.control setStringValue:text(value("text").toString())]; } }
             if (tag == "TextArea") { if (string([(NSTextView*)c.control string]) != value("text").toString()) { [(NSTextView*)c.control setString:text(value("text").toString())]; } }
             if (tag == "Button" || tag == "CheckBox") { [(NSButton*)c.control setTitle:text(value("text").toString())]; }
             if (tag == "CheckBox" || tag == "Switch") { [c.control setState:value("checked").toBool() ? NSControlStateValueOn : NSControlStateValueOff]; }

@@ -110,6 +110,13 @@ public:
         check(bridge.state()["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         view.api.call("gtk_list_box_select_row", view.controls["templates"]->widget, view.api.call<W>("gtk_list_box_get_row_at_index", view.controls["templates"]->widget, 2)); idle();
         check(bridge.state()["selectionText.text"] == "Template index: 2", "List selection did not reach Hydrogen");
+        W search = view.controls["templateSearch"]->widget;
+        check(view.api.call<int>("g_type_check_instance_is_a", search, view.api.call<unsigned long>("gtk_search_entry_get_type")), "SearchInput must use GtkSearchEntry");
+        check(view.api.call<int>("gtk_widget_get_visible", search), "Hydrogen did not reveal SearchInput");
+        check(QString::fromUtf8(view.api.call<const char*>("gtk_widget_get_tooltip_text", search)) == "Enter a template search term", "Native search tooltip is missing");
+        view.api.text(search, "gtk_editable_set_text", "café"); idle();
+        check(bridge.state()["selectionText.text"] == "Template search: café", "SearchInput text event did not reach Hydrogen");
+        check(QString::fromUtf8(view.api.call<const char*>("gtk_widget_get_tooltip_text", view.controls["save"]->widget)) == "Write the current plan to the chosen path", "Native button tooltip is missing");
         view.api.call("gtk_single_selection_set_selected", view.controls["projects"]->buffer, 1u); idle();
         check(bridge.state()["selectionText.text"] == "Project index: 1", "Table selection did not reach Hydrogen");
         click("showDialog"); until([&] { return view.controls["confirmation"]->dialog != nullptr; }, "Dialog did not open");

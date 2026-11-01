@@ -53,7 +53,7 @@ public sealed partial class NativeWindow : Window
     static int Number(XElement n, string key, int fallback) => int.TryParse(Attr(n, key), out int result) ? result : fallback;
     static bool Allowed(XElement node, string property) => property switch {
         "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer"),
-        "text" => node.Name.LocalName is "Label" or "Input" or "TextArea" or "Button" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog",
+        "text" => node.Name.LocalName is "Label" or "Input" or "SearchInput" or "TextArea" or "Button" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog",
         "value" => node.Name.LocalName is "State" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog",
         "checked" => node.Name.LocalName is "CheckBox" or "Switch" or "MenuItem",
         "running" => node.Name.LocalName is "Spinner" or "Timer",
@@ -184,6 +184,11 @@ public sealed partial class NativeWindow : Window
         } else if (tag == "Button") {
             var button = new Button { Content = Attr(node, "text") }; if (Attr(node, "primary") == "true") button.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
             button.Click += (_, _) => Dispatch(Attr(node, "onClick"), id); element = button;
+        } else if (tag == "SearchInput") {
+            var search = new AutoSuggestBox { Text = Attr(node, "text"), PlaceholderText = Attr(node, "placeholder"), QueryIcon = new SymbolIcon(Symbol.Find) };
+            search.TextChanged += (_, _) => Changed("text", search.Text);
+            search.QuerySubmitted += (_, _) => { if (node.Attribute("onSubmit") != null) Dispatch(Attr(node, "onSubmit"), id); };
+            element = search;
         } else if (tag is "Input" or "TextArea") {
             var input = new TextBox { Text = Attr(node, "text"), PlaceholderText = Attr(node, "placeholder"), AcceptsReturn = tag == "TextArea", TextWrapping = tag == "TextArea" ? TextWrapping.Wrap : TextWrapping.NoWrap };
             if (tag == "TextArea") input.MinHeight = Number(node, "height", 100);
@@ -211,6 +216,7 @@ public sealed partial class NativeWindow : Window
         else throw new InvalidDataException("Unsupported native control " + tag);
         controls[id] = element;
         if (node.Attribute("accessibleName") != null) Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(element, Attr(node, "accessibleName"));
+        if (node.Attribute("tooltip") != null) ToolTipService.SetToolTip(element, Attr(node, "tooltip"));
         element.Visibility = Attr(node, "visible", "true") == "true" ? Visibility.Visible : Visibility.Collapsed;
         if (element is Control enabled) enabled.IsEnabled = Attr(node, "enabled", "true") == "true";
         return element;
@@ -299,6 +305,7 @@ public sealed partial class NativeWindow : Window
                 case ListView list: list.SelectedIndex = int.Parse(Value("value")); break;
                 case TextBlock label: label.Text = Value("text"); break;
                 case TextBox input: if (input.Text != Value("text")) input.Text = Value("text"); break;
+                case AutoSuggestBox search: if (search.Text != Value("text")) search.Text = Value("text"); break;
                 case CheckBox check: check.IsChecked = Value("checked") == "true"; check.Content = Value("text"); break;
                 case Button button: button.Content = Value("text"); break;
                 case ToggleSwitch toggle: toggle.IsOn = Value("checked") == "true"; break;

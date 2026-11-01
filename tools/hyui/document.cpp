@@ -22,6 +22,7 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"Label", {"text", "role", "tone"}},
     {"Button", {"text", "onClick", "primary"}},
     {"Input", {"text", "placeholder", "onChange", "onSubmit"}},
+    {"SearchInput", {"text", "placeholder", "onChange", "onSubmit"}},
     {"TextArea", {"text", "placeholder", "onChange", "height"}},
     {"CheckBox", {"text", "checked", "onChange"}},
     {"Switch", {"text", "checked", "onChange"}},
@@ -32,7 +33,7 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"Spinner", {"running"}}, {"Separator", {}}, {"Spacer", {"height"}},
     {"State", {"value"}}, {"Timer", {"interval", "running", "onTick"}}
 };
-static const QSet<QString> common = {"id", "visible", "enabled", "fill", "preferredWidth", "accessibleName"};
+static const QSet<QString> common = {"id", "visible", "enabled", "fill", "preferredWidth", "accessibleName", "tooltip"};
 static const QSet<QString> booleans = {"visible", "enabled", "fill", "primary", "checked", "running", "indeterminate", "open"};
 static const QSet<QString> numbers = {"width", "height", "padding", "gap", "breakpoint", "columns", "minItemWidth",
                                       "preferredWidth", "minimum", "maximum", "interval"};

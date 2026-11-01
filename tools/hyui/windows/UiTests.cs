@@ -106,6 +106,11 @@ public sealed partial class NativeWindow
         ((RadioButtons)controls["channel"]).SelectedIndex = 1; await Idle(); Check(values["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         ((ListView)controls["templates"]).SelectedIndex = 2; await Idle(); Check(values["selectionText.text"] == "Template index: 2", "List event did not reach Hydrogen");
         ((ListView)controls["projects"]).SelectedIndex = 1; await Idle(); Check(values["selectionText.text"] == "Project index: 1", "Table event did not reach Hydrogen");
+        Check(controls["templateSearch"] is AutoSuggestBox, "SearchInput must use a WinUI AutoSuggestBox");
+        var search = (AutoSuggestBox)controls["templateSearch"];
+        Check(search.Visibility == Visibility.Visible && ToolTipService.GetToolTip(search)?.ToString() == "Enter a template search term", "Native search visibility or tooltip failed");
+        search.Text = "café"; await Idle(); Check(values["selectionText.text"] == "Template search: café", "SearchInput event did not reach Hydrogen");
+        Check(ToolTipService.GetToolTip(controls["save"])?.ToString() == "Write the current plan to the chosen path", "Native button tooltip is missing");
         Invoke(controls["showDialog"]); await Until(() => dialogs.ContainsKey("confirmation") && dialogs["confirmation"].ActualWidth > 0, "Native dialog failed to open");
         await Task.Delay(200); var dialog = dialogs["confirmation"];
         await Capture(dialog, Path.Combine(output, "dialog-confirm.png")); shots.Add("dialog-confirm.png");

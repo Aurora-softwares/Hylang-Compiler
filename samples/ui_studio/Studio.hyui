@@ -69,7 +69,7 @@
       <Label id="progressText" text="0% / Waiting to start" role="caption" tone="muted" />
       <Label text="SAVE YOUR PLAN" role="caption" tone="muted" />
       <Input id="savePath" text="hydrogen-build-plan.txt" accessibleName="Save path" />
-      <Button id="save" text="Save application plan" onClick="Save" enabled="false" fill="true" />
+      <Button id="save" text="Save application plan" onClick="Save" enabled="false" fill="true" tooltip="Write the current plan to the chosen path" />
       <Label text="This demo creates a project plan; it does not compile a new app. Every action is handled by Program.hy." role="caption" tone="muted" />
     </Panel>
   </RowPanel>
@@ -80,6 +80,7 @@
       <Panel title="Collections" preferredWidth="580" gap="12">
         <Label text="LIST BOX" role="caption" tone="muted" />
         <ListBox id="templates" items="Notes application|Project tracker|Photo library" value="0" height="120" onChange="ChooseTemplate" accessibleName="Application templates" />
+        <SearchInput id="templateSearch" text="" placeholder="Search templates" onChange="SearchTemplates" onSubmit="SubmitSearch" accessibleName="Search application templates" tooltip="Enter a template search term" visible="false" />
         <Label text="PROJECT TABLE" role="caption" tone="muted" />
         <Table id="projects" columns="Project|Target|Status" rows="Aurora Notes|macOS|Ready&#10;Orbit Tasks|Linux|Building&#10;Prism Photos|Windows|Planned" value="0" height="160" onChange="ChooseProject" accessibleName="Recent projects" />
         <Label id="selectionText" text="Choose a template or project to preview its selection." tone="muted" />

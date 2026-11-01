@@ -177,7 +177,10 @@ public:
             w = api.call<W>("gtk_list_box_new"); c->widget = w; api.call("gtk_list_box_set_selection_mode", w, 2);
             for (const QString& label : a.value("items").split('|')) { W text = api.call<W>("gtk_label_new", label.toUtf8().constData()); api.call("gtk_label_set_xalign", text, 0.0f); api.margin(text, 8); api.call("gtk_list_box_append", w, text); }
             connect(c, "row-selected", [this, c, event] { W row = api.call<W>("gtk_list_box_get_selected_row", c->widget); if (row) { event("value", api.call<int>("gtk_list_box_row_get_index", row), "onChange"); } }, true);
-            W scroll = api.call<W>("gtk_scrolled_window_new"); api.call("gtk_scrolled_window_set_child", scroll, w); api.call("gtk_widget_set_size_request", scroll, -1, a.value("height", "160").toInt()); c->container = scroll; return scroll;
+            W scroll = api.call<W>("gtk_scrolled_window_new"); api.call("gtk_scrolled_window_set_child", scroll, w); api.call("gtk_widget_set_size_request", scroll, -1, a.value("height", "160").toInt());
+            if (a.contains("tooltip")) { api.text(scroll, "gtk_widget_set_tooltip_text", a["tooltip"]); }
+            if (a.contains("accessibleName")) { api.call("gtk_accessible_update_property", w, 4, a["accessibleName"].toUtf8().constData(), -1); }
+            c->container = scroll; return scroll;
         } else if (tag == "Table") {
             QList<QByteArray> rows; std::vector<const char*> strings;
             for (const QString& row : a.value("rows").split('\n')) { rows.append(row.toUtf8()); }
@@ -198,11 +201,20 @@ public:
                 W col = api.call<W>("gtk_column_view_column_new", heading.toUtf8().constData(), factory); api.call("gtk_column_view_column_set_expand", col, 1); api.call("gtk_column_view_append_column", w, col); api.call("g_object_unref", col);
             }
             connect(c, "notify::selected", [this, c, event] { unsigned selection = api.call<unsigned>("gtk_single_selection_get_selected", c->buffer); if (selection < 32768) { event("value", int(selection), "onChange"); } }, true);
-            W scroll = api.call<W>("gtk_scrolled_window_new"); api.call("gtk_scrolled_window_set_child", scroll, w); api.call("gtk_widget_set_size_request", scroll, -1, a.value("height", "160").toInt()); c->container = scroll; return scroll;
+            W scroll = api.call<W>("gtk_scrolled_window_new"); api.call("gtk_scrolled_window_set_child", scroll, w); api.call("gtk_widget_set_size_request", scroll, -1, a.value("height", "160").toInt());
+            if (a.contains("tooltip")) { api.text(scroll, "gtk_widget_set_tooltip_text", a["tooltip"]); }
+            if (a.contains("accessibleName")) { api.call("gtk_accessible_update_property", w, 4, a["accessibleName"].toUtf8().constData(), -1); }
+            c->container = scroll; return scroll;
         } else if (tag == "Image") {
             int height = a.value("height", "72").toInt();
-            W bitmap = api.call<W>("gdk_pixbuf_new_from_file_at_scale", document.resourcePath(a.value("source")).toUtf8().constData(), -1, height, 1, nullptr);
-            if (!bitmap) { throw std::runtime_error("cannot decode image asset"); }
+            struct GErrorValue { unsigned domain; int code; char* message; };
+            GErrorValue* decodeError = nullptr;
+            W bitmap = api.call<W>("gdk_pixbuf_new_from_file_at_scale", document.resourcePath(a.value("source")).toUtf8().constData(), -1, height, 1, &decodeError);
+            if (!bitmap) {
+                QString detail = decodeError && decodeError->message ? QString::fromUtf8(decodeError->message) : "unknown decoder error";
+                if (decodeError) { api.call("g_error_free", decodeError); }
+                throw std::runtime_error(("cannot decode image asset: " + detail).toStdString());
+            }
             W texture = api.call<W>("gdk_texture_new_for_pixbuf", bitmap); api.call("g_object_unref", bitmap);
             w = api.call<W>("gtk_picture_new_for_paintable", texture); api.call("g_object_unref", texture);
             api.call("gtk_picture_set_can_shrink", w, 1);
@@ -236,6 +248,8 @@ public:
             api.call("gtk_widget_set_hexpand", viewport, 1);
             api.call("gtk_widget_set_valign", viewport, 1);
             rows.append({w, viewport, &node, 1, homogeneous});
+            if (a.contains("tooltip")) { api.text(viewport, "gtk_widget_set_tooltip_text", a["tooltip"]); }
+            if (a.contains("accessibleName")) { api.call("gtk_accessible_update_property", viewport, 4, a["accessibleName"].toUtf8().constData(), -1); }
             c->widget = w; c->container = viewport; return viewport;
         } else if (tag == "ColumnPanel" || tag == "Panel" || tag == "Tab") {
             W box = api.call<W>("gtk_box_new", 1, a.value("gap", "12").toInt());
@@ -279,9 +293,9 @@ public:
             w = api.call<W>("gtk_button_new_with_label", ""); c->widget = w;
             if (a.value("primary") == "true") { api.css(w, "suggested-action"); }
             connect(c, "clicked", [this, c] { QString handler = c->node->attributes.value("onClick"); if (!handler.isEmpty()) { bridge.dispatch(handler, c->node->id); } });
-        } else if (tag == "Input") {
-            w = api.call<W>("gtk_entry_new"); c->widget = w;
-            api.text(w, "gtk_entry_set_placeholder_text", a.value("placeholder"));
+        } else if (tag == "Input" || tag == "SearchInput") {
+            w = api.call<W>(tag == "SearchInput" ? "gtk_search_entry_new" : "gtk_entry_new"); c->widget = w;
+            api.text(w, tag == "SearchInput" ? "gtk_search_entry_set_placeholder_text" : "gtk_entry_set_placeholder_text", a.value("placeholder"));
             connect(c, "changed", [this, c, event] { event("text", QString::fromUtf8(api.call<const char*>("gtk_editable_get_text", c->widget)), "onChange"); });
             connect(c, "activate", [this, c] { QString handler = c->node->attributes.value("onSubmit"); if (!handler.isEmpty()) { bridge.dispatch(handler, c->node->id); } });
         } else if (tag == "TextArea") {
@@ -329,6 +343,7 @@ public:
         if (!w) { return nullptr; }
         c->widget = w;
         if (a.contains("accessibleName")) { api.call("gtk_accessible_update_property", w, 4, a["accessibleName"].toUtf8().constData(), -1); }
+        if (a.contains("tooltip")) { api.text(w, "gtk_widget_set_tooltip_text", a["tooltip"]); }
         api.call("gtk_widget_set_hexpand", w, a.value("fill", tag == "Button" || tag == "Spinner" ? "false" : "true") == "true" ? 1 : 0);
         api.call("gtk_widget_set_valign", w, 1);
         if (tag == "Image") { api.call("gtk_widget_set_hexpand", w, 0); }
@@ -373,7 +388,7 @@ public:
             api.call("gtk_widget_set_sensitive", c->widget, value("enabled").toBool() ? 1 : 0);
             if (tag == "Label") { api.text(c->widget, "gtk_label_set_text", value("text").toString()); }
             if (tag == "Button" || (tag == "MenuItem" && !c->node->attributes.contains("checked"))) { api.text(c->widget, "gtk_button_set_label", value("text").toString()); }
-            if (tag == "Input" && QString::fromUtf8(api.call<const char*>("gtk_editable_get_text", c->widget)) != value("text").toString()) { api.text(c->widget, "gtk_editable_set_text", value("text").toString()); }
+            if ((tag == "Input" || tag == "SearchInput") && QString::fromUtf8(api.call<const char*>("gtk_editable_get_text", c->widget)) != value("text").toString()) { api.text(c->widget, "gtk_editable_set_text", value("text").toString()); }
             if (tag == "TextArea") {
                 char* current = nullptr; api.call("g_object_get", c->buffer, "text", &current, nullptr);
                 if (QString::fromUtf8(current) != value("text").toString()) { api.call("gtk_text_buffer_set_text", c->buffer, value("text").toString().toUtf8().constData(), -1); }

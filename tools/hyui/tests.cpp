@@ -83,6 +83,22 @@ private slots:
         QVERIFY(!b.apply("HYUI\tSET\tradio\tvalue\t2\n"));
     }
 
+    void searchInputAndTooltipContract() {
+        hyui::Document d;
+        QVERIFY(d.parse(R"(<Window version="1"><SearchInput id="search" text="café" placeholder="Find" onChange="Search" onSubmit="Submit" tooltip="Search projects" accessibleName="Project search"/><Button id="go" text="Go" tooltip="Run search"/></Window>)"));
+        QCOMPARE(d.initialState["search.text"].toString(), "café");
+        QCOMPARE(d.window.children[0].attributes.value("tooltip"), "Search projects");
+        QVERIFY(d.handlers["Search"].contains("search"));
+        QVERIFY(d.handlers["Submit"].contains("search"));
+        hyui::Bridge bridge(d, {}, {});
+        QVERIFY(bridge.apply("HYUI\tSET\tsearch\ttext\tprojects\n"));
+        QCOMPARE(bridge.state()["search.text"].toString(), "projects");
+        QVERIFY(!bridge.apply("HYUI\tSET\tsearch\tvalue\t1\n"));
+        QVERIFY(!d.parse("<Window version=\"1\"><SearchInput search=\"unsafe\"/></Window>"));
+        QVERIFY(!d.parse("<Window version=\"1\"><SearchInput><Button/></SearchInput></Window>"));
+        QVERIFY(!d.parse("<Window version=\"1\" tooltip=\"invalid\"/>"));
+    }
+
     void callbacksUseArgumentVectors() {
         hyui::Document d;
         QVERIFY(d.parse("<Window version=\"1\"><Input id=\"name\"/><Label id=\"status\"/><Button id=\"go\" onClick=\"Submit\"/></Window>"));

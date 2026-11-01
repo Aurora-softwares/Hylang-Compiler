@@ -130,6 +130,13 @@ int main(int argc, char** argv) {
             NSScrollView* projects = (NSScrollView*)find(gallery, @"projects");
             [(NSTableView*)projects.documentView selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO]; finish();
             require(bridge.state()["selectionText.text"].toString() == "Project index: 1", "table event failed");
+            NSSearchField* search = (NSSearchField*)find(gallery, @"templateSearch");
+            require([search isKindOfClass:NSSearchField.class] && !search.hidden, "SearchInput must use a visible NSSearchField");
+            require([search.toolTip isEqualToString:@"Enter a template search term"], "native search tooltip is missing");
+            search.stringValue = @"café";
+            [search.delegate controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:search]]; finish();
+            require(bridge.state()["selectionText.text"].toString() == "Template search: café", "SearchInput event failed");
+            require([find(gallery, @"save").toolTip isEqualToString:@"Write the current plan to the chosen path"], "native button tooltip is missing");
             [(NSButton*)find(gallery, @"showDialog") performClick:nil]; finish(); app.processEvents(); view->pump();
             NSWindow* window = NSApp.windows.firstObject;
             if (!window.attachedSheet) { for (NSWindow* candidate in NSApp.windows) { if (candidate.attachedSheet) { window = candidate; break; } } }

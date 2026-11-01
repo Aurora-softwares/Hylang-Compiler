@@ -13,7 +13,13 @@ namespace HydrogenStudio {
             if (handler == "ShowControls") { Application.SetValue("pages", 1); }
             if (handler == "ShowWorkspace") { Application.SetValue("pages", 0); }
             if (handler == "About") { Application.SetOpen("about", true); }
-            if (handler == "ChooseTemplate") { Application.SetText("selectionText", "Template index: " + Application.Value(args, "templates")); }
+            if (handler == "ChooseTemplate") {
+                Application.SetText("selectionText", "Template index: " + Application.Value(args, "templates"));
+                Application.SetVisible("templateSearch", true);
+            }
+            if (handler == "SearchTemplates" || handler == "SubmitSearch") {
+                Application.SetText("selectionText", "Template search: " + Application.Value(args, "templateSearch"));
+            }
             if (handler == "ChooseProject") { Application.SetText("selectionText", "Project index: " + Application.Value(args, "projects")); }
             if (handler == "ChooseChannel") {
                 string channel = "Stable";

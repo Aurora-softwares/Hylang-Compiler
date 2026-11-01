@@ -76,7 +76,9 @@ with tempfile.TemporaryDirectory(prefix="hydrogen native package ' ") as tempora
     shutil.move(output, relocated / "Studio")
     shutil.move(runtime, relocated / "Studio.runtime")
     shutil.rmtree(source)
-    clean = dict(env, PATH="/nonexistent", QT_PLUGIN_PATH="/nonexistent", QML_IMPORT_PATH="/nonexistent")
+    # Keep OS helpers available: modern GTK image decoding may invoke Glycin
+    # through bubblewrap. The build-tree Hydrogen compiler is still absent.
+    clean = dict(env, PATH="/usr/bin:/bin", QT_PLUGIN_PATH="/nonexistent", QML_IMPORT_PATH="/nonexistent")
     state = root / "state.json"
     screenshot = root / "native.png"
     run(relocated / "Studio", "--state-output", state, "--screenshot", screenshot, cwd="/", environment=clean)
