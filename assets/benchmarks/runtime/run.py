@@ -115,7 +115,7 @@ def main() -> None:
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=180)
-    parser.add_argument("--native", type=Path, default=ROOT / "build/self_hosting/hydrogen-stage3")
+    parser.add_argument("--native", type=Path, default=ROOT / "build/self_hosting/hydrogen-stage1")
     parser.add_argument("--sdk", type=Path, default=ROOT / "build/hy")
     parser.add_argument("--cc", default="cc")
     parser.add_argument("--cxx", default="c++")
