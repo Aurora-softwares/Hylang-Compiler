@@ -1,0 +1,929 @@
+{
+  "binaries": {
+    "baseline": "c81d3f298d060361c41b94696c816d73a0c40db1a7a623678be3d245e850d503",
+    "candidate": "b5831694072dde8b99e91d1773a0dd1434fb08940ff8ac02306835294e489196"
+  },
+  "cases": {
+    "20000": {
+      "baseline_median_ms": 2.9927599999999996,
+      "candidate_median_ms": 2.805682,
+      "candidate_faster_pairs": 102,
+      "pairs": 150,
+      "samples_ms": [
+        {
+          "baseline": 3.07558,
+          "candidate": 2.831115
+        },
+        {
+          "baseline": 2.513275,
+          "candidate": 2.837315
+        },
+        {
+          "candidate": 2.428891,
+          "baseline": 2.893219
+        },
+        {
+          "baseline": 2.724032,
+          "candidate": 3.659604
+        },
+        {
+          "baseline": 3.592616,
+          "candidate": 3.077458
+        },
+        {
+          "baseline": 3.069205,
+          "candidate": 2.99487
+        },
+        {
+          "baseline": 2.566794,
+          "candidate": 2.306734
+        },
+        {
+          "baseline": 3.066535,
+          "candidate": 2.480439
+        },
+        {
+          "baseline": 3.469788,
+          "candidate": 3.397182
+        },
+        {
+          "candidate": 3.377496,
+          "baseline": 2.923986
+        },
+        {
+          "candidate": 3.706991,
+          "baseline": 2.768754
+        },
+        {
+          "baseline": 2.412742,
+          "candidate": 3.197182
+        },
+        {
+          "candidate": 3.330642,
+          "baseline": 2.524414
+        },
+        {
+          "candidate": 4.091347,
+          "baseline": 3.087896
+        },
+        {
+          "baseline": 2.972026,
+          "candidate": 3.432526
+        },
+        {
+          "candidate": 2.979693,
+          "baseline": 2.475091
+        },
+        {
+          "baseline": 2.404456,
+          "candidate": 3.08625
+        },
+        {
+          "candidate": 2.636172,
+          "baseline": 2.729669
+        },
+        {
+          "candidate": 3.261129,
+          "baseline": 3.204227
+        },
+        {
+          "baseline": 3.085711,
+          "candidate": 3.501801
+        },
+        {
+          "baseline": 2.995952,
+          "candidate": 2.439094
+        },
+        {
+          "candidate": 2.317388,
+          "baseline": 3.343271
+        },
+        {
+          "baseline": 2.687709,
+          "candidate": 2.841722
+        },
+        {
+          "baseline": 2.517214,
+          "candidate": 2.516068
+        },
+        {
+          "baseline": 2.521807,
+          "candidate": 2.640535
+        },
+        {
+          "candidate": 2.434731,
+          "baseline": 2.457199
+        },
+        {
+          "baseline": 3.135315,
+          "candidate": 2.518568
+        },
+        {
+          "baseline": 2.520077,
+          "candidate": 3.057706
+        },
+        {
+          "baseline": 2.645493,
+          "candidate": 2.37153
+        },
+        {
+          "candidate": 2.221932,
+          "baseline": 2.568482
+        },
+        {
+          "candidate": 2.470641,
+          "baseline": 3.082536
+        },
+        {
+          "candidate": 2.42107,
+          "baseline": 2.536262
+        },
+        {
+          "baseline": 2.581902,
+          "candidate": 3.113618
+        },
+        {
+          "candidate": 2.89801,
+          "baseline": 4.219939
+        },
+        {
+          "baseline": 3.409627,
+          "candidate": 3.881975
+        },
+        {
+          "baseline": 2.857215,
+          "candidate": 2.921827
+        },
+        {
+          "candidate": 2.688445,
+          "baseline": 3.454241
+        },
+        {
+          "baseline": 3.49317,
+          "candidate": 3.310872
+        },
+        {
+          "candidate": 3.113289,
+          "baseline": 4.381743
+        },
+        {
+          "candidate": 2.816352,
+          "baseline": 4.301215
+        },
+        {
+          "candidate": 2.737044,
+          "baseline": 3.025489
+        },
+        {
+          "candidate": 2.773051,
+          "baseline": 3.074084
+        },
+        {
+          "candidate": 2.8613,
+          "baseline": 3.464078
+        },
+        {
+          "baseline": 3.410668,
+          "candidate": 3.013245
+        },
+        {
+          "candidate": 2.870773,
+          "baseline": 3.059221
+        },
+        {
+          "candidate": 3.111887,
+          "baseline": 5.479255
+        },
+        {
+          "baseline": 3.51921,
+          "candidate": 5.304604
+        },
+        {
+          "baseline": 2.937374,
+          "candidate": 3.348068
+        },
+        {
+          "candidate": 2.661855,
+          "baseline": 2.467772
+        },
+        {
+          "baseline": 2.362314,
+          "candidate": 2.163071
+        },
+        {
+          "baseline": 2.565523,
+          "candidate": 2.131915
+        },
+        {
+          "candidate": 2.162386,
+          "baseline": 3.175566
+        },
+        {
+          "baseline": 2.624307,
+          "candidate": 2.267435
+        },
+        {
+          "candidate": 2.136335,
+          "baseline": 2.76785
+        },
+        {
+          "baseline": 2.592946,
+          "candidate": 2.795012
+        },
+        {
+          "baseline": 2.437902,
+          "candidate": 2.345941
+        },
+        {
+          "candidate": 2.175894,
+          "baseline": 2.56281
+        },
+        {
+          "baseline": 2.308157,
+          "candidate": 2.092011
+        },
+        {
+          "baseline": 2.289967,
+          "candidate": 3.746173
+        },
+        {
+          "candidate": 3.115466,
+          "baseline": 4.366121
+        },
+        {
+          "baseline": 3.905231,
+          "candidate": 3.116526
+        },
+        {
+          "candidate": 3.965674,
+          "baseline": 3.276942
+        },
+        {
+          "candidate": 2.898557,
+          "baseline": 3.24735
+        },
+        {
+          "candidate": 2.400061,
+          "baseline": 3.742153
+        },
+        {
+          "candidate": 2.458815,
+          "baseline": 2.989568
+        },
+        {
+          "baseline": 3.373919,
+          "candidate": 3.316821
+        },
+        {
+          "baseline": 3.020531,
+          "candidate": 3.022719
+        },
+        {
+          "candidate": 2.780275,
+          "baseline": 2.437682
+        },
+        {
+          "candidate": 3.258443,
+          "baseline": 2.596292
+        },
+        {
+          "candidate": 2.977492,
+          "baseline": 2.54547
+        },
+        {
+          "candidate": 2.476266,
+          "baseline": 3.101513
+        },
+        {
+          "candidate": 2.695256,
+          "baseline": 3.436852
+        },
+        {
+          "candidate": 3.318116,
+          "baseline": 3.290091
+        },
+        {
+          "baseline": 2.511698,
+          "candidate": 2.885422
+        },
+        {
+          "baseline": 2.700029,
+          "candidate": 2.301859
+        },
+        {
+          "candidate": 3.131884,
+          "baseline": 2.672078
+        },
+        {
+          "candidate": 4.783616,
+          "baseline": 4.397457
+        },
+        {
+          "baseline": 3.376361,
+          "candidate": 2.56709
+        },
+        {
+          "baseline": 3.401824,
+          "candidate": 2.445993
+        },
+        {
+          "baseline": 3.361595,
+          "candidate": 2.944731
+        },
+        {
+          "baseline": 3.203132,
+          "candidate": 2.962086
+        },
+        {
+          "baseline": 3.071201,
+          "candidate": 2.547892
+        },
+        {
+          "candidate": 3.43267,
+          "baseline": 3.100204
+        },
+        {
+          "baseline": 3.282494,
+          "candidate": 2.738861
+        },
+        {
+          "candidate": 2.652181,
+          "baseline": 2.769489
+        },
+        {
+          "baseline": 2.424967,
+          "candidate": 2.90374
+        },
+        {
+          "baseline": 3.296634,
+          "candidate": 3.083434
+        },
+        {
+          "candidate": 3.649226,
+          "baseline": 3.572639
+        },
+        {
+          "candidate": 3.136947,
+          "baseline": 3.330075
+        },
+        {
+          "candidate": 2.852928,
+          "baseline": 2.419293
+        },
+        {
+          "baseline": 2.859872,
+          "candidate": 2.580193
+        },
+        {
+          "candidate": 2.606368,
+          "baseline": 3.104745
+        },
+        {
+          "candidate": 3.278023,
+          "baseline": 3.586548
+        },
+        {
+          "baseline": 3.785075,
+          "candidate": 2.605982
+        },
+        {
+          "candidate": 2.428376,
+          "baseline": 2.497972
+        },
+        {
+          "baseline": 2.714472,
+          "candidate": 2.448273
+        },
+        {
+          "baseline": 2.512191,
+          "candidate": 2.477442
+        },
+        {
+          "candidate": 2.250767,
+          "baseline": 2.501835
+        },
+        {
+          "candidate": 2.34431,
+          "baseline": 2.698732
+        },
+        {
+          "candidate": 2.557883,
+          "baseline": 2.768757
+        },
+        {
+          "candidate": 2.424038,
+          "baseline": 2.628161
+        },
+        {
+          "candidate": 3.03915,
+          "baseline": 2.705257
+        },
+        {
+          "candidate": 2.606823,
+          "baseline": 2.779233
+        },
+        {
+          "candidate": 2.358578,
+          "baseline": 2.986064
+        },
+        {
+          "candidate": 2.599997,
+          "baseline": 2.65424
+        },
+        {
+          "candidate": 3.711751,
+          "baseline": 3.897357
+        },
+        {
+          "candidate": 2.640468,
+          "baseline": 2.45055
+        },
+        {
+          "baseline": 3.25431,
+          "candidate": 2.78811
+        },
+        {
+          "candidate": 2.313251,
+          "baseline": 2.494786
+        },
+        {
+          "baseline": 2.94211,
+          "candidate": 3.83432
+        },
+        {
+          "candidate": 2.54759,
+          "baseline": 3.373905
+        },
+        {
+          "candidate": 3.379306,
+          "baseline": 3.104932
+        },
+        {
+          "candidate": 3.191333,
+          "baseline": 3.758881
+        },
+        {
+          "candidate": 2.328432,
+          "baseline": 2.443246
+        },
+        {
+          "candidate": 3.54439,
+          "baseline": 2.953412
+        },
+        {
+          "candidate": 2.340346,
+          "baseline": 2.390809
+        },
+        {
+          "baseline": 2.850964,
+          "candidate": 2.568328
+        },
+        {
+          "candidate": 2.660189,
+          "baseline": 3.091405
+        },
+        {
+          "candidate": 3.442979,
+          "baseline": 3.730066
+        },
+        {
+          "candidate": 2.577767,
+          "baseline": 3.828363
+        },
+        {
+          "baseline": 2.911312,
+          "candidate": 3.025794
+        },
+        {
+          "candidate": 2.613311,
+          "baseline": 3.706833
+        },
+        {
+          "baseline": 3.597548,
+          "candidate": 3.20818
+        },
+        {
+          "candidate": 3.362943,
+          "baseline": 3.524962
+        },
+        {
+          "candidate": 2.680138,
+          "baseline": 2.640563
+        },
+        {
+          "candidate": 2.659286,
+          "baseline": 2.659611
+        },
+        {
+          "baseline": 2.472092,
+          "candidate": 2.415957
+        },
+        {
+          "baseline": 3.929758,
+          "candidate": 3.526975
+        },
+        {
+          "baseline": 2.701358,
+          "candidate": 3.136714
+        },
+        {
+          "candidate": 2.478518,
+          "baseline": 2.504882
+        },
+        {
+          "candidate": 2.532743,
+          "baseline": 3.276211
+        },
+        {
+          "baseline": 2.466223,
+          "candidate": 2.407768
+        },
+        {
+          "candidate": 2.897006,
+          "baseline": 2.460345
+        },
+        {
+          "candidate": 3.160157,
+          "baseline": 3.188109
+        },
+        {
+          "baseline": 3.323746,
+          "candidate": 3.180684
+        },
+        {
+          "candidate": 3.580334,
+          "baseline": 4.386645
+        },
+        {
+          "baseline": 3.226543,
+          "candidate": 3.764811
+        },
+        {
+          "baseline": 3.030267,
+          "candidate": 2.581879
+        },
+        {
+          "baseline": 3.591271,
+          "candidate": 3.191294
+        },
+        {
+          "candidate": 2.889326,
+          "baseline": 2.672034
+        },
+        {
+          "candidate": 2.142737,
+          "baseline": 2.322191
+        },
+        {
+          "candidate": 2.101686,
+          "baseline": 2.281373
+        },
+        {
+          "candidate": 2.097988,
+          "baseline": 3.301894
+        },
+        {
+          "candidate": 2.31749,
+          "baseline": 2.810884
+        },
+        {
+          "baseline": 2.833182,
+          "candidate": 3.217613
+        },
+        {
+          "baseline": 3.421418,
+          "candidate": 2.969719
+        },
+        {
+          "candidate": 2.353483,
+          "baseline": 3.358019
+        },
+        {
+          "baseline": 3.197844,
+          "candidate": 2.437971
+        },
+        {
+          "candidate": 3.122751,
+          "baseline": 3.411069
+        },
+        {
+          "candidate": 2.389344,
+          "baseline": 3.44889
+        }
+      ]
+    },
+    "100000": {
+      "baseline_median_ms": 15.429833,
+      "candidate_median_ms": 14.911024,
+      "candidate_faster_pairs": 49,
+      "pairs": 75,
+      "samples_ms": [
+        {
+          "baseline": 16.467756,
+          "candidate": 15.480457
+        },
+        {
+          "baseline": 17.295256,
+          "candidate": 14.36163
+        },
+        {
+          "candidate": 14.839091,
+          "baseline": 14.509933
+        },
+        {
+          "baseline": 15.763746,
+          "candidate": 15.546242
+        },
+        {
+          "baseline": 15.926166,
+          "candidate": 14.579743
+        },
+        {
+          "baseline": 14.568506,
+          "candidate": 15.696714
+        },
+        {
+          "baseline": 15.218611,
+          "candidate": 16.310142
+        },
+        {
+          "baseline": 14.851095,
+          "candidate": 15.663192
+        },
+        {
+          "baseline": 14.095011,
+          "candidate": 14.133576
+        },
+        {
+          "candidate": 18.894574,
+          "baseline": 16.104807
+        },
+        {
+          "candidate": 15.073429,
+          "baseline": 14.698231
+        },
+        {
+          "baseline": 14.558587,
+          "candidate": 14.143358
+        },
+        {
+          "candidate": 15.846791,
+          "baseline": 14.758577
+        },
+        {
+          "candidate": 16.785705,
+          "baseline": 15.839217
+        },
+        {
+          "baseline": 16.980254,
+          "candidate": 18.059235
+        },
+        {
+          "candidate": 15.063163,
+          "baseline": 15.268426
+        },
+        {
+          "baseline": 16.759776,
+          "candidate": 14.770787
+        },
+        {
+          "candidate": 13.117245,
+          "baseline": 15.176238
+        },
+        {
+          "candidate": 14.712354,
+          "baseline": 15.740936
+        },
+        {
+          "baseline": 14.664276,
+          "candidate": 16.278896
+        },
+        {
+          "baseline": 18.412313,
+          "candidate": 15.323572
+        },
+        {
+          "candidate": 16.121702,
+          "baseline": 15.32948
+        },
+        {
+          "baseline": 16.306841,
+          "candidate": 15.337794
+        },
+        {
+          "baseline": 14.028766,
+          "candidate": 12.883088
+        },
+        {
+          "baseline": 14.931732,
+          "candidate": 13.312098
+        },
+        {
+          "candidate": 14.344196,
+          "baseline": 13.977301
+        },
+        {
+          "baseline": 17.893596,
+          "candidate": 15.414727
+        },
+        {
+          "baseline": 16.702866,
+          "candidate": 14.298477
+        },
+        {
+          "baseline": 16.454141,
+          "candidate": 15.564331
+        },
+        {
+          "candidate": 14.399623,
+          "baseline": 15.429833
+        },
+        {
+          "candidate": 14.638647,
+          "baseline": 15.069303
+        },
+        {
+          "candidate": 15.309297,
+          "baseline": 19.410543
+        },
+        {
+          "baseline": 15.187467,
+          "candidate": 15.199863
+        },
+        {
+          "candidate": 13.636717,
+          "baseline": 16.1974
+        },
+        {
+          "baseline": 14.643636,
+          "candidate": 14.987822
+        },
+        {
+          "baseline": 14.572188,
+          "candidate": 14.313864
+        },
+        {
+          "candidate": 15.658803,
+          "baseline": 16.03666
+        },
+        {
+          "baseline": 15.122305,
+          "candidate": 14.472084
+        },
+        {
+          "candidate": 15.455478,
+          "baseline": 14.337293
+        },
+        {
+          "candidate": 15.075656,
+          "baseline": 15.507921
+        },
+        {
+          "candidate": 14.967503,
+          "baseline": 15.337071
+        },
+        {
+          "candidate": 14.853277,
+          "baseline": 15.52408
+        },
+        {
+          "candidate": 13.790095,
+          "baseline": 17.089142
+        },
+        {
+          "baseline": 16.600489,
+          "candidate": 14.995028
+        },
+        {
+          "candidate": 14.815749,
+          "baseline": 15.588077
+        },
+        {
+          "candidate": 13.548607,
+          "baseline": 14.961577
+        },
+        {
+          "baseline": 15.932921,
+          "candidate": 13.871478
+        },
+        {
+          "baseline": 15.496508,
+          "candidate": 13.91283
+        },
+        {
+          "candidate": 14.417447,
+          "baseline": 16.38017
+        },
+        {
+          "baseline": 17.18762,
+          "candidate": 13.326473
+        },
+        {
+          "baseline": 16.166335,
+          "candidate": 14.681767
+        },
+        {
+          "candidate": 15.759155,
+          "baseline": 15.035592
+        },
+        {
+          "baseline": 15.651696,
+          "candidate": 14.765861
+        },
+        {
+          "candidate": 15.010261,
+          "baseline": 16.276349
+        },
+        {
+          "baseline": 14.461322,
+          "candidate": 17.474276
+        },
+        {
+          "baseline": 14.175536,
+          "candidate": 14.812628
+        },
+        {
+          "candidate": 13.687458,
+          "baseline": 15.52703
+        },
+        {
+          "baseline": 14.630296,
+          "candidate": 13.789773
+        },
+        {
+          "baseline": 14.581683,
+          "candidate": 13.922846
+        },
+        {
+          "candidate": 15.505319,
+          "baseline": 14.538627
+        },
+        {
+          "baseline": 16.771911,
+          "candidate": 14.151407
+        },
+        {
+          "candidate": 14.628736,
+          "baseline": 15.011584
+        },
+        {
+          "candidate": 13.825681,
+          "baseline": 16.116736
+        },
+        {
+          "candidate": 14.911024,
+          "baseline": 14.591821
+        },
+        {
+          "candidate": 13.222755,
+          "baseline": 15.548847
+        },
+        {
+          "baseline": 13.878435,
+          "candidate": 13.817669
+        },
+        {
+          "baseline": 16.955492,
+          "candidate": 15.27838
+        },
+        {
+          "candidate": 13.499879,
+          "baseline": 15.780357
+        },
+        {
+          "candidate": 16.231682,
+          "baseline": 14.132864
+        },
+        {
+          "candidate": 15.124178,
+          "baseline": 16.464817
+        },
+        {
+          "candidate": 15.199368,
+          "baseline": 14.838851
+        },
+        {
+          "candidate": 14.995307,
+          "baseline": 16.070908
+        },
+        {
+          "candidate": 15.567058,
+          "baseline": 14.361004
+        },
+        {
+          "baseline": 14.517305,
+          "candidate": 16.060835
+        },
+        {
+          "baseline": 15.245965,
+          "candidate": 16.400763
+        }
+      ]
+    }
+  },
+  "compiler_sha256": {
+    "candidate": "33229c4659127351219317a35d515e45cf75e4a697c2df286478a127ffe4db77"
+  },
+  "source_sha256": "636959c8dcd1741813cada9b015d10e81c0cba7b461261675df782c2971d151a",
+  "method": "Alternating randomized whole-process pairs; exact stdout, empty stderr, and successful exit checked for every run; five warmups per executable."
+}

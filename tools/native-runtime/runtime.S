@@ -95,7 +95,7 @@ rt_alloc:
  ja .small_full
  lea rdx,[r13+rcx]
  mov [r13+24],r8
- jmp .small_slot
+ jmp .small_fresh_slot
 .small_reuse:
  mov rcx,[rdx]
  mov [r13+32],rcx
@@ -119,14 +119,18 @@ rt_alloc:
  add qword ptr [r15+8],4096
  jmp .small_span
 .small_slot:
- # Reused slots must be zeroed before array/object/string initialization.
+ # Reused slots must be zeroed through the requested payload. The collector
+ # scans only payload bytes, so unused class capacity needs no clearing.
  push rdx
  mov rdi,rdx
- mov rcx,r12
+ mov rcx,[rsp+64]
+ add rcx,48+7
  shr rcx,3
  xor eax,eax
  rep stosq
  pop rdx
+.small_fresh_slot:
+ # Bump slots come from untouched, zero-filled mmap pages.
  mov rcx,[r15]
  mov [rdx],rcx
  mov [r15],rdx

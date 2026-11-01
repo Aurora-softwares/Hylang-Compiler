@@ -4,6 +4,11 @@ public class Link {
     public Link(int input, Link tail) { value = input; next = tail; }
 }
 
+public class PlainLink {
+    public int value;
+    public PlainLink next;
+}
+
 public class Program {
     public static int Main() {
         Link head = null;
@@ -28,6 +33,23 @@ public class Program {
         current = null;
         System.Runtime.GC.Collect();
         if (System.Runtime.GC.GetAllocatedBytes() > 262144) { return 94; }
+        PlainLink survivor = new PlainLink();
+        survivor.value = 7;
+        i = 0;
+        while (i < 1000) {
+            PlainLink temporary = new PlainLink();
+            temporary.value = 99;
+            temporary.next = survivor;
+            i = i + 1;
+        }
+        System.Runtime.GC.Collect();
+        i = 0;
+        while (i < 1000) {
+            PlainLink reused = new PlainLink();
+            if (reused.value != 0 || reused.next != null) { return 95; }
+            i = i + 1;
+        }
+        if (survivor.value != 7) { return 96; }
         System.Console.WriteLine("small spans ok");
         return 42;
     }
