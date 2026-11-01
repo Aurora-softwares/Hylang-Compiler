@@ -118,7 +118,10 @@ public sealed partial class NativeWindow : Window
         string tag = node.Name.LocalName, id = Attr(node, "id", "_hyui" + nodes.Count);
         if (nodes.Count > 512 || node.Ancestors().Count() > 32 || nodes.ContainsKey(id)) throw new InvalidDataException("Duplicate control or excessive document size");
         nodes[id] = node;
-        foreach (string prop in new[] { "text", "value", "checked", "running", "indeterminate", "enabled", "visible", "open" }) values[id + "." + prop] = Attr(node, prop, prop is "enabled" or "visible" ? "true" : prop == "value" ? "0" : prop == "text" ? "" : prop == "running" && tag == "Spinner" ? "true" : "false");
+        foreach (string prop in new[] { "text", "value", "checked", "running", "indeterminate", "enabled", "visible", "open" }) {
+            if (tag == "PasswordInput" && (prop == "text" || prop == "value")) continue;
+            values[id + "." + prop] = Attr(node, prop, prop is "enabled" or "visible" ? "true" : prop == "value" ? "0" : prop == "text" ? "" : prop == "running" && tag == "Spinner" ? "true" : "false");
+        }
         FrameworkElement? element;
         void Changed(string property, string value, string action = "onChange") { if (applying || (property == "value" && value == "-1") || values.GetValueOrDefault(id + "." + property) == value) return; values[id + "." + property] = value; if (node.Attribute(action) != null) Dispatch(Attr(node, action), id); }
         if (tag is "State" or "Dialog") return null;
@@ -195,6 +198,14 @@ public sealed partial class NativeWindow : Window
             search.RegisterPropertyChangedCallback(AutoSuggestBox.TextProperty, (_, _) => Changed("text", search.Text));
             search.QuerySubmitted += (_, _) => { if (node.Attribute("onSubmit") != null) Dispatch(Attr(node, "onSubmit"), id); };
             element = search;
+        } else if (tag == "PasswordInput") {
+            var password = new PasswordBox { PlaceholderText = Attr(node, "placeholder") };
+            password.PasswordChanged += (_, _) => {
+                if (password.Password.Length > 16384) { errors.Text = "PasswordInput exceeds 16 KiB"; return; }
+                if (node.Attribute("onChange") != null) Dispatch(Attr(node, "onChange"), id);
+            };
+            password.KeyDown += (_, e) => { if (e.Key == Windows.System.VirtualKey.Enter && node.Attribute("onSubmit") != null) Dispatch(Attr(node, "onSubmit"), id); };
+            element = password;
         } else if (tag is "Input" or "TextArea") {
             var input = new TextBox { Text = Attr(node, "text"), PlaceholderText = Attr(node, "placeholder"), AcceptsReturn = tag == "TextArea", TextWrapping = tag == "TextArea" ? TextWrapping.Wrap : TextWrapping.NoWrap };
             if (tag == "TextArea") input.MinHeight = Number(node, "height", 100);
@@ -253,11 +264,21 @@ public sealed partial class NativeWindow : Window
             var next = pending.Dequeue(); var arguments = new List<string> { "--hyui-event", next.Handler, next.Sender };
             if (nodes[next.Sender].Name == "Timer" && values.GetValueOrDefault(next.Sender + ".running") != "true") continue;
             foreach (var pair in nodes) {
+                if (pair.Value.Name.LocalName == "PasswordInput") continue;
                 string property = pair.Value.Name.LocalName is "State" or "Select" or "NumberInput" or "ProgressBar" or "Slider" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "Switch" or "MenuItem" ? "checked" : "text";
                 arguments.Add(pair.Key); arguments.Add(values.GetValueOrDefault(pair.Key + "." + property, ""));
             }
             if (arguments.Sum(a => a.Length) > 24000) throw new InvalidOperationException("Value snapshot too large");
-            Apply(await Run(arguments));
+            string? secretPath = null;
+            try {
+                if (controls.GetValueOrDefault(next.Sender) is PasswordBox password) {
+                    if (System.Text.Encoding.UTF8.GetByteCount(password.Password) > 16384) throw new InvalidDataException("PasswordInput exceeds 16 KiB");
+                    secretPath = Path.GetTempFileName();
+                    File.WriteAllText(secretPath, password.Password, new System.Text.UTF8Encoding(false));
+                    arguments.Add("--hyui-secret:" + next.Sender); arguments.Add(secretPath);
+                }
+                Apply(await Run(arguments));
+            } finally { if (secretPath != null) File.Delete(secretPath); }
         } } catch (Exception error) { errors.Text = error.Message; } finally { busy = false; }
     }
     async void ShowDialogs() {

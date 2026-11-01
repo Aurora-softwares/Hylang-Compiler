@@ -25,6 +25,7 @@ public:
     QVariantMap initialState;
     QMap<QString, QSet<QString>> properties;
     QMap<QString, QSet<QString>> handlers;
+    QSet<QString> secretInputs;
     QMap<QString, QPair<int, int>> ranges;
 };
 }

@@ -136,6 +136,17 @@ int main(int argc, char** argv) {
             search.stringValue = @"café";
             [search.delegate controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:search]]; finish();
             require(bridge.state()["selectionText.text"].toString().normalized(QString::NormalizationForm_C) == QString("Template search: café").normalized(QString::NormalizationForm_C), "SearchInput event failed");
+            NSSecureTextField* password = (NSSecureTextField*)find(gallery, @"templatePassword");
+            require([password isKindOfClass:NSSecureTextField.class] && !password.hidden, "PasswordInput must use NSSecureTextField");
+            password.stringValue = @"gallery-pass";
+            [password.delegate controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:password]];
+            finish(); require(bridge.state()["selectionText.text"].toString() == "Private code length: 12", "PasswordInput change event failed");
+            [password sendAction:password.action to:password.target]; finish();
+            require(bridge.state()["selectionText.text"].toString() == "Private code accepted.", "PasswordInput event failed");
+            require(!bridge.state().contains("templatePassword.text") && !bridge.state().contains("templatePassword.value"), "password leaked into UI state");
+            require(bridge.apply("HYUI\tSET\ttemplatePassword\tenabled\tfalse\nHYUI\tSET\ttemplatePassword\tvisible\tfalse\n"), "cannot disable or hide PasswordInput");
+            require(!password.enabled && password.hidden, "PasswordInput state did not reach AppKit");
+            require(bridge.apply("HYUI\tSET\ttemplatePassword\tenabled\ttrue\nHYUI\tSET\ttemplatePassword\tvisible\ttrue\n"), "cannot restore PasswordInput");
             require([find(gallery, @"save").toolTip isEqualToString:@"Write the current plan to the chosen path"], "native button tooltip is missing");
             NSScrollView* details = (NSScrollView*)find(gallery, @"templateDetails");
             view->pump();

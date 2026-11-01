@@ -1,6 +1,7 @@
 #include "bridge.hpp"
 #include "document.hpp"
 #include <QCoreApplication>
+#include <QFile>
 #include <QtTest>
 #include <iostream>
 
@@ -117,6 +118,30 @@ private slots:
         QVERIFY(!d.parse("<Window version=\"1\"><ScrollView onScroll=\"Bad\"/></Window>"));
     }
 
+    void passwordInputUsesPrivateEventTransport() {
+        hyui::Document d;
+        QVERIFY(d.parse(R"(<Window version="1"><PasswordInput id="password" placeholder="Private code" onSubmit="Password" accessibleName="Private code"/><Label id="status" text="ready"/><Button id="go" onClick="CheckSecretSnapshot"/></Window>)"));
+        QVERIFY(d.secretInputs.contains("password"));
+        QVERIFY(!d.initialState.contains("password.text"));
+        QVERIFY(!d.properties["password"].contains("text"));
+        QVERIFY(!d.parse("<Window version=\"1\"><PasswordInput text=\"embedded secret\"/></Window>"));
+        QVERIFY(!d.parse("<Window version=\"1\"><PasswordInput value=\"1\"/></Window>"));
+        QVERIFY(!d.parse("<Window version=\"1\"><PasswordInput><Label/></PasswordInput></Window>"));
+        QVERIFY(d.parse(R"(<Window version="1"><PasswordInput id="password" onSubmit="Password"/><Label id="status" text="ready"/><Button id="go" onClick="CheckSecretSnapshot"/></Window>)"));
+        hyui::Bridge bridge(d, QCoreApplication::applicationFilePath(), QDir::currentPath());
+        bridge.storeSecret("password", "gallery-pass");
+        bridge.store("password", "text", "must not persist");
+        QVERIFY(!bridge.state().contains("password.text"));
+        bridge.dispatch("CheckSecretSnapshot", "go");
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 5000);
+        QCOMPARE(bridge.state()["status.text"].toString(), "no-secret");
+        bridge.dispatch("Password", "password");
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 5000);
+        QCOMPARE(bridge.error(), QString());
+        QCOMPARE(bridge.state()["status.text"].toString(), "accepted");
+        QVERIFY(!bridge.apply("HYUI\tSET\tpassword\ttext\tbad\n"));
+    }
+
     void callbacksUseArgumentVectors() {
         hyui::Document d;
         QVERIFY(d.parse("<Window version=\"1\"><Input id=\"name\"/><Label id=\"status\"/><Button id=\"go\" onClick=\"Submit\"/></Window>"));
@@ -139,6 +164,18 @@ private slots:
 int main(int argc, char** argv) {
     // A real child-process backend, also used to verify shell-free Unicode input.
     if (argc >= 4 && QByteArray(argv[1]) == "--hyui-event") {
+        if (QByteArray(argv[2]) == "Password" || QByteArray(argv[2]) == "CheckSecretSnapshot") {
+            QString result = "no-secret";
+            for (int i = 4; i + 1 < argc; i += 2) {
+                if (QByteArray(argv[i + 1]) == "gallery-pass") { result = "leaked-argument"; }
+                if (QByteArray(argv[i]) == "--hyui-secret:password") {
+                    QFile file(QString::fromUtf8(argv[i + 1]));
+                    result = file.open(QIODevice::ReadOnly) && file.readAll() == "gallery-pass" ? "accepted" : "rejected";
+                }
+            }
+            std::cout << "HYUI\tSET\tstatus\ttext\t" << result.toStdString() << '\n';
+            return 0;
+        }
         QString value;
         for (int i = 4; i + 1 < argc; i += 2) {
             if (QByteArray(argv[i]) == "name") { value = QString::fromUtf8(argv[i + 1]); }

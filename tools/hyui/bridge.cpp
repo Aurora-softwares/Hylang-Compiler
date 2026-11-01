@@ -16,6 +16,7 @@ Bridge::Bridge(const Document& doc, QString executable, QString cwd, QObject* pa
     });
     connect(&process, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
         timeout.stop();
+        eventSecret.reset();
         output += process.readAllStandardOutput(); errors += process.readAllStandardError();
         if (!overflow) {
             if (status != QProcess::NormalExit || code != 0) { fail("Hydrogen handler failed: " + QString::fromUtf8(errors.left(4096))); }
@@ -26,6 +27,7 @@ Bridge::Bridge(const Document& doc, QString executable, QString cwd, QObject* pa
     });
     connect(&process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart) {
+            eventSecret.reset();
             timeout.stop(); fail("Cannot start Hydrogen backend: " + process.errorString());
             active = false; emit busyChanged(); emit idle();
         }
@@ -45,6 +47,14 @@ void Bridge::store(const QString& id, const QString& property, const QVariant& v
     // Do not notify on a keystroke: the editor owns its cursor and selection.
     // Backend updates notify all declarative bindings after the response commits.
     values[id + "." + property] = value;
+}
+
+bool Bridge::storeSecret(const QString& id, const QString& value) {
+    if (!document.secretInputs.contains(id)) { return false; }
+    const QByteArray bytes = value.toUtf8();
+    if (bytes.size() > 16384) { secrets.remove(id); fail("PasswordInput exceeds 16 KiB"); return false; }
+    secrets[id] = value;
+    return true;
 }
 
 bool Bridge::apply(const QByteArray& response) {
@@ -113,6 +123,19 @@ void Bridge::next() {
         args << it.key() << value;
     }
     if (size > 24000) { fail("UI value snapshot exceeds 24000 characters"); pending.clear(); emit idle(); return; }
+    if (document.secretInputs.contains(event.second)) {
+        eventSecret = std::make_unique<QTemporaryFile>();
+        eventSecret->setAutoRemove(true);
+        if (!eventSecret->open() || !eventSecret->setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)) {
+            eventSecret.reset(); fail("Cannot create private password transport"); pending.clear(); emit idle(); return;
+        }
+        const QByteArray bytes = secrets.value(event.second).toUtf8();
+        if (eventSecret->write(bytes) != bytes.size() || !eventSecret->flush()) {
+            eventSecret.reset(); fail("Cannot write private password transport"); pending.clear(); emit idle(); return;
+        }
+        args << ("--hyui-secret:" + event.second) << eventSecret->fileName();
+        eventSecret->close();
+    }
     output.clear(); errors.clear(); overflow = false; active = true; emit busyChanged();
     process.setWorkingDirectory(directory);
     // QProcess receives an argument vector. User text never passes through a shell.

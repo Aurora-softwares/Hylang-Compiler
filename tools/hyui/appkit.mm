@@ -306,10 +306,22 @@ class AppKitView : public NativeView {
                     else if (node.attributes.contains("onClick")) { bridge.dispatch(node.attributes["onClick"], node.id); }
                 }); view = button; control = button;
             }
-        } else if (tag == "Input" || tag == "SearchInput" || tag == "NumberInput") {
-            NSTextField* input = tag == "SearchInput" ? (NSTextField*)[[[NSSearchField alloc] init] autorelease] : [[[NSTextField alloc] init] autorelease]; input.placeholderString = text(a.value("placeholder"));
-            input.delegate = action([this, &node, tag](id sender) { handleEvent(node, tag == "NumberInput" ? "value" : "text", tag == "NumberInput" ? QVariant(int([(NSTextField*)sender intValue])) : QVariant(string([(NSTextField*)sender stringValue])), "onChange"); });
-            input.target = action([this, &node](id) { if (node.attributes.contains("onSubmit")) { bridge.dispatch(node.attributes["onSubmit"], node.id); } }); input.action = @selector(fire:);
+        } else if (tag == "Input" || tag == "SearchInput" || tag == "PasswordInput" || tag == "NumberInput") {
+            NSTextField* input = tag == "SearchInput" ? (NSTextField*)[[[NSSearchField alloc] init] autorelease] : tag == "PasswordInput" ? (NSTextField*)[[[NSSecureTextField alloc] init] autorelease] : [[[NSTextField alloc] init] autorelease]; input.placeholderString = text(a.value("placeholder"));
+            input.delegate = action([this, &node, tag](id sender) {
+                if (tag == "PasswordInput") {
+                    if (!bridge.storeSecret(node.id, string([(NSTextField*)sender stringValue]))) { return; }
+                    if (node.attributes.contains("onChange")) { bridge.dispatch(node.attributes["onChange"], node.id); }
+                } else {
+                    handleEvent(node, tag == "NumberInput" ? "value" : "text", tag == "NumberInput" ? QVariant(int([(NSTextField*)sender intValue])) : QVariant(string([(NSTextField*)sender stringValue])), "onChange");
+                }
+            });
+            input.target = action([this, &node, input](id) {
+                if (node.attributes.contains("onSubmit")) {
+                    if (node.tag == "PasswordInput" && !bridge.storeSecret(node.id, string(input.stringValue))) { return; }
+                    bridge.dispatch(node.attributes["onSubmit"], node.id);
+                }
+            }); input.action = @selector(fire:);
             view = input; control = input;
             if (tag == "NumberInput") {
                 NSStepper* stepper = [[[NSStepper alloc] init] autorelease]; stepper.minValue = a.value("minimum", "0").toInt(); stepper.maxValue = a.value("maximum", "100").toInt(); stepper.increment = 1;

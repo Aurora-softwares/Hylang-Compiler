@@ -5,6 +5,8 @@
 #include <QProcess>
 #include <QQueue>
 #include <QTimer>
+#include <QTemporaryFile>
+#include <memory>
 
 namespace hyui {
 class Bridge : public QObject {
@@ -19,6 +21,7 @@ public:
     bool busy() const { return active; }
     QString executablePath() const { return backend; }
     Q_INVOKABLE void store(const QString& id, const QString& property, const QVariant& value);
+    bool storeSecret(const QString& id, const QString& value);
     Q_INVOKABLE void dispatch(const QString& handler, const QString& sender);
     Q_INVOKABLE bool isApplying() const { return applying; }
     bool apply(const QByteArray& response);
@@ -39,6 +42,8 @@ private:
     QTimer timeout;
     QByteArray output, errors;
     QQueue<QPair<QString, QString>> pending;
+    QMap<QString, QString> secrets;
+    std::unique_ptr<QTemporaryFile> eventSecret;
     bool active = false;
     bool overflow = false;
     bool applying = false;

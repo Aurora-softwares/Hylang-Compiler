@@ -112,6 +112,17 @@ public sealed partial class NativeWindow
         search.Text = "café";
         await Until(() => values["selectionText.text"].Normalize(System.Text.NormalizationForm.FormC) == "Template search: café", "SearchInput event did not reach Hydrogen; text=" + search.Text + ", state=" + values["templateSearch.text"]);
         await Idle();
+        Check(controls["templatePassword"] is PasswordBox, "PasswordInput must use a WinUI PasswordBox");
+        var password = (PasswordBox)controls["templatePassword"];
+        Check(password.Visibility == Visibility.Visible, "Hydrogen did not reveal PasswordInput");
+        password.Password = "gallery-pass";
+        await Idle(); Check(values["selectionText.text"] == "Private code length: 12", "PasswordInput change event failed");
+        Dispatch("CheckPassword", "templatePassword"); await Idle();
+        Check(values["selectionText.text"] == "Private code accepted.", "PasswordInput event did not reach Hydrogen");
+        Check(!values.ContainsKey("templatePassword.text") && !values.ContainsKey("templatePassword.value"), "Password leaked into UI state");
+        Apply("HYUI\tSET\ttemplatePassword\tenabled\tfalse\nHYUI\tSET\ttemplatePassword\tvisible\tfalse\n");
+        Check(!password.IsEnabled && password.Visibility == Visibility.Collapsed, "PasswordInput did not apply disabled and hidden state");
+        Apply("HYUI\tSET\ttemplatePassword\tenabled\ttrue\nHYUI\tSET\ttemplatePassword\tvisible\ttrue\n");
         Check(ToolTipService.GetToolTip(controls["save"])?.ToString() == "Write the current plan to the chosen path", "Native button tooltip is missing");
         Check(controls["templateDetails"] is ScrollViewer, "ScrollView must use a WinUI ScrollViewer");
         var details = (ScrollViewer)controls["templateDetails"];

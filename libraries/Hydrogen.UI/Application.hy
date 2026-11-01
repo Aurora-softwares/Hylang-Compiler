@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 
 namespace Hydrogen.UI {
     // The desktop host starts Main once to locate the view, then once per event.
@@ -26,6 +27,17 @@ namespace Hydrogen.UI {
             int i = 3;
             while (i + 1 < args.Length) {
                 if (args[i] == id) { return args[i + 1]; }
+                i = i + 2;
+            }
+            return "";
+        }
+
+        // Only the password field's own event receives its one-time private file.
+        public static string SecretValue(string[] args, string id) {
+            if (Sender(args) != id) { return ""; }
+            int i = 3;
+            while (i + 1 < args.Length) {
+                if (args[i] == "--hyui-secret:" + id) { return File.ReadAllText(args[i + 1]); }
                 i = i + 2;
             }
             return "";

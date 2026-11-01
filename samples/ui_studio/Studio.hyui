@@ -81,6 +81,7 @@
         <Label text="LIST BOX" role="caption" tone="muted" />
         <ListBox id="templates" items="Notes application|Project tracker|Photo library" value="0" height="120" onChange="ChooseTemplate" accessibleName="Application templates" />
         <SearchInput id="templateSearch" text="" placeholder="Search templates" onChange="SearchTemplates" onSubmit="SubmitSearch" accessibleName="Search application templates" tooltip="Enter a template search term" visible="false" />
+        <PasswordInput id="templatePassword" placeholder="Enter a private gallery code" onChange="PasswordEdited" onSubmit="CheckPassword" accessibleName="Private gallery code" visible="false" />
         <ScrollView id="templateDetails" height="90" gap="6" visible="false" accessibleName="Template details" tooltip="Scroll through template details">
           <Label text="Template details" role="heading" />
           <Label text="Native controls on every desktop." />

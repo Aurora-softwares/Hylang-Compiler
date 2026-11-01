@@ -24,6 +24,7 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"Button", {"text", "onClick", "primary"}},
     {"Input", {"text", "placeholder", "onChange", "onSubmit"}},
     {"SearchInput", {"text", "placeholder", "onChange", "onSubmit"}},
+    {"PasswordInput", {"placeholder", "onChange", "onSubmit"}},
     {"TextArea", {"text", "placeholder", "onChange", "height"}},
     {"CheckBox", {"text", "checked", "onChange"}},
     {"Switch", {"text", "checked", "onChange"}},
@@ -50,7 +51,7 @@ QString Document::resourcePath(const QString& relative) const {
 }
 
 bool Document::parse(const QByteArray& xml) {
-    error.clear(); initialState.clear(); properties.clear(); handlers.clear(); ranges.clear(); window = {};
+    error.clear(); initialState.clear(); properties.clear(); handlers.clear(); secretInputs.clear(); ranges.clear(); window = {};
     if (xml.size() > 1024 * 1024) { error = "HYUI documents are limited to 1 MiB"; return false; }
     QXmlStreamReader reader(xml);
     QSet<QString> ids;
@@ -105,6 +106,7 @@ bool Document::parse(const QByteArray& xml) {
             return invalid("invalid or duplicate id '" + node.id + "'");
         }
         ids.insert(node.id);
+        if (node.tag == "PasswordInput") { secretInputs.insert(node.id); }
         QSet<QString> props;
         if (node.tag != "Window" && node.tag != "Timer" && node.tag != "State") { props = {"visible", "enabled"}; }
         for (const QString& prop : {"text", "value", "checked", "running", "indeterminate", "open"}) {

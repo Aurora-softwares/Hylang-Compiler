@@ -116,6 +116,17 @@ public:
         check(QString::fromUtf8(view.api.call<const char*>("gtk_widget_get_tooltip_text", search)) == "Enter a template search term", "Native search tooltip is missing");
         view.api.text(search, "gtk_editable_set_text", "café"); idle();
         check(bridge.state()["selectionText.text"] == "Template search: café", "SearchInput text event did not reach Hydrogen");
+        W password = view.controls["templatePassword"]->widget;
+        check(view.api.call<int>("g_type_check_instance_is_a", password, view.api.call<unsigned long>("gtk_password_entry_get_type")), "PasswordInput must use GtkPasswordEntry");
+        check(view.api.call<int>("gtk_widget_get_visible", password), "Hydrogen did not reveal PasswordInput");
+        view.api.text(password, "gtk_editable_set_text", "gallery-pass"); idle();
+        check(bridge.state()["selectionText.text"] == "Private code length: 12", "PasswordInput change event failed");
+        view.api.call("g_signal_emit_by_name", password, "activate"); idle();
+        check(bridge.state()["selectionText.text"] == "Private code accepted.", "PasswordInput did not reach Hydrogen");
+        check(!bridge.state().contains("templatePassword.text") && !bridge.state().contains("templatePassword.value"), "Password leaked into UI state");
+        check(bridge.apply("HYUI\tSET\ttemplatePassword\tenabled\tfalse\nHYUI\tSET\ttemplatePassword\tvisible\tfalse\n"), "Cannot disable or hide PasswordInput");
+        check(!view.api.call<int>("gtk_widget_is_sensitive", password) && !view.api.call<int>("gtk_widget_get_visible", password), "PasswordInput did not apply visibility or enabled state");
+        check(bridge.apply("HYUI\tSET\ttemplatePassword\tenabled\ttrue\nHYUI\tSET\ttemplatePassword\tvisible\ttrue\n"), "Cannot restore PasswordInput");
         check(QString::fromUtf8(view.api.call<const char*>("gtk_widget_get_tooltip_text", view.controls["save"]->widget)) == "Write the current plan to the chosen path", "Native button tooltip is missing");
         W details = view.controls["templateDetails"]->widget;
         check(view.api.call<int>("g_type_check_instance_is_a", details, view.api.call<unsigned long>("gtk_scrolled_window_get_type")), "ScrollView must use GtkScrolledWindow");

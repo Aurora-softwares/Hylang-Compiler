@@ -16,7 +16,15 @@ namespace HydrogenStudio {
             if (handler == "ChooseTemplate") {
                 Application.SetText("selectionText", "Template index: " + Application.Value(args, "templates"));
                 Application.SetVisible("templateSearch", true);
+                Application.SetVisible("templatePassword", true);
                 Application.SetVisible("templateDetails", true);
+            }
+            if (handler == "CheckPassword") {
+                string secret = Application.SecretValue(args, "templatePassword");
+                Application.SetText("selectionText", secret == "gallery-pass" ? "Private code accepted." : "Private code rejected.");
+            }
+            if (handler == "PasswordEdited") {
+                Application.SetText("selectionText", "Private code length: " + Application.SecretValue(args, "templatePassword").Length);
             }
             if (handler == "UseTemplate") { Application.SetText("selectionText", "Template chosen from scroll view."); }
             if (handler == "SearchTemplates" || handler == "SubmitSearch") {

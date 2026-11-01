@@ -300,11 +300,26 @@ public:
             w = api.call<W>("gtk_button_new_with_label", ""); c->widget = w;
             if (a.value("primary") == "true") { api.css(w, "suggested-action"); }
             connect(c, "clicked", [this, c] { QString handler = c->node->attributes.value("onClick"); if (!handler.isEmpty()) { bridge.dispatch(handler, c->node->id); } });
-        } else if (tag == "Input" || tag == "SearchInput") {
-            w = api.call<W>(tag == "SearchInput" ? "gtk_search_entry_new" : "gtk_entry_new"); c->widget = w;
-            api.text(w, tag == "SearchInput" ? "gtk_search_entry_set_placeholder_text" : "gtk_entry_set_placeholder_text", a.value("placeholder"));
-            connect(c, "changed", [this, c, event] { event("text", QString::fromUtf8(api.call<const char*>("gtk_editable_get_text", c->widget)), "onChange"); });
-            connect(c, "activate", [this, c] { QString handler = c->node->attributes.value("onSubmit"); if (!handler.isEmpty()) { bridge.dispatch(handler, c->node->id); } });
+        } else if (tag == "Input" || tag == "SearchInput" || tag == "PasswordInput") {
+            w = api.call<W>(tag == "SearchInput" ? "gtk_search_entry_new" : tag == "PasswordInput" ? "gtk_password_entry_new" : "gtk_entry_new"); c->widget = w;
+            if (tag == "PasswordInput") { api.call("g_object_set", w, "placeholder-text", a.value("placeholder").toUtf8().constData(), nullptr); }
+            else { api.text(w, tag == "SearchInput" ? "gtk_search_entry_set_placeholder_text" : "gtk_entry_set_placeholder_text", a.value("placeholder")); }
+            if (tag == "PasswordInput") {
+                connect(c, "changed", [this, c] {
+                    if (!bridge.storeSecret(c->node->id, QString::fromUtf8(api.call<const char*>("gtk_editable_get_text", c->widget)))) { return; }
+                    const QString handler = c->node->attributes.value("onChange");
+                    if (!handler.isEmpty()) { bridge.dispatch(handler, c->node->id); }
+                });
+            } else {
+                connect(c, "changed", [this, c, event] { event("text", QString::fromUtf8(api.call<const char*>("gtk_editable_get_text", c->widget)), "onChange"); });
+            }
+            connect(c, "activate", [this, c] {
+                QString handler = c->node->attributes.value("onSubmit");
+                if (!handler.isEmpty()) {
+                    if (c->node->tag == "PasswordInput" && !bridge.storeSecret(c->node->id, QString::fromUtf8(api.call<const char*>("gtk_editable_get_text", c->widget)))) { return; }
+                    bridge.dispatch(handler, c->node->id);
+                }
+            });
         } else if (tag == "TextArea") {
             w = api.call<W>("gtk_text_view_new"); c->widget = w;
             c->buffer = api.call<W>("gtk_text_view_get_buffer", w);
