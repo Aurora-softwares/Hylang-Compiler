@@ -35,6 +35,14 @@ public class Program {
             if (Check(state) != 0 || Check(-state) != 0) { return 91; }
             i = i + 1;
         }
+        int limit = 10000;
+        int sum = 0;
+        i = 0;
+        while (i < limit) {
+            sum = sum + i % 13 + i / 97;
+            i = i + 1;
+        }
+        if (sum != 570453) { return 92; }
         System.Console.WriteLine("constant division ok");
         return 42;
     }

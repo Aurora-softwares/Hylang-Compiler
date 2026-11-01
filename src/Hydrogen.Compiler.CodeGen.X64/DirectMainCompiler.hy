@@ -1867,7 +1867,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if ((op == IrOperator.SlashToken() || op == IrOperator.PercentToken()) &&
                 leftType == "int" && resultType == "int" && immediate >= 3) {
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // mov rcx, rax
-                EmitIntConstantDivision(immediate, op == IrOperator.PercentToken());
+                bool nonNegativeIndex = expression.Left().Kind() == IrExpression.KindName() &&
+                    provenNonNegative && FindLocal(expression.Left().Name()) == provenIndexSlot;
+                EmitIntConstantDivision(immediate, op == IrOperator.PercentToken(), nonNegativeIndex);
                 valueType = "int"; return true;
             }
             if (op == IrOperator.PlusToken()) {
@@ -1901,14 +1903,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         }
 
         // For |x| <= 2^31 and 3 <= divisor <= 2^31-1, the high half of
-        // |x| * ceil(2^64/divisor) is exactly floor(|x|/divisor). Most
-        // array and byte loop values are nonnegative: keep their path free
-        // of the absolute-value and quotient sign-restoration instructions.
+        // |x| * ceil(2^64/divisor) is exactly floor(|x|/divisor). A proven
+        // nonnegative loop index can use only the positive path; other values
+        // retain signed correction.
         // Negating the sign-extended dividend is safe even for int.MinValue.
-        private void EmitIntConstantDivision(int divisor, bool remainder) {
+        private void EmitIntConstantDivision(int divisor, bool remainder, bool nonNegative) {
             ulong magic = ((ulong)(-1) / (ulong)divisor) + (ulong)1;
-            code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc9); // test rcx, rcx
-            code.EmitByte(0x0f); code.EmitByte(0x88); int negativePatch = code.Position(); code.Emit32(0); // js negative
+            int negativePatch = -1;
+            if (!nonNegative) {
+                code.EmitByte(0x48); code.EmitByte(0x85); code.EmitByte(0xc9); // test rcx, rcx
+                code.EmitByte(0x0f); code.EmitByte(0x88); negativePatch = code.Position(); code.Emit32(0); // js negative
+            }
             if (divisor != promotedMagicDivisor) {
                 code.EmitByte(0x49); code.EmitByte(0xb9); code.Emit64((long)magic); // mov r9, reciprocal
             }
@@ -1921,6 +1926,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             } else {
                 code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd0); // mov rax, rdx
             }
+            if (nonNegative) { return; }
             code.EmitByte(0xe9); int donePatch = code.Position(); code.Emit32(0);
             PatchRelative(negativePatch, code.Position());
             code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc8); // mov rax, rcx
