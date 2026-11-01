@@ -116,7 +116,7 @@ public sealed partial class NativeWindow
         Root.UpdateLayout();
         Check(details.Visibility == Visibility.Visible && details.ScrollableHeight > 0, "ScrollView must reveal overflowing content");
         Check(ToolTipService.GetToolTip(details)?.ToString() == "Scroll through template details", "Native ScrollView tooltip is missing");
-        Apply("HYUI\tSET\ttemplateDetails\tenabled\tfalse\n"); Check(!controls["scrollAction"].IsEnabled, "Disabled ScrollView must disable descendants");
+        Apply("HYUI\tSET\ttemplateDetails\tenabled\tfalse\n"); Check(!((Button)controls["scrollAction"]).IsEnabled, "Disabled ScrollView must disable descendants");
         Apply("HYUI\tSET\ttemplateDetails\tenabled\ttrue\n"); Invoke(controls["scrollAction"]); await Idle();
         Check(values["selectionText.text"] == "Template chosen from scroll view.", "ScrollView child action did not reach Hydrogen");
         Invoke(controls["showDialog"]); await Until(() => dialogs.ContainsKey("confirmation") && dialogs["confirmation"].ActualWidth > 0, "Native dialog failed to open");
