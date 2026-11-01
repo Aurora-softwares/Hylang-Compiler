@@ -97,6 +97,8 @@ private slots:
         QVERIFY(!d.parse("<Window version=\"1\"><SearchInput search=\"unsafe\"/></Window>"));
         QVERIFY(!d.parse("<Window version=\"1\"><SearchInput><Button/></SearchInput></Window>"));
         QVERIFY(!d.parse("<Window version=\"1\" tooltip=\"invalid\"/>"));
+        QVERIFY(!d.parse("<Window version=\"1\"><Dialog tooltip=\"invalid\"/></Window>"));
+        QVERIFY(!d.parse("<Window version=\"1\"><MenuBar tooltip=\"invalid\"/></Window>"));
     }
 
     void scrollViewContract() {

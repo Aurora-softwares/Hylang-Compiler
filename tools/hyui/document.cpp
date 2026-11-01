@@ -69,7 +69,8 @@ bool Document::parse(const QByteArray& xml) {
         for (const auto& attr : reader.attributes()) {
             QString key = attr.qualifiedName().toString(), value = attr.value().toString();
             const bool visual = node.tag != "Window" && node.tag != "Timer" && node.tag != "State";
-            if (!attributes[node.tag].contains(key) && !(key == "id" || (visual && common.contains(key)))) {
+            const bool tooltipTarget = node.tag != "MenuBar" && node.tag != "Menu" && node.tag != "MenuItem" && node.tag != "Dialog";
+            if (!attributes[node.tag].contains(key) && !(key == "id" || (visual && common.contains(key) && (key != "tooltip" || tooltipTarget)))) {
                 return invalid("unknown attribute '" + key + "' on " + node.tag);
             }
             if (value.size() > 16384) { return invalid("attribute exceeds 16384 characters"); }
