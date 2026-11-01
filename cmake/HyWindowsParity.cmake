@@ -69,6 +69,15 @@ string(REPLACE "/" "\\" windows_backslash_path
     "Z:${TEMP_DIR}/created/subdir/windows-é.txt")
 run_windows("${output}" 42 "windows runtime parity ok"
     "${windows_backslash_path}" "two words")
+set(constant_division_image "${TEMP_DIR}/native_constant_division.exe")
+execute_process(COMMAND "${NATIVE_BINARY}" compile
+    "${SOURCE_DIR}/tests/phase6/native_constant_division.hy"
+    --target windows-x64 -o "${constant_division_image}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 60)
+if(NOT result STREQUAL "0" OR NOT stderr STREQUAL "")
+    message(FATAL_ERROR "Windows constant division compile failed: ${result}\n${stdout}\n${stderr}")
+endif()
+run_windows("${constant_division_image}" 42 "constant division ok")
 set(builder_image "${TEMP_DIR}/NativeTextBuilder.exe")
 execute_process(COMMAND "${NATIVE_BINARY}" build
     "${SOURCE_DIR}/samples/native_text_builder/NativeTextBuilder.Windows.hyproj"

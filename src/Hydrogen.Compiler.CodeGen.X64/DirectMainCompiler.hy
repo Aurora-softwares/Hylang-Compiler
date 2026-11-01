@@ -879,6 +879,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                         promotedMagicDivisor = divisor;
                     }
                 }
+                int fastDonePatch = TryEmitModularArrayFill(statement.Condition(), statement.Body());
                 int conditionPosition = code.Position();
                 loopStart = conditionPosition;
                 int exitPatch = CompileConditionJumpFalse(statement.Condition(), checkedLengthSlot);
@@ -889,6 +890,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 int backPatch = EmitJump();
                 PatchRelative(backPatch, conditionPosition);
                 PatchRelative(exitPatch, code.Position());
+                if (fastDonePatch >= 0) { PatchRelative(fastDonePatch, code.Position()); }
                 if (promotedValueSlot == loopValue && loopValue >= 0) {
                     code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xd8); // mov rax, rbx
                     promotedValueSlot = -1;
@@ -1050,6 +1052,80 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 value.Left().Kind() == IrExpression.KindName() && FindLocal(value.Left().Name()) == indexSlot &&
                 value.Right().Kind() == IrExpression.KindLiteral() &&
                 value.Right().LiteralKind() == "number" && value.Right().LiteralText() == "1";
+        }
+
+        // A proved zero-based fill of (i * factor + bias) % divisor can keep
+        // the remainder in a register. Guard the input length so the original
+        // signed int expression cannot overflow; longer arrays use the normal
+        // lowering below. The update uses unsigned comparison because two
+        // positive int values can sum past int.MaxValue before subtraction.
+        private int TryEmitModularArrayFill(IrExpression condition, IrStatement body) {
+            if (!provenNonNegative || provenIndexSlot < 0 ||
+                promotedIndexSlot != provenIndexSlot || promotedArraySlot < 0 ||
+                localTypes[promotedArraySlot] != "int[]" ||
+                condition == null || condition.Kind() != IrExpression.KindBinary() ||
+                condition.OperatorKind() != IrOperator.LessToken() ||
+                condition.Left().Kind() != IrExpression.KindName() ||
+                FindLocal(condition.Left().Name()) != promotedIndexSlot ||
+                condition.Right().Kind() != IrExpression.KindName() ||
+                body == null || body.Kind() != IrStatement.KindBlock()) { return -1; }
+            int boundSlot = FindLocal(condition.Right().Name());
+            if (boundSlot < 0 || boundSlot != provenBoundSlot || localTypes[boundSlot] != "int" ||
+                arrayLengthSourceSlots[promotedArraySlot] != boundSlot) { return -1; }
+            IrStatement[] items = body.Statements();
+            if (items.Length != 2 || items[0].Kind() != IrStatement.KindExpressionStatement() ||
+                items[1].Kind() != IrStatement.KindExpressionStatement() ||
+                !CanonicalIncrement(items[1].Expression(), promotedIndexSlot)) { return -1; }
+            IrExpression store = items[0].Expression();
+            if (store == null || store.Kind() != IrExpression.KindAssignment() ||
+                store.AssignmentOperatorKind() != IrOperator.EqualsToken() ||
+                store.Target().Kind() != IrExpression.KindIndex() ||
+                store.Target().Receiver().Kind() != IrExpression.KindName() ||
+                store.Target().Index().Kind() != IrExpression.KindName() ||
+                FindLocal(store.Target().Receiver().Name()) != promotedArraySlot ||
+                FindLocal(store.Target().Index().Name()) != promotedIndexSlot) { return -1; }
+            IrExpression mod = store.Value();
+            if (mod.Kind() != IrExpression.KindBinary() || mod.OperatorKind() != IrOperator.PercentToken() ||
+                mod.ResultType() != "int" || mod.Right().Kind() != IrExpression.KindLiteral() ||
+                mod.Right().LiteralKind() != "number") { return -1; }
+            IrExpression add = mod.Left();
+            if (add.Kind() != IrExpression.KindBinary() || add.OperatorKind() != IrOperator.PlusToken() ||
+                add.ResultType() != "int" || add.Right().Kind() != IrExpression.KindLiteral() ||
+                add.Right().LiteralKind() != "number") { return -1; }
+            IrExpression multiply = add.Left();
+            if (multiply.Kind() != IrExpression.KindBinary() || multiply.OperatorKind() != IrOperator.StarToken() ||
+                multiply.ResultType() != "int" || multiply.Left().Kind() != IrExpression.KindName() ||
+                FindLocal(multiply.Left().Name()) != promotedIndexSlot ||
+                multiply.Right().Kind() != IrExpression.KindLiteral() ||
+                multiply.Right().LiteralKind() != "number") { return -1; }
+            int factor = ParseInt(multiply.Right().LiteralText());
+            int bias = ParseInt(add.Right().LiteralText());
+            int divisor = ParseInt(mod.Right().LiteralText());
+            if (factor < 1 || divisor < 3 || factor >= divisor || bias < 0 || bias >= divisor) { return -1; }
+            int safeLength = (2147483647 - bias) / factor;
+            if (safeLength < 1) { return -1; }
+
+            EmitLoadLocal(boundSlot);
+            code.EmitByte(0x48); code.EmitByte(0x3d); code.Emit32(safeLength); // cmp rax, safe length
+            code.EmitByte(0x0f); code.EmitByte(0x8f); int fallbackPatch = code.Position(); code.Emit32(0); // jg normal loop
+            code.EmitByte(0x41); code.EmitByte(0xba); code.Emit32(bias); // mov r10d, bias
+            int fastTop = code.Position();
+            code.EmitByte(0x4c); code.EmitByte(0x3b); code.EmitByte(0xa5);
+            code.Emit32(-8 * (boundSlot + 1)); // cmp r12, [rbp-bound]
+            code.EmitByte(0x0f); code.EmitByte(0x8d); int fastExit = code.Position(); code.Emit32(0);
+            code.EmitByte(0x47); code.EmitByte(0x89); code.EmitByte(0x54);
+            code.EmitByte(0xa5); code.EmitByte(8); // mov [r13+r12*4+8], r10d
+            code.EmitByte(0x49); code.EmitByte(0xff); code.EmitByte(0xc4); // inc r12
+            code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0xc2); code.Emit32(factor); // add r10d, factor
+            code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0xfa); code.Emit32(divisor); // cmp r10d, divisor
+            code.EmitByte(0x0f); code.EmitByte(0x82); int belowPatch = code.Position(); code.Emit32(0); // jb next
+            code.EmitByte(0x41); code.EmitByte(0x81); code.EmitByte(0xea); code.Emit32(divisor); // sub r10d, divisor
+            PatchRelative(belowPatch, code.Position());
+            int repeatPatch = EmitJump(); PatchRelative(repeatPatch, fastTop);
+            PatchRelative(fastExit, code.Position());
+            int donePatch = EmitJump();
+            PatchRelative(fallbackPatch, code.Position());
+            return donePatch;
         }
 
         // r8 is caller-saved, so retain a reciprocal there only when every

@@ -1,4 +1,41 @@
 public class Program {
+    public static int CheckModularFill(int n) {
+        int[] values = new int[n];
+        int i = 0;
+        while (i < n) {
+            values[i] = (i * 1000000 + 3) % 1000003;
+            i = i + 1;
+        }
+        int factor = 1000000;
+        int bias = 3;
+        int divisor = 1000003;
+        i = 0;
+        while (i < n) {
+            if (values[i] != (i * factor + bias) % divisor) { return 1; }
+            i = i + 1;
+        }
+        return 0;
+    }
+
+    public static int CheckLongModularFill() {
+        int n = 100005;
+        int[] values = new int[n];
+        int i = 0;
+        while (i < n) {
+            values[i] = (i * 17 + 3) % 1000003;
+            i = i + 1;
+        }
+        int factor = 17;
+        int bias = 3;
+        int divisor = 1000003;
+        i = 0;
+        while (i < n) {
+            if (values[i] != (i * factor + bias) % divisor) { return 1; }
+            i = i + 1;
+        }
+        return 0;
+    }
+
     public static int CheckFolded(int value) {
         int factor = 17;
         int bias = 3;
@@ -62,6 +99,8 @@ public class Program {
             i = i + 1;
         }
         if (sum != 570453) { return 92; }
+        if (CheckModularFill(2147) != 0 || CheckModularFill(2148) != 0 ||
+            CheckLongModularFill() != 0) { return 94; }
         System.Console.WriteLine("constant division ok");
         return 42;
     }
