@@ -158,6 +158,11 @@ public sealed partial class NativeWindow : Window
             list.SelectionChanged += (_, _) => { if (list.SelectedIndex >= 0) Changed("value", list.SelectedIndex.ToString()); else list.SelectedIndex = int.Parse(values.GetValueOrDefault(id + ".value", "0")); }; element = list;
         } else if (tag == "Image") {
             element = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(Resource(documentDirectory, Attr(node, "source")))), Height = Number(node, "height", 72), Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform };
+        } else if (tag == "ScrollView") {
+            var content = new StackPanel { Spacing = Number(node, "gap", 12) };
+            foreach (var child in node.Elements()) { var control = Build(child); if (control != null) content.Children.Add(control); }
+            element = new ScrollViewer { Height = Number(node, "height", 200), Content = content,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         } else if (tag is "Panel" or "ColumnPanel" or "RowPanel" or "GridPanel" or "Tab") {
             var panel = new StackPanel { Spacing = Number(node, "gap", 12) };
             if (tag == "Panel" && node.Attribute("title") != null) panel.Children.Add(new TextBlock { Text = Attr(node, "title"), Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] });

@@ -81,6 +81,13 @@
         <Label text="LIST BOX" role="caption" tone="muted" />
         <ListBox id="templates" items="Notes application|Project tracker|Photo library" value="0" height="120" onChange="ChooseTemplate" accessibleName="Application templates" />
         <SearchInput id="templateSearch" text="" placeholder="Search templates" onChange="SearchTemplates" onSubmit="SubmitSearch" accessibleName="Search application templates" tooltip="Enter a template search term" visible="false" />
+        <ScrollView id="templateDetails" height="90" gap="6" visible="false" accessibleName="Template details" tooltip="Scroll through template details">
+          <Label text="Template details" role="heading" />
+          <Label text="Native controls on every desktop." />
+          <Label text="One shared Hydrogen backend." />
+          <Label text="Responsive layouts and events." />
+          <Button id="scrollAction" text="Use this template" onClick="UseTemplate" />
+        </ScrollView>
         <Label text="PROJECT TABLE" role="caption" tone="muted" />
         <Table id="projects" columns="Project|Target|Status" rows="Aurora Notes|macOS|Ready&#10;Orbit Tasks|Linux|Building&#10;Prism Photos|Windows|Planned" value="0" height="160" onChange="ChooseProject" accessibleName="Recent projects" />
         <Label id="selectionText" text="Choose a template or project to preview its selection." tone="muted" />

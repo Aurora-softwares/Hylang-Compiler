@@ -117,6 +117,18 @@ public:
         view.api.text(search, "gtk_editable_set_text", "café"); idle();
         check(bridge.state()["selectionText.text"] == "Template search: café", "SearchInput text event did not reach Hydrogen");
         check(QString::fromUtf8(view.api.call<const char*>("gtk_widget_get_tooltip_text", view.controls["save"]->widget)) == "Write the current plan to the chosen path", "Native button tooltip is missing");
+        W details = view.controls["templateDetails"]->widget;
+        check(view.api.call<int>("g_type_check_instance_is_a", details, view.api.call<unsigned long>("gtk_scrolled_window_get_type")), "ScrollView must use GtkScrolledWindow");
+        check(view.api.call<int>("gtk_widget_get_visible", details), "Hydrogen did not reveal ScrollView");
+        settle();
+        W scrollAdjustment = view.api.call<W>("gtk_scrolled_window_get_vadjustment", details);
+        check(view.api.call<double>("gtk_adjustment_get_upper", scrollAdjustment) > view.api.call<double>("gtk_adjustment_get_page_size", scrollAdjustment), "ScrollView content must overflow its viewport");
+        check(QString::fromUtf8(view.api.call<const char*>("gtk_widget_get_tooltip_text", details)) == "Scroll through template details", "Native ScrollView tooltip is missing");
+        check(bridge.apply("HYUI\tSET\ttemplateDetails\tenabled\tfalse\n"), "Cannot disable ScrollView");
+        check(!view.api.call<int>("gtk_widget_is_sensitive", view.controls["scrollAction"]->widget), "Disabled ScrollView must disable descendants");
+        check(bridge.apply("HYUI\tSET\ttemplateDetails\tenabled\ttrue\n"), "Cannot enable ScrollView");
+        click("scrollAction");
+        check(bridge.state()["selectionText.text"] == "Template chosen from scroll view.", "ScrollView child action did not reach Hydrogen");
         view.api.call("gtk_single_selection_set_selected", view.controls["projects"]->buffer, 1u); idle();
         check(bridge.state()["selectionText.text"] == "Project index: 1", "Table selection did not reach Hydrogen");
         click("showDialog"); until([&] { return view.controls["confirmation"]->dialog != nullptr; }, "Dialog did not open");

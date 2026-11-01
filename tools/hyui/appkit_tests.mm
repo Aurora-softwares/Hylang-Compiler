@@ -135,8 +135,18 @@ int main(int argc, char** argv) {
             require([search.toolTip isEqualToString:@"Enter a template search term"], "native search tooltip is missing");
             search.stringValue = @"café";
             [search.delegate controlTextDidChange:[NSNotification notificationWithName:NSControlTextDidChangeNotification object:search]]; finish();
-            require(bridge.state()["selectionText.text"].toString() == "Template search: café", "SearchInput event failed");
+            require(bridge.state()["selectionText.text"].toString().normalized(QString::NormalizationForm_C) == QString("Template search: café").normalized(QString::NormalizationForm_C), "SearchInput event failed");
             require([find(gallery, @"save").toolTip isEqualToString:@"Write the current plan to the chosen path"], "native button tooltip is missing");
+            NSScrollView* details = (NSScrollView*)find(gallery, @"templateDetails");
+            view->pump();
+            require([details isKindOfClass:NSScrollView.class] && !details.hidden, "ScrollView must use a visible NSScrollView");
+            require(details.documentView.frame.size.height > details.contentSize.height, "ScrollView content must overflow its viewport");
+            require([details.toolTip isEqualToString:@"Scroll through template details"], "native ScrollView tooltip is missing");
+            require(bridge.apply("HYUI\tSET\ttemplateDetails\tenabled\tfalse\n"), "cannot disable ScrollView"); view->pump();
+            require(![(NSButton*)find(gallery, @"scrollAction") isEnabled], "disabled ScrollView must disable descendants");
+            require(bridge.apply("HYUI\tSET\ttemplateDetails\tenabled\ttrue\n"), "cannot enable ScrollView"); view->pump();
+            [(NSButton*)find(gallery, @"scrollAction") performClick:nil]; finish();
+            require(bridge.state()["selectionText.text"].toString() == "Template chosen from scroll view.", "ScrollView child action failed");
             [(NSButton*)find(gallery, @"showDialog") performClick:nil]; finish(); app.processEvents(); view->pump();
             NSWindow* window = NSApp.windows.firstObject;
             if (!window.attachedSheet) { for (NSWindow* candidate in NSApp.windows) { if (candidate.attachedSheet) { window = candidate; break; } } }

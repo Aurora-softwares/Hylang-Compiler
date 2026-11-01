@@ -109,8 +109,16 @@ public sealed partial class NativeWindow
         Check(controls["templateSearch"] is AutoSuggestBox, "SearchInput must use a WinUI AutoSuggestBox");
         var search = (AutoSuggestBox)controls["templateSearch"];
         Check(search.Visibility == Visibility.Visible && ToolTipService.GetToolTip(search)?.ToString() == "Enter a template search term", "Native search visibility or tooltip failed");
-        search.Text = "café"; await Idle(); Check(values["selectionText.text"] == "Template search: café", "SearchInput event did not reach Hydrogen");
+        search.Text = "café"; await Idle(); Check(values["selectionText.text"].Normalize(System.Text.NormalizationForm.FormC) == "Template search: café", "SearchInput event did not reach Hydrogen: " + values["selectionText.text"] + " / " + errors.Text);
         Check(ToolTipService.GetToolTip(controls["save"])?.ToString() == "Write the current plan to the chosen path", "Native button tooltip is missing");
+        Check(controls["templateDetails"] is ScrollViewer, "ScrollView must use a WinUI ScrollViewer");
+        var details = (ScrollViewer)controls["templateDetails"];
+        Root.UpdateLayout();
+        Check(details.Visibility == Visibility.Visible && details.ScrollableHeight > 0, "ScrollView must reveal overflowing content");
+        Check(ToolTipService.GetToolTip(details)?.ToString() == "Scroll through template details", "Native ScrollView tooltip is missing");
+        Apply("HYUI\tSET\ttemplateDetails\tenabled\tfalse\n"); Check(!controls["scrollAction"].IsEnabled, "Disabled ScrollView must disable descendants");
+        Apply("HYUI\tSET\ttemplateDetails\tenabled\ttrue\n"); Invoke(controls["scrollAction"]); await Idle();
+        Check(values["selectionText.text"] == "Template chosen from scroll view.", "ScrollView child action did not reach Hydrogen");
         Invoke(controls["showDialog"]); await Until(() => dialogs.ContainsKey("confirmation") && dialogs["confirmation"].ActualWidth > 0, "Native dialog failed to open");
         await Task.Delay(200); var dialog = dialogs["confirmation"];
         await Capture(dialog, Path.Combine(output, "dialog-confirm.png")); shots.Add("dialog-confirm.png");

@@ -99,6 +99,22 @@ private slots:
         QVERIFY(!d.parse("<Window version=\"1\" tooltip=\"invalid\"/>"));
     }
 
+    void scrollViewContract() {
+        hyui::Document d;
+        QVERIFY(d.parse(R"(<Window version="1"><ScrollView id="details" height="90" gap="6" enabled="false" tooltip="Scroll details"><Label text="First"/><Button id="action" text="Run" onClick="Run"/></ScrollView></Window>)"));
+        QCOMPARE(d.window.children[0].children.size(), size_t(2));
+        QCOMPARE(d.window.children[0].attributes.value("height"), "90");
+        QCOMPARE(d.initialState["details.enabled"].toBool(), false);
+        QVERIFY(d.handlers["Run"].contains("action"));
+        hyui::Bridge bridge(d, {}, {});
+        QVERIFY(bridge.apply("HYUI\tSET\tdetails\tvisible\tfalse\nHYUI\tSET\tdetails\tenabled\ttrue\n"));
+        QCOMPARE(bridge.state()["details.visible"].toBool(), false);
+        QCOMPARE(bridge.state()["details.enabled"].toBool(), true);
+        QVERIFY(!d.parse("<Window version=\"1\"><ScrollView height=\"0\"/></Window>"));
+        QVERIFY(!d.parse("<Window version=\"1\"><ScrollView gap=\"-1\"/></Window>"));
+        QVERIFY(!d.parse("<Window version=\"1\"><ScrollView onScroll=\"Bad\"/></Window>"));
+    }
+
     void callbacksUseArgumentVectors() {
         hyui::Document d;
         QVERIFY(d.parse("<Window version=\"1\"><Input id=\"name\"/><Label id=\"status\"/><Button id=\"go\" onClick=\"Submit\"/></Window>"));

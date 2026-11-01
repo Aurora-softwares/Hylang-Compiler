@@ -16,7 +16,9 @@ namespace HydrogenStudio {
             if (handler == "ChooseTemplate") {
                 Application.SetText("selectionText", "Template index: " + Application.Value(args, "templates"));
                 Application.SetVisible("templateSearch", true);
+                Application.SetVisible("templateDetails", true);
             }
+            if (handler == "UseTemplate") { Application.SetText("selectionText", "Template chosen from scroll view."); }
             if (handler == "SearchTemplates" || handler == "SubmitSearch") {
                 Application.SetText("selectionText", "Template search: " + Application.Value(args, "templateSearch"));
             }

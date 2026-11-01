@@ -251,6 +251,13 @@ public:
             if (a.contains("tooltip")) { api.text(viewport, "gtk_widget_set_tooltip_text", a["tooltip"]); }
             if (a.contains("accessibleName")) { api.call("gtk_accessible_update_property", viewport, 4, a["accessibleName"].toUtf8().constData(), -1); }
             c->widget = w; c->container = viewport; return viewport;
+        } else if (tag == "ScrollView") {
+            W box = api.call<W>("gtk_box_new", 1, a.value("gap", "12").toInt());
+            for (const auto& child : node.children) { append(box, build(child)); }
+            w = api.call<W>("gtk_scrolled_window_new");
+            api.call("gtk_scrolled_window_set_policy", w, 2, 1);
+            api.call("gtk_scrolled_window_set_child", w, box);
+            api.call("gtk_widget_set_size_request", w, -1, a.value("height", "200").toInt());
         } else if (tag == "ColumnPanel" || tag == "Panel" || tag == "Tab") {
             W box = api.call<W>("gtk_box_new", 1, a.value("gap", "12").toInt());
             w = box;

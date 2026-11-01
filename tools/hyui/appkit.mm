@@ -52,6 +52,7 @@ class AppKitView : public NativeView {
     NSMutableArray* retained = [NSMutableArray new];
     QMap<QString, Item> items;
     QMap<NSView*, Layout> layouts;
+    QMap<NSView*, NSView*> scrollContents;
     QMap<NSView*, NSBox*> panelBorders;
     QMap<NSView*, const Node*> nodes;
     NSView* body;
@@ -128,6 +129,17 @@ class AppKitView : public NativeView {
         }
         const Node* node = nodes.value(view, nullptr);
         QString tag = node ? node->tag : "Label";
+        if (tag == "ScrollView") {
+            CGFloat height = node->attributes.value("height", "200").toInt();
+            [view setFrameSize:NSMakeSize(width, height)];
+            NSScrollView* area = (NSScrollView*)view;
+            NSView* contents = scrollContents.value(view);
+            CGFloat innerWidth = qMax<CGFloat>(1, area.contentSize.width);
+            CGFloat contentHeight = arrange(contents, innerWidth);
+            [contents setFrameOrigin:NSZeroPoint];
+            [area.documentView setFrameSize:NSMakeSize(innerWidth, qMax(height, contentHeight))];
+            return height;
+        }
         CGFloat height = 26;
         if ([view isKindOfClass:NSTextField.class] && ![(NSTextField*)view isEditable]) {
             NSTextField* label = (NSTextField*)view;
@@ -247,6 +259,13 @@ class AppKitView : public NativeView {
             NSImageView* image = [[[NSImageView alloc] init] autorelease]; image.image = [[[NSImage alloc] initWithContentsOfFile:text(doc.resourcePath(a.value("source")))] autorelease];
             if (!image.image) { throw std::runtime_error("cannot decode image asset"); }
             image.imageScaling = NSImageScaleProportionallyUpOrDown; view = image;
+        } else if (tag == "ScrollView") {
+            NSView* contents = stack(); layouts[contents].gap = a.value("gap", "12").toInt();
+            for (const auto& child : node.children) { add(contents, build(child)); }
+            NSView* documentView = [[[HYLayoutView alloc] init] autorelease]; [documentView addSubview:contents];
+            NSScrollView* area = [[[NSScrollView alloc] init] autorelease]; area.documentView = documentView;
+            area.hasVerticalScroller = YES; area.autohidesScrollers = YES;
+            scrollContents.insert(area, contents); view = area; control = area;
         } else if (tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel" || tag == "Panel" || tag == "Tab") {
             NSView* contents = stack();
             layouts[contents].tag = tag; layouts[contents].gap = a.value("gap", "12").toInt();
@@ -345,6 +364,12 @@ class AppKitView : public NativeView {
             if (tag == "Select") { [(NSPopUpButton*)c.control selectItemAtIndex:value("value").toInt()]; }
             if (tag == "Slider" || tag == "NumberInput" || tag == "ProgressBar") { [c.control setDoubleValue:value("value").toDouble()]; if (c.extra) { [c.extra setDoubleValue:value("value").toDouble()]; } }
             if (tag == "Spinner" || tag == "ProgressBar") { NSProgressIndicator* p = c.control; p.indeterminate = tag == "Spinner" || value("indeterminate").toBool(); if ((tag == "Spinner" && value("running").toBool()) || (tag == "ProgressBar" && p.indeterminate)) { [p startAnimation:nil]; } else { [p stopAnimation:nil]; } }
+        }
+        for (auto it = items.cbegin(); it != items.cend(); ++it) {
+            if (it.value().node->tag != "ScrollView" || state.value(it.key() + ".enabled").toBool()) { continue; }
+            for (const Item& child : items) {
+                if ([child.view isDescendantOf:it.value().view] && [child.control respondsToSelector:@selector(setEnabled:)]) { [child.control setEnabled:NO]; }
+            }
         }
         for (QTimer* timer : timers) { bool running = state.value(timer->objectName() + ".running").toBool(); if (running && !timer->isActive()) { timer->start(); } if (!running) { timer->stop(); } }
         applying = false; layoutDirty = true; updateDialogs();
