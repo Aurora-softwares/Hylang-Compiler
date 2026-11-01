@@ -1675,6 +1675,20 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             // side cannot change it, add straight into the expression result
             // instead of pushing and restoring the cached left operand.
             IrExpression left = expression.Left();
+            IrExpression outerRight = expression.Right();
+            if (expression.ResultType() == "int" && left.Kind() == IrExpression.KindBinary() &&
+                left.ResultType() == "int" && outerRight.Kind() == IrExpression.KindLiteral() &&
+                outerRight.LiteralKind() == "number" && IntImmediateArithmetic(op)) {
+                IrExpression innerRight = left.Right();
+                if (innerRight.Kind() == IrExpression.KindLiteral() &&
+                    innerRight.LiteralKind() == "number" && IntImmediateArithmetic(left.OperatorKind())) {
+                    if (!CompileExpression(left.Left())) { return false; }
+                    if (valueType != "int") { failure = "native folded arithmetic requires int operands"; return false; }
+                    EmitIntImmediateArithmetic(left.OperatorKind(), ParseInt(innerRight.LiteralText()));
+                    EmitIntImmediateArithmetic(op, ParseInt(outerRight.LiteralText()));
+                    NormalizeRax("int"); valueType = "int"; return true;
+                }
+            }
             int cachedLeftSlot = -1;
             if (left.Kind() == IrExpression.KindName()) { cachedLeftSlot = FindLocal(left.Name()); }
             if (op == IrOperator.PlusToken() &&
@@ -1854,6 +1868,19 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         // Keep the left operand in rax when the right operand is a numeric
         // literal. x64 encodes a signed 32-bit immediate directly, removing
         // the push/pop and literal load from common loop arithmetic.
+        private bool IntImmediateArithmetic(int op) {
+            return op == IrOperator.PlusToken() || op == IrOperator.MinusToken() ||
+                op == IrOperator.StarToken();
+        }
+
+        private void EmitIntImmediateArithmetic(int op, int immediate) {
+            if (op == IrOperator.PlusToken()) { code.EmitByte(0x05); code.Emit32(immediate); }
+            if (op == IrOperator.MinusToken()) { code.EmitByte(0x2d); code.Emit32(immediate); }
+            if (op == IrOperator.StarToken()) {
+                code.EmitByte(0x69); code.EmitByte(0xc0); code.Emit32(immediate);
+            }
+        }
+
         private bool TryCompileImmediateBinary(IrExpression expression, string leftType) {
             IrExpression right = expression.Right();
             if (right.Kind() != IrExpression.KindLiteral() || right.LiteralKind() != "number" ||

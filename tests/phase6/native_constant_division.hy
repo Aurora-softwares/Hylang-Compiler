@@ -1,4 +1,20 @@
 public class Program {
+    public static int CheckFolded(int value) {
+        int factor = 17;
+        int bias = 3;
+        int subtract = 5;
+        int expected = value * factor;
+        expected = expected + bias;
+        if (value * 17 + 3 != expected) { return 1; }
+        expected = value - subtract;
+        expected = expected * factor;
+        if ((value - 5) * 17 != expected) { return 2; }
+        expected = value + bias;
+        expected = expected - subtract;
+        if ((value + 3) - 5 != expected) { return 3; }
+        return 0;
+    }
+
     public static int Check(int value) {
         int divisor = 3;
         if (value / 3 != value / divisor || value % 3 != value % divisor) { return 1; }
@@ -28,6 +44,9 @@ public class Program {
         if (Check(minimum) != 0 || Check(-1000004) != 0 || Check(-1) != 0 ||
             Check(0) != 0 || Check(1) != 0 || Check(1000004) != 0 ||
             Check(2147483647) != 0) { return 90; }
+        if (CheckFolded(minimum) != 0 || CheckFolded(-1) != 0 ||
+            CheckFolded(0) != 0 || CheckFolded(1) != 0 ||
+            CheckFolded(2147483647) != 0) { return 93; }
         int state = 1;
         int i = 0;
         while (i < 10000) {

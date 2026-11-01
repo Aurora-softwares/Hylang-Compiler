@@ -1,0 +1,418 @@
+{
+  "binaries": {
+    "baseline": "b351979b317c59fc799f34a75fb64066ddfe5a4d5e35098f8186f9f807a93864",
+    "candidate": "869d3709092deb45526bfe58d052b4cb408bd776004bf6d413a2c85be43ec545"
+  },
+  "baseline_median_ms": 88.585586,
+  "candidate_median_ms": 87.896907,
+  "candidate_faster_pairs": 63,
+  "pairs": 100,
+  "samples_ms": [
+    {
+      "baseline": 88.385662,
+      "candidate": 87.441978
+    },
+    {
+      "baseline": 87.398536,
+      "candidate": 95.640155
+    },
+    {
+      "candidate": 87.111428,
+      "baseline": 90.816175
+    },
+    {
+      "baseline": 89.740561,
+      "candidate": 88.186847
+    },
+    {
+      "baseline": 87.039707,
+      "candidate": 88.531751
+    },
+    {
+      "baseline": 86.679577,
+      "candidate": 88.811113
+    },
+    {
+      "baseline": 88.093904,
+      "candidate": 88.187526
+    },
+    {
+      "baseline": 88.375824,
+      "candidate": 87.424322
+    },
+    {
+      "baseline": 90.92985,
+      "candidate": 87.206244
+    },
+    {
+      "candidate": 87.034417,
+      "baseline": 88.169297
+    },
+    {
+      "candidate": 89.046805,
+      "baseline": 86.802255
+    },
+    {
+      "baseline": 88.14487,
+      "candidate": 86.136016
+    },
+    {
+      "candidate": 87.514715,
+      "baseline": 88.033163
+    },
+    {
+      "candidate": 88.647634,
+      "baseline": 88.614838
+    },
+    {
+      "baseline": 88.713937,
+      "candidate": 87.142768
+    },
+    {
+      "candidate": 87.418646,
+      "baseline": 85.856963
+    },
+    {
+      "baseline": 88.287769,
+      "candidate": 87.270966
+    },
+    {
+      "candidate": 86.986189,
+      "baseline": 86.586852
+    },
+    {
+      "candidate": 87.795777,
+      "baseline": 86.120125
+    },
+    {
+      "baseline": 90.165295,
+      "candidate": 88.721893
+    },
+    {
+      "baseline": 90.314349,
+      "candidate": 89.845472
+    },
+    {
+      "candidate": 88.229412,
+      "baseline": 87.627381
+    },
+    {
+      "baseline": 87.512595,
+      "candidate": 88.904152
+    },
+    {
+      "baseline": 87.905605,
+      "candidate": 88.909909
+    },
+    {
+      "baseline": 88.32562,
+      "candidate": 87.719792
+    },
+    {
+      "candidate": 88.784946,
+      "baseline": 89.779156
+    },
+    {
+      "baseline": 88.657705,
+      "candidate": 88.489318
+    },
+    {
+      "baseline": 86.960298,
+      "candidate": 89.356969
+    },
+    {
+      "baseline": 89.408918,
+      "candidate": 87.656673
+    },
+    {
+      "candidate": 87.621361,
+      "baseline": 89.014209
+    },
+    {
+      "candidate": 88.454365,
+      "baseline": 87.479381
+    },
+    {
+      "candidate": 93.066325,
+      "baseline": 87.97521
+    },
+    {
+      "baseline": 89.969134,
+      "candidate": 86.341216
+    },
+    {
+      "candidate": 87.645023,
+      "baseline": 88.59818
+    },
+    {
+      "baseline": 89.931161,
+      "candidate": 86.404064
+    },
+    {
+      "baseline": 88.940554,
+      "candidate": 87.993433
+    },
+    {
+      "candidate": 88.553172,
+      "baseline": 88.088699
+    },
+    {
+      "baseline": 88.647407,
+      "candidate": 86.932668
+    },
+    {
+      "candidate": 88.890991,
+      "baseline": 87.907218
+    },
+    {
+      "candidate": 88.800437,
+      "baseline": 85.932565
+    },
+    {
+      "candidate": 88.315892,
+      "baseline": 91.108916
+    },
+    {
+      "candidate": 86.627184,
+      "baseline": 87.701741
+    },
+    {
+      "candidate": 85.99006,
+      "baseline": 87.858145
+    },
+    {
+      "baseline": 86.270575,
+      "candidate": 89.648334
+    },
+    {
+      "candidate": 85.046174,
+      "baseline": 89.203368
+    },
+    {
+      "candidate": 86.237953,
+      "baseline": 88.758361
+    },
+    {
+      "baseline": 87.876291,
+      "candidate": 88.087959
+    },
+    {
+      "baseline": 86.619576,
+      "candidate": 109.789681
+    },
+    {
+      "candidate": 87.134126,
+      "baseline": 90.340156
+    },
+    {
+      "baseline": 87.401897,
+      "candidate": 87.134417
+    },
+    {
+      "baseline": 88.587769,
+      "candidate": 87.545715
+    },
+    {
+      "candidate": 87.915092,
+      "baseline": 89.082877
+    },
+    {
+      "baseline": 86.991293,
+      "candidate": 88.7089
+    },
+    {
+      "candidate": 87.992498,
+      "baseline": 88.965652
+    },
+    {
+      "baseline": 88.452269,
+      "candidate": 85.542344
+    },
+    {
+      "baseline": 87.65413,
+      "candidate": 87.723057
+    },
+    {
+      "candidate": 86.713003,
+      "baseline": 88.768044
+    },
+    {
+      "baseline": 88.725341,
+      "candidate": 87.375901
+    },
+    {
+      "baseline": 89.653205,
+      "candidate": 88.920102
+    },
+    {
+      "candidate": 88.104069,
+      "baseline": 89.856324
+    },
+    {
+      "baseline": 88.622298,
+      "candidate": 86.401955
+    },
+    {
+      "candidate": 87.226869,
+      "baseline": 86.73847
+    },
+    {
+      "candidate": 89.630304,
+      "baseline": 90.395115
+    },
+    {
+      "candidate": 87.649501,
+      "baseline": 88.583685
+    },
+    {
+      "candidate": 91.701773,
+      "baseline": 89.912974
+    },
+    {
+      "baseline": 88.160471,
+      "candidate": 88.600895
+    },
+    {
+      "baseline": 87.614919,
+      "candidate": 86.883738
+    },
+    {
+      "candidate": 87.355927,
+      "baseline": 89.101018
+    },
+    {
+      "candidate": 88.18133,
+      "baseline": 97.657704
+    },
+    {
+      "candidate": 88.222962,
+      "baseline": 88.844111
+    },
+    {
+      "candidate": 87.41017,
+      "baseline": 88.587487
+    },
+    {
+      "candidate": 85.36375,
+      "baseline": 88.392999
+    },
+    {
+      "candidate": 86.091179,
+      "baseline": 87.331681
+    },
+    {
+      "baseline": 87.301363,
+      "candidate": 87.878722
+    },
+    {
+      "baseline": 87.975108,
+      "candidate": 87.367646
+    },
+    {
+      "candidate": 87.290064,
+      "baseline": 91.704401
+    },
+    {
+      "candidate": 88.627771,
+      "baseline": 88.755102
+    },
+    {
+      "baseline": 87.910212,
+      "candidate": 85.611858
+    },
+    {
+      "baseline": 88.820409,
+      "candidate": 86.350013
+    },
+    {
+      "baseline": 86.940242,
+      "candidate": 88.497012
+    },
+    {
+      "baseline": 103.358558,
+      "candidate": 87.431975
+    },
+    {
+      "baseline": 88.743035,
+      "candidate": 89.332784
+    },
+    {
+      "candidate": 88.776667,
+      "baseline": 88.090478
+    },
+    {
+      "baseline": 90.820211,
+      "candidate": 87.628095
+    },
+    {
+      "candidate": 100.422126,
+      "baseline": 86.63843
+    },
+    {
+      "baseline": 89.124741,
+      "candidate": 86.695136
+    },
+    {
+      "baseline": 87.79002,
+      "candidate": 88.673543
+    },
+    {
+      "candidate": 86.8788,
+      "baseline": 94.765577
+    },
+    {
+      "candidate": 88.010137,
+      "baseline": 92.848361
+    },
+    {
+      "candidate": 87.80035,
+      "baseline": 89.230067
+    },
+    {
+      "baseline": 87.745414,
+      "candidate": 88.281726
+    },
+    {
+      "candidate": 89.322515,
+      "baseline": 89.217462
+    },
+    {
+      "candidate": 86.027107,
+      "baseline": 89.997042
+    },
+    {
+      "baseline": 88.978288,
+      "candidate": 87.962497
+    },
+    {
+      "candidate": 85.636749,
+      "baseline": 89.423568
+    },
+    {
+      "baseline": 87.559247,
+      "candidate": 90.378074
+    },
+    {
+      "baseline": 88.792087,
+      "candidate": 88.238449
+    },
+    {
+      "candidate": 88.487693,
+      "baseline": 88.62462
+    },
+    {
+      "candidate": 106.678961,
+      "baseline": 87.836051
+    },
+    {
+      "candidate": 88.775458,
+      "baseline": 87.308636
+    }
+  ],
+  "compiler_sha256": {
+    "baseline": "5df0fa78c6398410fa603deae70c7f641cad4d6183db62b8b8681c99d7e5a3e8",
+    "candidate": "d1da6bcd8ab2b90fc64a78bf9dd3246757aeb9819f0f8b33a60ccafc0f2f926b"
+  },
+  "source_sha256": "636959c8dcd1741813cada9b015d10e81c0cba7b461261675df782c2971d151a",
+  "method": "Randomized alternating whole-process pairs; exact stdout, empty stderr, and successful exit checked for every run; three warmups per executable."
+}
