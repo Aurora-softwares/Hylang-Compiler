@@ -17,10 +17,13 @@ This is an architectural migration, **not completed by the initial preflight com
 
 ## Implemented on this branch
 
-- [x] Add `hy ui validate <file.hyui|project.hyproj>` inside the self-hosted compiler.
-- [x] Allow pure-Hydrogen preflight without requiring `hyui-native`. The native schema checker remains an extra check if installed.
-- [x] Add `tests/ui/test-stage-ui-preflight.sh` to check Stage 1, 2, and 3.
-- [ ] Implement the full native `.hyui` schema in Hydrogen so compilation validates exactly what runtime accepts.
+- 🟢 Add `hy ui validate <file.hyui|project.hyproj>` inside the self-hosted compiler.
+- 🟢 Allow pure-Hydrogen preflight without requiring `hyui-native`. The native schema checker remains an extra check if installed.
+- 🟢 Add `tests/ui/test-stage-ui-preflight.sh` to check Stage 1, 2, and 3.
+- 🟢 Require pure-Hydrogen UI preflight before compiling a `--ui-backend` for every supported desktop target.
+- 🟢 Add `tests/ui/test-ui-backend-no-host.sh` to build and run the UI app's Hydrogen backend with no native SDK or Qt host. This verifies **code generation and application logic only**, not a graphical window.
+- 🔴 Make the default `hy build <ui.hyproj>` generate and launch a full native application without any auxiliary host executable. This is the requested next release gate.
+- 🔴 Implement the full native `.hyui` schema in Hydrogen so compilation validates exactly what runtime accepts.
 - [ ] Replace process-based `Bridge` event delivery with **in-process** calls into the compiled Hydrogen application.
 - [ ] Define target-specific UI runtime ABI for Linux GTK4/libadwaita, Windows WinUI 3, and macOS AppKit. Preserve OS theme and controls.
 - [ ] Extend each target compiler/linker to link the appropriate UI entry point and runtime into the generated app rather than generating a launcher/backend pair.
@@ -47,6 +50,7 @@ After bootstrapping:
 ./build/self_hosting/linux/hydrogen-stage2 ui validate samples/ui_studio/Studio.hyproj
 ./build/self_hosting/linux/hydrogen-stage3 ui validate samples/ui_studio/Studio.hyproj
 bash tests/ui/test-stage-ui-preflight.sh
+bash tests/ui/test-ui-backend-no-host.sh
 ```
 
-**Current limitation:** The production UI app build still requires the separate native renderer and launcher. The validation change alone does not satisfy the final single-executable acceptance criteria.
+**Current limitation:** Production UI app builds still require the separate renderer and launcher. Compiler-only `--ui-backend` builds work without a host but print HYUI protocol commands rather than opening a window. The final single-process graphical application criterion is **not yet met**.
