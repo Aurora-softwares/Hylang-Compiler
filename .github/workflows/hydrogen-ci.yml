@@ -138,6 +138,19 @@ jobs:
           if ($backend.Length -lt 64 -or $backend[0] -ne 0x4d -or $backend[1] -ne 0x5a) {
             throw 'Windows UI backend is not a PE executable'
           }
+          $junction = Join-Path (Resolve-Path samples/ui_studio/assets) 'linked-asset'
+          $target = Join-Path $env:RUNNER_TEMP 'hyui-linked-asset'
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          New-Item -ItemType Junction -Path $junction -Target $target | Out-Null
+          try {
+            $details = (& build-sdk/hydrogen-stage1.exe build samples/ui_studio/Studio.hyproj --target windows --ui-sdk build-sdk/native-sdk -o build-sdk/StudioLinked --hide-progress --hide-spinner --hide-log 2>&1 | Out-String)
+            if ($LASTEXITCODE -eq 0 -or $details -notmatch 'UI assets must not contain links') {
+              throw "Linked UI asset was not rejected: $details"
+            }
+            if (Test-Path build-sdk/StudioLinked.exe) { throw 'Rejected UI package left a launcher' }
+          } finally {
+            Remove-Item -LiteralPath $junction -Force
+          }
       - name: Upload exported Windows runtime
         uses: actions/upload-artifact@v4
         with:
