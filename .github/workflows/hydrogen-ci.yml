@@ -91,6 +91,24 @@ jobs:
           test -x build/Studio
           test -x build/Studio.runtime/hyui
           test -x build/Studio.runtime/app/__hyui_backend
+      - name: Cross-package Windows and macOS native UI backends with SDK fixtures
+        run: |
+          mkdir -p build/native-sdk/windows-x64 build/native-sdk/macos-x64.app/Contents/MacOS
+          printf '{"format":1,"target":"windows-x64","renderer":"winui3"}' > build/native-sdk/windows-x64/hyui-runtime.json
+          printf 'MZstub' > build/native-sdk/windows-x64/hyui.exe
+          printf 'MZstub' > build/native-sdk/windows-x64/hyui-launcher.exe
+          printf '{"format":1,"target":"macos-x64","renderer":"appkit"}' > build/native-sdk/macos-x64.app/Contents/hyui-runtime.json
+          printf 'native-host' > build/native-sdk/macos-x64.app/Contents/MacOS/hyui
+          printf 'native-launcher' > build/native-sdk/macos-x64.app/Contents/MacOS/hyui-launcher
+          printf '<plist version="1.0"></plist>' > build/native-sdk/macos-x64.app/Contents/Info.plist
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target windows --ui-sdk build/native-sdk -o build/StudioWin
+          test -f build/StudioWin.exe.runtime/app/__hyui_backend.exe
+          test -f build/StudioWin.exe
+          file build/StudioWin.exe.runtime/app/__hyui_backend.exe
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target macos --ui-sdk build/native-sdk -o build/StudioMac
+          test -f build/StudioMac.app/Contents/Resources/app/__hyui_backend
+          test -f build/StudioMac.app/Contents/MacOS/hyui-launcher
+          file build/StudioMac.app/Contents/Resources/app/__hyui_backend
       - name: Rebuild owned UI package without replacing unowned files
         run: |
           ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/Studio
