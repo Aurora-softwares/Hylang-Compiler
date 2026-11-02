@@ -143,9 +143,12 @@ jobs:
           New-Item -ItemType Directory -Path $target -Force | Out-Null
           New-Item -ItemType Junction -Path $junction -Target $target | Out-Null
           try {
-            $details = (& build-sdk/hydrogen-stage1.exe build samples/ui_studio/Studio.hyproj --target windows --ui-sdk build-sdk/native-sdk -o build-sdk/StudioLinked --hide-progress --hide-spinner --hide-log 2>&1 | Out-String)
-            if ($LASTEXITCODE -eq 0 -or $details -notmatch 'UI assets must not contain links') {
-              throw "Linked UI asset was not rejected: $details"
+            $linkedStdout = Join-Path $env:RUNNER_TEMP 'hyui-linked-stdout.txt'
+            $linkedStderr = Join-Path $env:RUNNER_TEMP 'hyui-linked-stderr.txt'
+            $linkedBuild = Start-Process -FilePath (Resolve-Path build-sdk/hydrogen-stage1.exe).Path -ArgumentList @('build', 'samples/ui_studio/Studio.hyproj', '--target', 'windows', '--ui-sdk', 'build-sdk/native-sdk', '-o', 'build-sdk/StudioLinked', '--hide-progress', '--hide-spinner', '--hide-log') -NoNewWindow -Wait -PassThru -RedirectStandardOutput $linkedStdout -RedirectStandardError $linkedStderr
+            $details = (Get-Content $linkedStdout -Raw) + (Get-Content $linkedStderr -Raw)
+            if ($linkedBuild.ExitCode -eq 0 -or $details -notmatch 'UI assets must not contain links') {
+              throw "Linked UI asset was not rejected (exit $($linkedBuild.ExitCode)): $details"
             }
             if (Test-Path build-sdk/StudioLinked.exe) { throw 'Rejected UI package left a launcher' }
           } finally {
