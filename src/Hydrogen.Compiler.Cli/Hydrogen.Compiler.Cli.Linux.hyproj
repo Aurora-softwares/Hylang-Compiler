@@ -10,7 +10,7 @@ project_references = [
 	"../Hydrogen.Compiler.IR/Hydrogen.Compiler.IR.hyproj",
 	"../Hydrogen.Compiler.Binding/Hydrogen.Compiler.Binding.hyproj",
 	"../Hydrogen.Compiler.RuntimeModel/Hydrogen.Compiler.RuntimeModel.hyproj",
-	"../Hydrogen.Compiler.CodeGen.X64/Hydrogen.Compiler.CodeGen.X64.hyproj"
+	"../Hydrogen.Compiler.CodeGen.X64/Hydrogen.Compiler.CodeGen.X64.hyproj", "../Hydrogen.Compiler.UI/Hydrogen.Compiler.UI.hyproj"
 ]
 
 [package]
