@@ -982,6 +982,7 @@ namespace Hydrogen.Compiler.Cli {
             string output = "";
             string target = "";
             bool uiBackend = false;
+            string uiSdk = "";
             bool hideProgress = false;
             bool hideSpinner = false;
             bool hideLog = false;
@@ -1004,6 +1005,13 @@ namespace Hydrogen.Compiler.Cli {
                     else if (target == "windows" || target == "windows-x64") { target = "windows"; }
                     else if (target == "mac" || target == "macos" || target == "macos-x64") { target = "macos"; }
                     else { System.Console.WriteLine("error: unsupported desktop target"); return 1; }
+                    option = option + 2;
+                } else if (args[option] == "--ui-sdk") {
+                    if (option + 1 >= args.Length || uiSdk != "") {
+                        System.Console.WriteLine("error: missing or repeated native UI SDK directory");
+                        return 1;
+                    }
+                    uiSdk = args[option + 1];
                     option = option + 2;
                 } else if (args[option] == "--ui-backend") {
                     uiBackend = true;
@@ -1058,12 +1066,13 @@ namespace Hydrogen.Compiler.Cli {
                     return 1;
                 }
                 if (projectType == "exe" && !System.Host.Process.IsWindows()) {
-                    string error = UIProjectBuilder.Preflight(projectPath);
+                    string sdkRoot = UIRuntimeManager.SdkRoot(uiSdk);
+                    string error = UIProjectBuilder.Preflight(projectPath, sdkRoot);
                     if (error != "") {
                         System.Console.WriteLine("error: " + error);
                         return 1;
                     }
-                    error = UIPackager.Prepare(projectPath, output, "linux-x64");
+                    error = UIPackager.Prepare(projectPath, output, "linux-x64", sdkRoot);
                     if (error != "") {
                         System.Console.WriteLine("error: " + error);
                         return 1;
@@ -1075,7 +1084,7 @@ namespace Hydrogen.Compiler.Cli {
                         System.Console.Write(uiResult.DiagnosticsText());
                         return 1;
                     }
-                    error = UIPackager.Finish(projectPath, output, "linux-x64");
+                    error = UIPackager.Finish(projectPath, output, "linux-x64", sdkRoot);
                     if (error != "") {
                         System.Console.WriteLine("error: " + error);
                         return 1;
