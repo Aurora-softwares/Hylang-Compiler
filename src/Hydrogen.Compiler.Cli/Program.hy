@@ -1065,7 +1065,9 @@ namespace Hydrogen.Compiler.Cli {
                     System.Console.WriteLine("error: UI projects require a desktop executable target");
                     return 1;
                 }
-                if (projectType == "exe" && !System.Host.Process.IsWindows()) {
+                bool onMacOS = !System.Host.Process.IsWindows() &&
+                    System.Host.Process.Run("test \"$(uname -s)\" = Darwin") == 0;
+                if (projectType == "exe" && !System.Host.Process.IsWindows() && !onMacOS) {
                     string sdkRoot = UIRuntimeManager.SdkRoot(uiSdk);
                     string error = UIProjectBuilder.Preflight(projectPath, sdkRoot);
                     if (error != "") {
@@ -1097,7 +1099,8 @@ namespace Hydrogen.Compiler.Cli {
                 // The native runtime is exported once per OS and carried by
                 // the Hydrogen SDK. No separate hyui packaging executable.
                 string desktopTarget = projectType == "exe" && System.Host.Process.IsWindows()
-                    ? "windows-x64" : UIRuntimeManager.Target(projectType);
+                    ? "windows-x64" : (projectType == "exe" && onMacOS
+                    ? "macos-x64" : UIRuntimeManager.Target(projectType));
                 string sdk = UIRuntimeManager.PackageSdk(uiSdk, desktopTarget);
                 string destination = UIDesktopPackager.Output(output, desktopTarget);
                 string preflightSdk = UIRuntimeManager.SdkRoot("");
