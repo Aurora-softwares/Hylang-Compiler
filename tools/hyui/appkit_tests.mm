@@ -140,9 +140,12 @@ int main(int argc, char** argv) {
             require(bridge.state()["pages.value"].toInt() == 0, "toolbar workspace command did not reach Hydrogen");
             [galleryCommand performClick:nil]; finish();
             require(bridge.state()["pages.value"].toInt() == 1, "toolbar gallery command did not reach Hydrogen");
-            [(NSButton*)find(gallery, @"showPopover") performClick:nil]; finish(); view->pump();
+            NSButton* tipButton = (NSButton*)find(gallery, @"showPopover");
+            [tipButton scrollRectToVisible:tipButton.bounds]; view->pump();
+            [tipButton performClick:nil]; finish(); view->pump();
             NSView* nativeTip = nil;
             for (NSWindow* candidate in NSApp.windows) { nativeTip = find(candidate.contentView, @"templateTip"); if (nativeTip) { break; } }
+            if (!nativeTip) { std::cerr << "popover open=" << bridge.state()["templateTip.open"].toBool() << " target hidden=" << tipButton.hiddenOrHasHiddenAncestor << " windows=" << NSApp.windows.count << '\n'; }
             require(nativeTip != nil && bridge.state()["templateTip.open"].toBool(), "native AppKit popover did not open");
             require(bridge.apply("HYUI\tSET\ttemplateTip\ttext\tUpdated template tip\n"), "cannot update native popover text");
             require([((NSTextField*)nativeTip.subviews.firstObject).stringValue isEqualToString:@"Updated template tip"], "native popover text did not update");
