@@ -44,7 +44,10 @@ with tempfile.TemporaryDirectory(prefix="hydrogen ui ' ") as temporary:
         image = (work / "window.png").read_bytes()
         assert image.startswith(b"\x89PNG\r\n\x1a\n")
         actual_width, actual_height = struct.unpack(">II", image[16:24])
-        assert 0 < actual_width <= width and actual_height <= 740
+        assert 0 < actual_width <= width and actual_height <= 740, (
+            f"native screenshot {actual_width}x{actual_height} exceeds requested "
+            f"{width}x740 after {event or 'startup'}"
+        )
         return json.loads((work / "state.json").read_text())
 
     gallery = state("ShowControls:showControls")
