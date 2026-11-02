@@ -78,6 +78,16 @@ jobs:
           lipo -archs build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui | grep -q x86_64
           plutil -lint build-sdk/native-sdk/macos-x64.app/Contents/Info.plist
           tar -czf build-sdk/hydrogen-ui-sdk-macos-x64.tar.gz -C build-sdk/native-sdk macos-x64.app
+      - name: Build and launch a packaged Hydrogen AppKit application
+        run: |
+          cmake --build build-sdk --target hy --parallel 3
+          build-sdk/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-sdk/hydrogen-stage1
+          mkdir -p build/bootstrap
+          cp build-sdk/hyui-native build/bootstrap/hyui-native
+          ./build-sdk/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target macos --ui-sdk build-sdk/native-sdk -o build-sdk/Studio
+          test -x build-sdk/Studio.app/Contents/Resources/app/__hyui_backend
+          build-sdk/Studio.app/Contents/MacOS/hyui-launcher --state-output build-sdk/appkit-state.json --screenshot build-sdk/appkit-screenshot.png
+          test -s build-sdk/appkit-screenshot.png
       - name: Upload exported macOS runtime
         uses: actions/upload-artifact@v4
         with:
@@ -109,6 +119,24 @@ jobs:
           $manifest = Get-Content "$runtime/hyui-runtime.json" -Raw | ConvertFrom-Json
           if ($manifest.target -ne 'windows-x64' -or $manifest.renderer -ne 'winui3') {
             throw 'Native WinUI runtime manifest is incorrect'
+          }
+      - name: Build packaged WinUI application with the Hydrogen Stage 1 compiler
+        shell: pwsh
+        run: |
+          cmake --build build-sdk --target hy --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $seed = Get-ChildItem -Path build-sdk -Filter hy.exe -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          if (!$seed) { throw 'C++ bootstrap seed was not generated' }
+          & $seed build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-sdk/hydrogen-stage1.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & build-sdk/hydrogen-stage1.exe build samples/ui_studio/Studio.hyproj --target windows --ui-sdk build-sdk/native-sdk -o build-sdk/Studio
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path build-sdk/Studio.exe) -or !(Test-Path build-sdk/Studio.exe.runtime/app/__hyui_backend.exe)) {
+            throw 'Self-hosted WinUI application was not packaged'
+          }
+          $backend = [IO.File]::ReadAllBytes('build-sdk/Studio.exe.runtime/app/__hyui_backend.exe')
+          if ($backend.Length -lt 64 -or $backend[0] -ne 0x4d -or $backend[1] -ne 0x5a) {
+            throw 'Windows UI backend is not a PE executable'
           }
       - name: Upload exported Windows runtime
         uses: actions/upload-artifact@v4
