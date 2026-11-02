@@ -3,6 +3,7 @@ using Hydrogen.Compiler.Core;
 using Hydrogen.Compiler.Diagnostics;
 using Hydrogen.Compiler.Syntax;
 using Hydrogen.Compiler.Text;
+using Hydrogen.Compiler.UI;
 
 namespace Hydrogen.Compiler.Cli {
     public class Program {
@@ -1056,6 +1057,34 @@ namespace Hydrogen.Compiler.Cli {
                     System.Console.WriteLine("error: UI projects require a desktop executable target");
                     return 1;
                 }
+                if (projectType == "exe" && !System.Host.Process.IsWindows()) {
+                    string error = UIProjectBuilder.Preflight(projectPath);
+                    if (error != "") {
+                        System.Console.WriteLine("error: " + error);
+                        return 1;
+                    }
+                    error = UIPackager.Prepare(projectPath, output, "linux-x64");
+                    if (error != "") {
+                        System.Console.WriteLine("error: " + error);
+                        return 1;
+                    }
+                    string backend = output + ".runtime/app/__hyui_backend";
+                    NativeCompiler uiCompiler = new NativeCompiler();
+                    NativeCompilerResult uiResult = uiCompiler.BuildProject(projectPath, backend);
+                    if (!uiResult.Success()) {
+                        System.Console.Write(uiResult.DiagnosticsText());
+                        return 1;
+                    }
+                    error = UIPackager.Finish(projectPath, output, "linux-x64");
+                    if (error != "") {
+                        System.Console.WriteLine("error: " + error);
+                        return 1;
+                    }
+                    System.Console.WriteLine("wrote " + output + " (linux-x64; native GTK4 UI)");
+                    return 0;
+                }
+                // Other platforms retain their existing packaging flow until
+                // native runtime export and relocation have been ported.
                 return System.Host.Process.Run("hyui --package " + quotedProject + " --output " + quotedOutput + " --target " + projectType);
             }
             BuildProgress progress = new BuildProgress(hideProgress, hideSpinner, hideLog);
