@@ -42,6 +42,17 @@ namespace Hydrogen.Compiler.UI {
             if (Run("cp -- " + Quote("build/bootstrap/hyui-native") + " " + Quote(runtime + "/hyui")) != 0) {
                 return "failed to copy GTK4 native host";
             }
+            if (Run("mkdir -p -- " + Quote(runtime + "/lib")) != 0) {
+                return "failed to stage native UI libraries";
+            }
+            // GTK4 remains a system library; bundle Qt Core's nonvisual runtime
+            // dependencies, matching the native packager's Linux deployment rule.
+            string qtDependencies = "ldd " + Quote(runtime + "/hyui") +
+                " | awk '$1 ~ /^(libQt6Core[.]so|libicu|libdouble-conversion|libb2[.]so|libpcre2-16[.]so)/ && $2 == \"=>\" { print $3 }'" +
+                " | while IFS= read -r lib; do cp -L -- \"$lib\" " + Quote(runtime + "/lib/") +
+                " || exit 1; done";
+            if (Run(qtDependencies) != 0) { return "failed to bundle Qt Core runtime"; }
+            System.IO.File.WriteAllText(runtime + "/qt.conf", "[Paths]\\nPrefix=.\\nLibraries=lib\\n");
             System.IO.File.WriteAllText(app + "/__hyui_app.json",
                 "{\"format\":1,\"document\":\"" + JsonEscape(manifest.UI()) +
                 "\",\"backend\":\"__hyui_backend\",\"target\":\"linux-x64\"}");
@@ -61,6 +72,10 @@ namespace Hydrogen.Compiler.UI {
             if (!SafeRelative(relative)) { return "invalid UI asset path: " + relative; }
             string source = PathUtils.Join(root, relative);
             string destination = PathUtils.Join(app, relative);
+            // Never package links pointing outside the project.
+            if (Run("find -- " + Quote(source) + " -type l -print -quit | grep -q .") == 0) {
+                return "symlinked UI assets are not supported: " + relative;
+            }
             string parent = PathUtils.DirName(destination);
             if (Run("mkdir -p -- " + Quote(parent)) != 0 ||
                 Run("cp -R -- " + Quote(source) + " " + Quote(destination)) != 0) {
