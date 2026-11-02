@@ -53,11 +53,13 @@ public sealed partial class NativeWindow : Window
     readonly Dictionary<string, ContentDialog> dialogs = new();
     readonly Dictionary<string, (Flyout Flyout, TextBlock Label, FrameworkElement Target)> popovers = new();
     readonly HashSet<string> activePickers = new();
+    readonly CancellationTokenSource lifetime = new();
     string backend = "", directory = "", documentDirectory = "";
     bool applying, busy, disposing;
     void DisposeNative() {
         if (disposing) return;
         disposing = true;
+        lifetime.Cancel();
         foreach (var timer in timers.Values) timer.Stop();
         foreach (var popover in popovers.Values) popover.Flyout.Hide();
         foreach (var dialog in dialogs.Values.ToArray()) dialog.Hide();
@@ -316,7 +318,8 @@ public sealed partial class NativeWindow : Window
     {
         using var process = new Process { StartInfo = new ProcessStartInfo(backend) { WorkingDirectory = directory, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true } };
         foreach (string arg in arguments) process.StartInfo.ArgumentList.Add(arg);
-        process.Start(); using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        process.Start(); using var timeout = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
         try {
             var outputTask = ReadBounded(process.StandardOutput, 1024 * 1024, timeout.Token);
             var errorsTask = ReadBounded(process.StandardError, 65536, timeout.Token);
@@ -343,7 +346,7 @@ public sealed partial class NativeWindow : Window
                 values[id + ".path"] = path;
                 Dispatch(Attr(node, "onPick"), id);
             } else if (node.Attribute("onCancel") != null) Dispatch(Attr(node, "onCancel"), id);
-        } catch (Exception error) { errors.Text = error.Message; }
+        } catch (Exception error) { if (!disposing) errors.Text = error.Message; }
         finally { activePickers.Remove(id); }
     }
     async void ReadClipboard(string id) {
@@ -354,7 +357,7 @@ public sealed partial class NativeWindow : Window
             if (System.Text.Encoding.UTF8.GetByteCount(value) > 16384) throw new InvalidDataException("Clipboard text exceeds 16 KiB");
             values[id + ".value"] = value;
             Dispatch(Attr(nodes[id], "onRead"), id);
-        } catch (Exception error) { errors.Text = error.Message; }
+        } catch (Exception error) { if (!disposing) errors.Text = error.Message; }
     }
     async void Dispatch(string handler, string sender)
     {
@@ -385,7 +388,7 @@ public sealed partial class NativeWindow : Window
                 if (disposing) return;
                 Apply(response);
             } finally { if (secretPath != null) File.Delete(secretPath); }
-        } } catch (Exception error) { errors.Text = error.Message; } finally { busy = false; }
+        } } catch (Exception error) { if (!disposing) errors.Text = error.Message; } finally { busy = false; }
     }
     async void ShowDialogs() {
         if (disposing) return;
@@ -406,7 +409,7 @@ public sealed partial class NativeWindow : Window
                 values[id + ".open"] = "false";
                 values[id + ".value"] = (result == ContentDialogResult.Primary ? 0 : result == ContentDialogResult.Secondary ? 1 : buttons.Length - 1).ToString();
                 Dispatch(Attr(pair.Value, "onClose"), id);
-            } catch (Exception error) { dialogs.Remove(id); values[id + ".open"] = "false"; errors.Text = error.Message; }
+            } catch (Exception error) { dialogs.Remove(id); if (!disposing) { values[id + ".open"] = "false"; errors.Text = error.Message; } }
         }
     }
     void Apply(string output)

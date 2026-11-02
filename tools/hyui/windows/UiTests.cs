@@ -213,8 +213,17 @@ public sealed partial class NativeWindow
         string saved = Path.Combine(output, "saved-plan.txt"); ((TextBox)controls["savePath"]).Text = saved; await Idle(); Check(values["savePath.text"] == saved, "Save path edit did not reach the UI state"); Invoke(controls["save"]); await Idle();
         Check(File.ReadAllText(saved).Contains("Saved by the native UI CI test."), "Native Save did not persist input");
         Root.UpdateLayout(); CheckLayout();
-        await File.WriteAllTextAsync(Path.Combine(output, "report.json"), JsonSerializer.Serialize(new { passed = true, platform = "windows", screenshots = shots, captures, state = values }, new JsonSerializerOptions { WriteIndented = true }));
+        string originalBackend = backend;
+        backend = Path.Combine(Environment.SystemDirectory, "PING.EXE");
+        Task<string> inFlight = Run(new[] { "-n", "30", "127.0.0.1" });
+        await Task.Delay(200);
+        Check(!inFlight.IsCompleted, "Backend cancellation test did not start a live process");
         DisposeNative();
-        Check(timers.Values.All(timer => !timer.IsEnabled) && pending.Count == 0, "Native window disposal left timers or backend events active");
+        Check(lifetime.IsCancellationRequested && timers.Values.All(timer => !timer.IsEnabled) && pending.Count == 0,
+            "Native window disposal left a backend process, timer or queued event active");
+        try { await inFlight; throw new InvalidOperationException("Disposed window did not cancel its backend process"); }
+        catch (OperationCanceledException) { }
+        backend = originalBackend;
+        await File.WriteAllTextAsync(Path.Combine(output, "report.json"), JsonSerializer.Serialize(new { passed = true, platform = "windows", screenshots = shots, captures, state = values }, new JsonSerializerOptions { WriteIndented = true }));
     }
 }
