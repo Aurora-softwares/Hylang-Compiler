@@ -587,7 +587,11 @@ printf "\n"
 # Stage 0
 # ------------------------------------------------------------------------------
 step "Configuring build..."
-run cmake -S "$PROJECT_DIR" -B "$BOOTSTRAP_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
+# UI runtime generation is optional. CMake remembers HYDROGEN_BUILD_UI=ON
+# from earlier runs, so explicitly reset it before compiling Stage 0.
+# Native runtime support is configured separately below when available.
+run cmake -S "$PROJECT_DIR" -B "$BOOTSTRAP_BUILD_DIR" \
+    -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=OFF
 step "Building C++ Stage 0 compiler..."
 run cmake --build "$BOOTSTRAP_BUILD_DIR" --target hy --parallel
 require_executable "$STAGE0" "Stage 0 compiler"
