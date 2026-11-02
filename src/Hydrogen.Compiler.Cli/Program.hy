@@ -1031,7 +1031,7 @@ namespace Hydrogen.Compiler.Cli {
                 }
             }
             if (output == "") {
-                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--hide-progress] [--hide-spinner] [--hide-log]");
+                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--ui-sdk <directory>] [--hide-progress] [--hide-spinner] [--hide-log]");
                 return 1;
             }
 
@@ -1342,7 +1342,7 @@ namespace Hydrogen.Compiler.Cli {
             System.Console.WriteLine("usage: hy compile <file.hy> --target uefi-x64 -o <output>");
             System.Console.WriteLine("usage: hy compile <file.hy> --target windows-x64 -o <output.exe>");
             System.Console.WriteLine("usage: hy compile <file.hy> --target macos-x64 -o <output>");
-            System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--hide-progress] [--hide-spinner] [--hide-log]");
+            System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--ui-sdk <directory>] [--hide-progress] [--hide-spinner] [--hide-log]");
             System.Console.WriteLine("usage: hy stage-compare <project.hyproj> --stage1 <path> --stage2 <path>");
             System.Console.WriteLine("usage: hy package pack <library.hyproj> -o <output.hypkg>");
             System.Console.WriteLine("usage: hy package add <project.hyproj> <source.hypkg>");
