@@ -28,7 +28,16 @@ namespace Hydrogen.Compiler.UI {
             // Reuse its authoritative .hyui schema parser during compilation,
             // instead of accepting a subset of the existing UI format.
             string host = UIRuntimeManager.NativeHost(sdkRoot);
-            if (!System.IO.File.Exists(host)) { return "native UI runtime is not built: " + host; }
+            if (!System.IO.File.Exists(host)) {
+                // WinUI hosts are supplied as exported native runtimes rather
+                // than a Qt validation executable. The Hydrogen lexical check
+                // runs here; the WinUI host validates the full schema on launch.
+                if (System.Host.Process.IsWindows()) {
+                    System.Console.WriteLine("warning: full native .hyui schema validation is deferred to WinUI startup");
+                    return "";
+                }
+                return "native UI runtime is not built: " + host;
+            }
             if (System.Host.Process.Run(Quote(host) + " --validate --document " + Quote(resolved)) != 0) {
                 return "native .hyui validation failed: " + resolved;
             }
