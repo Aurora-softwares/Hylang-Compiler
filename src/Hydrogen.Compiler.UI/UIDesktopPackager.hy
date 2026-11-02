@@ -50,7 +50,8 @@ namespace Hydrogen.Compiler.UI {
             } else if (exists && !System.IO.File.Exists(output + "/Contents/hyui-runtime.json")) {
                 return "refusing to overwrite an unowned macOS application";
             }
-            if (!MkDir(stage)) { return "cannot create desktop UI staging directory"; }
+            if (!MkDir(PathUtils.DirName(stage))) { return "cannot create desktop UI output directory"; }
+            if (target == "macos-x64" && !MkDir(stage)) { return "cannot create macOS staging directory"; }
             string dest = target == "windows-x64" ? stage : stage + "/Contents";
             if (!Copy(source, dest)) { Abort(output); return "cannot stage native runtime"; }
             string app = target == "windows-x64" ? stage + "/app" : dest + "/Resources/app";
@@ -141,7 +142,7 @@ namespace Hydrogen.Compiler.UI {
         }
 
         private static bool MkDir(string path) {
-            if (System.Host.Process.IsWindows()) { return PS("New-Item -ItemType Directory -Force -LiteralPath " + PQ(path) + " | Out-Null"); }
+            if (System.Host.Process.IsWindows()) { return PS("[System.IO.Directory]::CreateDirectory(" + PQ(path) + ") | Out-Null"); }
             return Unix("mkdir -p -- " + SQ(path));
         }
         private static bool Copy(string source, string dest) {
