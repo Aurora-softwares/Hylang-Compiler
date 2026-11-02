@@ -9,6 +9,7 @@ namespace Hydrogen.Compiler.Core {
         private string output;
         private bool hasUi;
         private string ui;
+        private string[] uiAssets;
         private string[] sources;
         private string[] projectReferences;
         private string[] dependencyIds;
@@ -31,6 +32,7 @@ namespace Hydrogen.Compiler.Core {
             output = inputOutput;
             hasUi = false;
             ui = "";
+            uiAssets = new string[0];
             sources = inputSources;
             projectReferences = inputProjectReferences;
             dependencyIds = inputDependencyIds;
@@ -53,6 +55,7 @@ namespace Hydrogen.Compiler.Core {
         public string Output() { return output; }
         public bool HasUI() { return hasUi; }
         public string UI() { return ui; }
+        public string[] UIAssets() { return uiAssets; }
         public string[] Sources() { return sources; }
         public string[] ProjectReferences() { return projectReferences; }
         public string[] DependencyIds() { return dependencyIds; }
@@ -78,6 +81,7 @@ namespace Hydrogen.Compiler.Core {
             string packageId = "";
             string output = "";
             string ui = "";
+            string[] uiAssets = new string[0];
             bool hasUi = false;
             string[] sources = new string[0];
             string[] projectReferences = new string[0];
@@ -158,6 +162,8 @@ namespace Hydrogen.Compiler.Core {
                 } else if (key == "ui") {
                     hasUi = true;
                     ui = Unquote(value);
+                } else if (key == "ui_assets") {
+                    uiAssets = ParseStringArray(value);
                 } else if (key == "sources") {
                     sources = ParseStringArray(value);
                 } else if (key == "project_references") {
@@ -178,6 +184,7 @@ namespace Hydrogen.Compiler.Core {
                 driverVendor, driverDevice, driverClass, driverSubclass, driverInterface, validDriver);
             result.hasUi = hasUi;
             result.ui = ui;
+            result.uiAssets = uiAssets;
             return result;
         }
 
