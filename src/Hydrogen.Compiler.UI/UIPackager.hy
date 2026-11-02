@@ -4,12 +4,12 @@ namespace Hydrogen.Compiler.UI {
     // Linux native packaging. The compiler builds the Hydrogen backend itself.
     // This module only stages the OS host and application assets.
     public class UIPackager {
-        public static string Prepare(string projectPath, string output, string target) {
+        public static string Prepare(string projectPath, string output, string target, string sdkRoot) {
             if (target != "linux-x64") {
                 return "self-hosted UI packaging currently supports linux-x64 only";
             }
-            if (!System.IO.File.Exists("build/bootstrap/hyui-native") ||
-                !System.IO.File.Exists("build/bootstrap/hyui-launcher")) {
+            if (!System.IO.File.Exists(UIRuntimeManager.NativeHost(sdkRoot)) ||
+                !System.IO.File.Exists(UIRuntimeManager.NativeLauncher(sdkRoot))) {
                 return "native UI SDK missing: build with Qt 6.8+ and HYDROGEN_BUILD_UI=ON";
             }
             string stage = output + ".ui-staging";
@@ -33,7 +33,7 @@ namespace Hydrogen.Compiler.UI {
             return "";
         }
 
-        public static string Finish(string projectPath, string output, string target) {
+        public static string Finish(string projectPath, string output, string target, string sdkRoot) {
             if (target != "linux-x64") { return "unsupported UI target"; }
             HyprojManifest manifest = HyprojManifest.Load(projectPath);
             string root = PathUtils.DirName(projectPath);
@@ -51,7 +51,7 @@ namespace Hydrogen.Compiler.UI {
                 if (error != "") { return error; }
                 i = i + 1;
             }
-            if (Run("cp -- " + Quote("build/bootstrap/hyui-native") + " " + Quote(runtime + "/hyui")) != 0) {
+            if (Run("cp -- " + Quote(UIRuntimeManager.NativeHost(sdkRoot)) + " " + Quote(runtime + "/hyui")) != 0) {
                 return "failed to copy GTK4 native host";
             }
             if (Run("mkdir -p -- " + Quote(runtime + "/lib")) != 0) {
@@ -70,7 +70,7 @@ namespace Hydrogen.Compiler.UI {
                 "\",\"backend\":\"__hyui_backend\",\"target\":\"linux-x64\"}");
             System.IO.File.WriteAllText(runtime + "/hyui-runtime.json",
                 "{\"format\":1,\"target\":\"linux-x64\",\"renderer\":\"gtk4\"}");
-            if (Run("cp -- " + Quote("build/bootstrap/hyui-launcher") + " " + Quote(output + ".ui-launcher")) != 0) {
+            if (Run("cp -- " + Quote(UIRuntimeManager.NativeLauncher(sdkRoot)) + " " + Quote(output + ".ui-launcher")) != 0) {
                 return "failed to stage application launcher";
             }
             bool replacing = Run("test -e " + Quote(output)) == 0;
