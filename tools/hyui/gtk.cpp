@@ -296,6 +296,43 @@ public:
         } else if (tag == "MenuItem" && a.contains("checked")) {
             w = api.call<W>("gtk_check_button_new_with_label", ""); c->widget = w;
             connect(c, "toggled", [this, c, event] { event("checked", api.call<int>("gtk_check_button_get_active", c->widget) != 0, "onClick"); });
+        } else if (tag == "FilePicker") {
+            w = api.call<W>("gtk_button_new_with_label", ""); c->widget = w;
+            connect(c, "clicked", [this, c] {
+                if (c->dialog) { return; }
+                const QString mode = c->node->attributes.value("mode");
+                const int action = mode == "save" ? 1 : mode == "folder" ? 2 : 0;
+                const QByteArray title = c->node->attributes.value("text").toUtf8();
+                c->dialog = api.call<W>("gtk_file_chooser_native_new", title.constData(), window, action,
+                                        mode == "save" ? "_Save" : "_Open", "_Cancel");
+                api.call("gtk_native_dialog_set_modal", c->dialog, 1);
+                c->responseAction = [this, c](int response) {
+                    W dialog = c->dialog; c->dialog = nullptr;
+                    if (!dialog) { return; }
+                    bool pickedLocalPath = false;
+                    if (response == -3) {
+                        W file = api.call<W>("gtk_file_chooser_get_file", dialog);
+                        if (file) {
+                            char* path = api.call<char*>("g_file_get_path", file);
+                            if (path) {
+                                bridge.store(c->node->id, "path", QString::fromUtf8(path));
+                                bridge.dispatch(c->node->attributes["onPick"], c->node->id);
+                                pickedLocalPath = true;
+                                api.call("g_free", path);
+                            }
+                            api.call("g_object_unref", file);
+                        }
+                    }
+                    if (!pickedLocalPath) {
+                        const QString handler = c->node->attributes.value("onCancel");
+                        if (!handler.isEmpty()) { bridge.dispatch(handler, c->node->id); }
+                    }
+                    api.call("gtk_native_dialog_destroy", dialog);
+                    api.call("g_object_unref", dialog);
+                };
+                api.call<unsigned long>("g_signal_connect_data", c->dialog, "response", reinterpret_cast<void(*)()>(responseThunk), c, nullptr, 0);
+                api.call("gtk_native_dialog_show", c->dialog);
+            });
         } else if (tag == "Button" || tag == "MenuItem") {
             w = api.call<W>("gtk_button_new_with_label", ""); c->widget = w;
             if (a.value("primary") == "true") { api.css(w, "suggested-action"); }
@@ -366,7 +403,7 @@ public:
         c->widget = w;
         if (a.contains("accessibleName")) { api.call("gtk_accessible_update_property", w, 4, a["accessibleName"].toUtf8().constData(), -1); }
         if (a.contains("tooltip")) { api.text(w, "gtk_widget_set_tooltip_text", a["tooltip"]); }
-        api.call("gtk_widget_set_hexpand", w, a.value("fill", tag == "Button" || tag == "Spinner" ? "false" : "true") == "true" ? 1 : 0);
+        api.call("gtk_widget_set_hexpand", w, a.value("fill", tag == "Button" || tag == "FilePicker" || tag == "Spinner" ? "false" : "true") == "true" ? 1 : 0);
         api.call("gtk_widget_set_valign", w, 1);
         if (tag == "Image") { api.call("gtk_widget_set_hexpand", w, 0); }
         // A GtkSwitch has no text property: use an ordinary native label beside
@@ -409,7 +446,7 @@ public:
             api.call("gtk_widget_set_visible", c->container ? c->container : c->widget, value("visible").toBool() ? 1 : 0);
             api.call("gtk_widget_set_sensitive", c->widget, value("enabled").toBool() ? 1 : 0);
             if (tag == "Label") { api.text(c->widget, "gtk_label_set_text", value("text").toString()); }
-            if (tag == "Button" || (tag == "MenuItem" && !c->node->attributes.contains("checked"))) { api.text(c->widget, "gtk_button_set_label", value("text").toString()); }
+            if (tag == "Button" || tag == "FilePicker" || (tag == "MenuItem" && !c->node->attributes.contains("checked"))) { api.text(c->widget, "gtk_button_set_label", value("text").toString()); }
             if ((tag == "Input" || tag == "SearchInput") && QString::fromUtf8(api.call<const char*>("gtk_editable_get_text", c->widget)) != value("text").toString()) { api.text(c->widget, "gtk_editable_set_text", value("text").toString()); }
             if (tag == "TextArea") {
                 char* current = nullptr; api.call("g_object_get", c->buffer, "text", &current, nullptr);

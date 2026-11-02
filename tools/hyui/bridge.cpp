@@ -114,7 +114,8 @@ void Bridge::next() {
     int size = 0;
     for (auto it = document.properties.cbegin(); it != document.properties.cend(); ++it) {
         QString prop;
-        if (it.value().contains("value")) { prop = "value"; }
+        if (it.value().contains("path")) { prop = "path"; }
+        else if (it.value().contains("value")) { prop = "value"; }
         else if (it.value().contains("checked")) { prop = "checked"; }
         else if (it.value().contains("text")) { prop = "text"; }
         if (prop.isEmpty()) { continue; }

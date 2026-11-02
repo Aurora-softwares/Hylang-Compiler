@@ -290,6 +290,29 @@ class AppKitView : public NativeView {
             else if (a.value("role") == "heading") { label.font = [NSFont boldSystemFontOfSize:15]; }
             else if (a.value("role") == "caption") { label.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium]; }
             view = label; control = label;
+        } else if (tag == "FilePicker") {
+            NSButton* button = [NSButton buttonWithTitle:@"" target:nil action:@selector(fire:)];
+            button.bezelStyle = NSBezelStyleRounded;
+            button.target = action([this, &node](id) {
+                const QString mode = node.attributes.value("mode");
+                NSSavePanel* panel = mode == "save" ? [NSSavePanel savePanel] : [NSOpenPanel openPanel];
+                if (mode != "save") {
+                    NSOpenPanel* open = (NSOpenPanel*)panel;
+                    open.canChooseFiles = mode == "open";
+                    open.canChooseDirectories = mode == "folder";
+                    open.allowsMultipleSelection = NO;
+                }
+                panel.title = text(node.attributes.value("text"));
+                [retained addObject:panel];
+                [panel beginSheetModalForWindow:window completionHandler:^(NSModalResponse response) {
+                    if (response == NSModalResponseOK && panel.URL.path) {
+                        handleEvent(node, "path", string(panel.URL.path), "onPick");
+                    } else if (node.attributes.contains("onCancel")) {
+                        bridge.dispatch(node.attributes["onCancel"], node.id);
+                    }
+                    [retained removeObject:panel];
+                }];
+            }); view = button; control = button;
         } else if (tag == "Button" || tag == "CheckBox" || tag == "Switch") {
             if (tag == "Switch") {
                 NSSwitch* toggle = [[[NSSwitch alloc] init] autorelease];
@@ -365,7 +388,7 @@ class AppKitView : public NativeView {
             if (tag != "Tab") { c.view.hidden = !value("visible").toBool(); } if ([c.control respondsToSelector:@selector(setEnabled:)]) { [c.control setEnabled:value("enabled").toBool()]; }
             if (tag == "Label" || tag == "Input" || tag == "SearchInput") { if (string([c.control stringValue]) != value("text").toString()) { [c.control setStringValue:text(value("text").toString())]; } }
             if (tag == "TextArea") { if (string([(NSTextView*)c.control string]) != value("text").toString()) { [(NSTextView*)c.control setString:text(value("text").toString())]; } }
-            if (tag == "Button" || tag == "CheckBox") { [(NSButton*)c.control setTitle:text(value("text").toString())]; }
+            if (tag == "Button" || tag == "FilePicker" || tag == "CheckBox") { [(NSButton*)c.control setTitle:text(value("text").toString())]; }
             if (tag == "CheckBox" || tag == "Switch") { [c.control setState:value("checked").toBool() ? NSControlStateValueOn : NSControlStateValueOff]; }
             if (tag == "Tabs") {
                 [(NSSegmentedControl*)c.control setSelectedSegment:value("value").toInt()]; int index = 0;

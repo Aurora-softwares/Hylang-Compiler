@@ -127,6 +127,26 @@ public:
         check(bridge.apply("HYUI\tSET\ttemplatePassword\tenabled\tfalse\nHYUI\tSET\ttemplatePassword\tvisible\tfalse\n"), "Cannot disable or hide PasswordInput");
         check(!view.api.call<int>("gtk_widget_is_sensitive", password) && !view.api.call<int>("gtk_widget_get_visible", password), "PasswordInput did not apply visibility or enabled state");
         check(bridge.apply("HYUI\tSET\ttemplatePassword\tenabled\ttrue\nHYUI\tSET\ttemplatePassword\tvisible\ttrue\n"), "Cannot restore PasswordInput");
+        for (const auto& pickerCase : {qMakePair(QString("openDocument"), 0), qMakePair(QString("saveDocument"), 1), qMakePair(QString("chooseFolder"), 2)}) {
+            W picker = view.controls[pickerCase.first]->widget;
+            check(view.api.call<int>("g_type_check_instance_is_a", picker, view.api.call<unsigned long>("gtk_button_get_type")), "FilePicker must use a native GtkButton trigger");
+            view.api.call("g_signal_emit_by_name", picker, "clicked"); settle(400);
+            W nativePicker = view.controls[pickerCase.first]->dialog;
+            check(nativePicker && view.api.call<int>("g_type_check_instance_is_a", nativePicker, view.api.call<unsigned long>("gtk_file_chooser_native_get_type")), "FilePicker must open GtkFileChooserNative");
+            check(view.api.call<int>("gtk_file_chooser_get_action", nativePicker) == pickerCase.second, "FilePicker used the wrong native mode");
+            view.api.call("g_signal_emit_by_name", nativePicker, "response", -6); idle();
+            check(bridge.state()["selectionText.text"] == "File selection cancelled.", "Native picker cancellation did not reach Hydrogen");
+            check(view.controls[pickerCase.first]->dialog == nullptr, "Native picker was not disposed");
+        }
+        view.api.call("g_signal_emit_by_name", view.controls["openDocument"]->widget, "clicked"); settle(400);
+        W acceptedPicker = view.controls["openDocument"]->dialog;
+        const QString pickedPath = QFileInfo(view.document.sourcePath).absoluteFilePath();
+        W pickedFile = view.api.call<W>("g_file_new_for_path", pickedPath.toLocal8Bit().constData());
+        check(view.api.call<int>("gtk_file_chooser_set_file", acceptedPicker, pickedFile, nullptr), "Cannot select a native file for picker interaction test");
+        view.api.call("g_object_unref", pickedFile);
+        settle(500);
+        view.api.call("g_signal_emit_by_name", acceptedPicker, "response", -3); idle();
+        check(bridge.state()["openDocument.path"].toString() == pickedPath && bridge.state()["selectionText.text"] == "Open: " + pickedPath, "Accepted file path did not reach Hydrogen");
         check(QString::fromUtf8(view.api.call<const char*>("gtk_widget_get_tooltip_text", view.controls["save"]->widget)) == "Write the current plan to the chosen path", "Native button tooltip is missing");
         W details = view.controls["templateDetails"]->widget;
         check(view.api.call<int>("g_type_check_instance_is_a", details, view.api.call<unsigned long>("gtk_scrolled_window_get_type")), "ScrollView must use GtkScrolledWindow");
@@ -177,6 +197,8 @@ public:
 } }
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
+    // Xvfb has no desktop file-chooser portal; exercise the native GTK chooser.
+    qputenv("GDK_DEBUG", "no-portals");
     try {
         if (argc != 4) { throw std::runtime_error("expected Studio.hyui, compiler and artifact directory"); }
         QTemporaryDir temporary; QProcess compiler;

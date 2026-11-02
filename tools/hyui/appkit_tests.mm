@@ -147,6 +147,22 @@ int main(int argc, char** argv) {
             require(bridge.apply("HYUI\tSET\ttemplatePassword\tenabled\tfalse\nHYUI\tSET\ttemplatePassword\tvisible\tfalse\n"), "cannot disable or hide PasswordInput");
             require(!password.enabled && password.hidden, "PasswordInput state did not reach AppKit");
             require(bridge.apply("HYUI\tSET\ttemplatePassword\tenabled\ttrue\nHYUI\tSET\ttemplatePassword\tvisible\ttrue\n"), "cannot restore PasswordInput");
+            for (NSString* pickerId in @[@"openDocument", @"saveDocument", @"chooseFolder"]) {
+                NSButton* picker = (NSButton*)find(gallery, pickerId);
+                require([picker isKindOfClass:NSButton.class] && !picker.hidden, "FilePicker must use a native AppKit button");
+                [picker performClick:nil]; view->pump();
+                NSWindow* pickerParent = NSApp.windows.firstObject;
+                if (!pickerParent.attachedSheet) { for (NSWindow* candidate in NSApp.windows) { if (candidate.attachedSheet) { pickerParent = candidate; break; } } }
+                NSSavePanel* panel = (NSSavePanel*)pickerParent.attachedSheet;
+                require([panel isKindOfClass:NSSavePanel.class], "FilePicker must open a native AppKit panel sheet");
+                if ([pickerId isEqualToString:@"saveDocument"]) { require(![panel isKindOfClass:NSOpenPanel.class], "Save mode must use NSSavePanel"); }
+                else {
+                    NSOpenPanel* open = (NSOpenPanel*)panel;
+                    require([open isKindOfClass:NSOpenPanel.class] && open.canChooseDirectories == [pickerId isEqualToString:@"chooseFolder"], "Open and folder modes must configure NSOpenPanel");
+                }
+                [pickerParent endSheet:panel returnCode:NSModalResponseCancel]; finish();
+                require(bridge.state()["selectionText.text"].toString() == "File selection cancelled.", "Native file picker cancellation failed");
+            }
             require([find(gallery, @"save").toolTip isEqualToString:@"Write the current plan to the chosen path"], "native button tooltip is missing");
             NSScrollView* details = (NSScrollView*)find(gallery, @"templateDetails");
             view->pump();

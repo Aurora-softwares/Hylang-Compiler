@@ -123,6 +123,12 @@ public sealed partial class NativeWindow
         Apply("HYUI\tSET\ttemplatePassword\tenabled\tfalse\nHYUI\tSET\ttemplatePassword\tvisible\tfalse\n");
         Check(!password.IsEnabled && password.Visibility == Visibility.Collapsed, "PasswordInput did not apply disabled and hidden state");
         Apply("HYUI\tSET\ttemplatePassword\tenabled\ttrue\nHYUI\tSET\ttemplatePassword\tvisible\ttrue\n");
+        foreach (string id in new[] { "openDocument", "saveDocument", "chooseFolder" })
+            Check(controls[id] is Button && controls[id].Visibility == Visibility.Visible, "FilePicker must expose a native WinUI button");
+        Check(Attr(nodes["openDocument"], "mode") == "open" && Attr(nodes["saveDocument"], "mode") == "save" && Attr(nodes["chooseFolder"], "mode") == "folder", "FilePicker modes are missing");
+        values["openDocument.path"] = @"C:\Aurora Notes\café.txt";
+        Dispatch("PickedDocument", "openDocument"); await Idle();
+        Check(values["selectionText.text"] == @"Open: C:\Aurora Notes\café.txt", "Selected file path did not reach Hydrogen");
         Check(ToolTipService.GetToolTip(controls["save"])?.ToString() == "Write the current plan to the chosen path", "Native button tooltip is missing");
         Check(controls["templateDetails"] is ScrollViewer, "ScrollView must use a WinUI ScrollViewer");
         var details = (ScrollViewer)controls["templateDetails"];

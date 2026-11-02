@@ -6,6 +6,7 @@ using System.Xml.Linq;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.Windows.Storage.Pickers;
 
 namespace Hydrogen.Native;
 
@@ -47,13 +48,15 @@ public sealed partial class NativeWindow : Window
     readonly Queue<(string Handler, string Sender)> pending = new();
     readonly TextBlock errors = new() { TextWrapping = TextWrapping.Wrap };
     readonly Dictionary<string, ContentDialog> dialogs = new();
+    readonly HashSet<string> activePickers = new();
     string backend = "", directory = "", documentDirectory = "";
     bool applying, busy;
     static string Attr(XElement n, string key, string fallback = "") => (string?)n.Attribute(key) ?? fallback;
     static int Number(XElement n, string key, int fallback) => int.TryParse(Attr(n, key), out int result) ? result : fallback;
     static bool Allowed(XElement node, string property) => property switch {
         "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer"),
-        "text" => node.Name.LocalName is "Label" or "Input" or "SearchInput" or "TextArea" or "Button" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog",
+        "text" => node.Name.LocalName is "Label" or "Input" or "SearchInput" or "TextArea" or "Button" or "FilePicker" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog",
+        "path" => node.Name.LocalName == "FilePicker",
         "value" => node.Name.LocalName is "State" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog",
         "checked" => node.Name.LocalName is "CheckBox" or "Switch" or "MenuItem",
         "running" => node.Name.LocalName is "Spinner" or "Timer",
@@ -122,6 +125,7 @@ public sealed partial class NativeWindow : Window
             if (tag == "PasswordInput" && (prop == "text" || prop == "value")) continue;
             values[id + "." + prop] = Attr(node, prop, prop is "enabled" or "visible" ? "true" : prop == "value" ? "0" : prop == "text" ? "" : prop == "running" && tag == "Spinner" ? "true" : "false");
         }
+        if (tag == "FilePicker") values[id + ".path"] = "";
         FrameworkElement? element;
         void Changed(string property, string value, string action = "onChange") { if (applying || (property == "value" && value == "-1") || values.GetValueOrDefault(id + "." + property) == value) return; values[id + "." + property] = value; if (node.Attribute(action) != null) Dispatch(Attr(node, action), id); }
         if (tag is "State" or "Dialog") return null;
@@ -189,6 +193,10 @@ public sealed partial class NativeWindow : Window
             var label = new TextBlock { Text = Attr(node, "text"), TextWrapping = TextWrapping.Wrap };
             string role = Attr(node, "role"); if (role is "title" or "heading" or "caption") label.Style = (Style)Application.Current.Resources[role == "title" ? "TitleTextBlockStyle" : role == "heading" ? "SubtitleTextBlockStyle" : "CaptionTextBlockStyle"];
             element = label;
+        } else if (tag == "FilePicker") {
+            var button = new Button { Content = Attr(node, "text") };
+            button.Click += (_, _) => PickFile(node, id);
+            element = button;
         } else if (tag == "Button") {
             var button = new Button { Content = Attr(node, "text") }; if (Attr(node, "primary") == "true") button.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
             button.Click += (_, _) => Dispatch(Attr(node, "onClick"), id); element = button;
@@ -254,6 +262,23 @@ public sealed partial class NativeWindow : Window
         var result = new System.Text.StringBuilder(); char[] buffer = new char[4096]; int count;
         while ((count = await stream.ReadAsync(buffer.AsMemory(), token)) != 0) { result.Append(buffer, 0, count); if (result.Length > limit) throw new InvalidDataException("Backend output limit exceeded"); } return result.ToString();
     }
+    async void PickFile(XElement node, string id) {
+        if (!activePickers.Add(id)) return;
+        try {
+            string? path;
+            switch (Attr(node, "mode")) {
+                case "open": path = (await new FileOpenPicker(AppWindow.Id).PickSingleFileAsync())?.Path; break;
+                case "save": path = (await new FileSavePicker(AppWindow.Id).PickSaveFileAsync())?.Path; break;
+                case "folder": path = (await new FolderPicker(AppWindow.Id).PickSingleFolderAsync())?.Path; break;
+                default: throw new InvalidDataException("Unknown FilePicker mode");
+            }
+            if (path != null) {
+                values[id + ".path"] = path;
+                Dispatch(Attr(node, "onPick"), id);
+            } else if (node.Attribute("onCancel") != null) Dispatch(Attr(node, "onCancel"), id);
+        } catch (Exception error) { errors.Text = error.Message; }
+        finally { activePickers.Remove(id); }
+    }
     async void Dispatch(string handler, string sender)
     {
         if (handler == "" || !nodes.TryGetValue(sender, out var node) || !node.Attributes().Any(a => a.Name.LocalName.StartsWith("on") && a.Value == handler)) return;
@@ -265,7 +290,7 @@ public sealed partial class NativeWindow : Window
             if (nodes[next.Sender].Name == "Timer" && values.GetValueOrDefault(next.Sender + ".running") != "true") continue;
             foreach (var pair in nodes) {
                 if (pair.Value.Name.LocalName == "PasswordInput") continue;
-                string property = pair.Value.Name.LocalName is "State" or "Select" or "NumberInput" or "ProgressBar" or "Slider" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "Switch" or "MenuItem" ? "checked" : "text";
+                string property = pair.Value.Name.LocalName == "FilePicker" ? "path" : pair.Value.Name.LocalName is "State" or "Select" or "NumberInput" or "ProgressBar" or "Slider" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "Switch" or "MenuItem" ? "checked" : "text";
                 arguments.Add(pair.Key); arguments.Add(values.GetValueOrDefault(pair.Key + "." + property, ""));
             }
             if (arguments.Sum(a => a.Length) > 24000) throw new InvalidOperationException("Value snapshot too large");

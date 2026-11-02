@@ -141,6 +141,29 @@ private slots:
         QCOMPARE(bridge.state()["status.text"].toString(), "accepted");
         QVERIFY(!bridge.apply("HYUI\tSET\tpassword\ttext\tbad\n"));
     }
+    void filePickerContractAndPathTransport() {
+        hyui::Document d;
+        QVERIFY(d.parse(R"(<Window version="1"><FilePicker id="choose" mode="open" text="Open document" onPick="Pick" onCancel="Cancel" accessibleName="Open document"/><FilePicker id="save" mode="save" text="Save document" onPick="Save"/><FilePicker id="folder" mode="folder" text="Choose folder" onPick="Folder"/><Label id="status" text="ready"/></Window>)"));
+        QCOMPARE(d.initialState["choose.path"].toString(), "");
+        QVERIFY(d.properties["choose"].contains("path"));
+        QVERIFY(d.handlers["Pick"].contains("choose"));
+        QVERIFY(d.handlers["Cancel"].contains("choose"));
+        for (const QByteArray xml : {
+                 QByteArray("<Window version=\"1\"><FilePicker mode=\"open\" text=\"Open\"/></Window>"),
+                 QByteArray("<Window version=\"1\"><FilePicker mode=\"network\" text=\"Open\" onPick=\"Pick\"/></Window>"),
+                 QByteArray("<Window version=\"1\"><FilePicker mode=\"save\" text=\"\" onPick=\"Pick\"/></Window>"),
+                 QByteArray("<Window version=\"1\"><FilePicker mode=\"folder\" text=\"Folder\" path=\"/etc\" onPick=\"Pick\"/></Window>"),
+                 QByteArray("<Window version=\"1\"><FilePicker mode=\"open\" text=\"Open\" onPick=\"Pick\"><Input/></FilePicker></Window>")
+             }) { QVERIFY2(!d.parse(xml), xml.constData()); }
+        QVERIFY(d.parse(R"(<Window version="1"><FilePicker id="choose" mode="open" text="Open document" onPick="Pick"/><Label id="status" text="ready"/></Window>)"));
+        hyui::Bridge bridge(d, QCoreApplication::applicationFilePath(), QDir::currentPath());
+        const QString path = "/tmp/Aurora O'Brien/café.txt";
+        bridge.store("choose", "path", path);
+        bridge.dispatch("Pick", "choose");
+        QTRY_VERIFY_WITH_TIMEOUT(!bridge.busy(), 5000);
+        QCOMPARE(bridge.error(), QString());
+        QCOMPARE(bridge.state()["status.text"].toString().normalized(QString::NormalizationForm_C), path.normalized(QString::NormalizationForm_C));
+    }
 
     void callbacksUseArgumentVectors() {
         hyui::Document d;
@@ -174,6 +197,14 @@ int main(int argc, char** argv) {
                 }
             }
             std::cout << "HYUI\tSET\tstatus\ttext\t" << result.toStdString() << '\n';
+            return 0;
+        }
+        if (QByteArray(argv[2]) == "Pick") {
+            QString path;
+            for (int i = 4; i + 1 < argc; i += 2) {
+                if (QByteArray(argv[i]) == "choose") { path = QString::fromUtf8(argv[i + 1]); }
+            }
+            std::cout << "HYUI\tSET\tstatus\ttext\t" << hyui::Bridge::encode(path).toStdString() << '\n';
             return 0;
         }
         QString value;

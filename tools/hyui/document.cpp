@@ -25,6 +25,7 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"Input", {"text", "placeholder", "onChange", "onSubmit"}},
     {"SearchInput", {"text", "placeholder", "onChange", "onSubmit"}},
     {"PasswordInput", {"placeholder", "onChange", "onSubmit"}},
+    {"FilePicker", {"mode", "text", "onPick", "onCancel"}},
     {"TextArea", {"text", "placeholder", "onChange", "height"}},
     {"CheckBox", {"text", "checked", "onChange"}},
     {"Switch", {"text", "checked", "onChange"}},
@@ -101,6 +102,12 @@ bool Document::parse(const QByteArray& xml) {
         if (node.attributes.contains("tone") && !QStringList{"normal", "muted", "accent"}.contains(node.attributes["tone"])) {
             return invalid("unknown Label tone");
         }
+        if (node.tag == "FilePicker" && !QStringList{"open", "save", "folder"}.contains(node.attributes.value("mode"))) {
+            return invalid("FilePicker mode must be open, save, or folder");
+        }
+        if (node.tag == "FilePicker" && (node.attributes.value("text").isEmpty() || !node.attributes.contains("onPick"))) {
+            return invalid("FilePicker requires text and onPick");
+        }
         node.id = node.attributes.value("id", "_hyui" + QString::number(count));
         if (!QRegularExpression("^[A-Za-z_][A-Za-z0-9_]{0,63}$").match(node.id).hasMatch() || ids.contains(node.id)) {
             return invalid("invalid or duplicate id '" + node.id + "'");
@@ -112,6 +119,7 @@ bool Document::parse(const QByteArray& xml) {
         for (const QString& prop : {"text", "value", "checked", "running", "indeterminate", "open"}) {
             if (attributes[node.tag].contains(prop)) { props.insert(prop); }
         }
+        if (node.tag == "FilePicker") { props.insert("path"); }
         properties.insert(node.id, props);
         for (const auto& prop : props) {
             QString value = node.attributes.value(prop);
