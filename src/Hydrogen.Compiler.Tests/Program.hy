@@ -228,14 +228,15 @@ namespace Hydrogen.Compiler.Tests {
 
             ProjectClosure cliClosure = ProjectClosure.Collect(FindRepoPath("src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj"));
             string[] projects = cliClosure.Projects();
-            Assert.True(projects.Length == 7, "CLI closure should contain 7 projects");
+            Assert.True(projects.Length == 8, "CLI closure should contain 8 projects");
             Assert.True(Contains(projects[0], "Hydrogen.Compiler.Core.hyproj"), "closure[0] should be Core");
             Assert.True(Contains(projects[1], "Hydrogen.Compiler.Syntax.hyproj"), "closure[1] should be Syntax");
             Assert.True(Contains(projects[2], "Hydrogen.Compiler.IR.hyproj"), "closure[2] should be IR");
             Assert.True(Contains(projects[3], "Hydrogen.Compiler.Binding.hyproj"), "closure[3] should be Binding");
             Assert.True(Contains(projects[4], "Hydrogen.Compiler.RuntimeModel.hyproj"), "closure[4] should be RuntimeModel");
             Assert.True(Contains(projects[5], "Hydrogen.Compiler.CodeGen.X64.hyproj"), "closure[5] should be CodeGen");
-            Assert.True(Contains(projects[6], "Hydrogen.Compiler.Cli.hyproj"), "closure[6] should be CLI");
+            Assert.True(Contains(projects[6], "Hydrogen.Compiler.UI.hyproj"), "closure[6] should be UI");
+            Assert.True(Contains(projects[7], "Hydrogen.Compiler.Cli.hyproj"), "closure[7] should be CLI");
 
             string[] closureSources = cliClosure.Sources();
             int cs = 0;
