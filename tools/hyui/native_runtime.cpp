@@ -37,19 +37,9 @@ int nativeMain(int argc, char** argv, NativeFactory factory) {
         QTemporaryDir temporary;
         QString backend, view = parser.value("document"), directory = QDir::currentPath();
         QByteArray startup;
-        // A generated GTK application is itself the native UI executable.
-        // Its document and Hydrogen backend live beside it in <executable>.runtime.
-        // No hyui-native executable or subprocess launcher is involved.
-        QString bundle = parser.value("bundle");
-#ifdef Q_OS_LINUX
-        const QString packagedApp = QCoreApplication::applicationFilePath() + ".runtime/app";
-        if (!parser.isSet("bundle") && QFileInfo::exists(packagedApp + "/__hyui_app.json")) {
-            bundle = packagedApp;
-        }
-#endif
-        if (!bundle.isEmpty()) {
+        if (parser.isSet("bundle")) {
             if (parser.isSet("source") || parser.isSet("backend") || parser.isSet("document") || parser.isSet("compiler")) { throw std::runtime_error("packaged apps cannot replace their backend or view"); }
-            directory = QFileInfo(bundle).absoluteFilePath();
+            directory = QFileInfo(parser.value("bundle")).absoluteFilePath();
             auto config = QJsonDocument::fromJson(fileText(directory + "/__hyui_app.json")).object();
             if (config["format"].toInt() != 1) { throw std::runtime_error("unsupported application bundle"); }
             auto resource = [&](const QString& key) {
