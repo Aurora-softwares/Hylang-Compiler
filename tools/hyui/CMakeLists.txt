@@ -43,6 +43,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
     add_dependencies(hyui hyui-native)
     install(TARGETS hyui-native RUNTIME DESTINATION bin)
 endif()
+# Linux applications use the GTK/libadwaita renderer directly as their
+# executable entry point. The old hyui-native target remains for legacy tests,
+# but the generated application neither launches nor ships that executable.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    qt_add_executable(hydrogen-gtk-app native_main.cpp native_runtime.cpp document.cpp bridge.cpp gtk.cpp)
+    target_link_libraries(hydrogen-gtk-app PRIVATE Qt6::Core)
+    set_target_properties(hydrogen-gtk-app PROPERTIES
+        AUTOMOC ON RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    install(TARGETS hydrogen-gtk-app RUNTIME DESTINATION bin)
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     qt_add_executable(hyui_gtk_tests gtk_tests.cpp native_runtime.cpp document.cpp bridge.cpp)
     set_target_properties(hyui_gtk_tests PROPERTIES AUTOMOC ON)
