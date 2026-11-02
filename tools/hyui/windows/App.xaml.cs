@@ -54,7 +54,15 @@ public sealed partial class NativeWindow : Window
     readonly Dictionary<string, (Flyout Flyout, TextBlock Label, FrameworkElement Target)> popovers = new();
     readonly HashSet<string> activePickers = new();
     string backend = "", directory = "", documentDirectory = "";
-    bool applying, busy;
+    bool applying, busy, disposing;
+    void DisposeNative() {
+        if (disposing) return;
+        disposing = true;
+        foreach (var timer in timers.Values) timer.Stop();
+        foreach (var popover in popovers.Values) popover.Flyout.Hide();
+        foreach (var dialog in dialogs.Values.ToArray()) dialog.Hide();
+        pending.Clear();
+    }
     static string Attr(XElement n, string key, string fallback = "") => (string?)n.Attribute(key) ?? fallback;
     static void AddShortcut(MenuFlyoutItemBase item, XElement node) {
         string shortcut = Attr(node, "shortcut");
@@ -89,6 +97,7 @@ public sealed partial class NativeWindow : Window
         var options = new Dictionary<string, string>();
         for (int i = 0; i + 1 < args.Length; i += 2) options[args[i]] = args[i + 1];
         var app = new NativeWindow(); string view;
+        app.Closed += (_, _) => app.DisposeNative();
         if (options.TryGetValue("--bundle", out string? root)) {
             app.directory = Path.GetFullPath(root);
             using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "__hyui_app.json")));
@@ -155,6 +164,7 @@ public sealed partial class NativeWindow : Window
         }
     }
     void ShowPopovers() {
+        if (disposing) return;
         if (Content is not FrameworkElement root || root.XamlRoot == null) return;
         foreach (var pair in popovers) {
             pair.Value.Label.Text = values.GetValueOrDefault(pair.Key + ".text", "");
@@ -328,6 +338,7 @@ public sealed partial class NativeWindow : Window
                 case "folder": path = (await new FolderPicker(AppWindow.Id).PickSingleFolderAsync())?.Path; break;
                 default: throw new InvalidDataException("Unknown FilePicker mode");
             }
+            if (disposing) return;
             if (path != null) {
                 values[id + ".path"] = path;
                 Dispatch(Attr(node, "onPick"), id);
@@ -339,6 +350,7 @@ public sealed partial class NativeWindow : Window
         try {
             var content = Clipboard.GetContent();
             string value = content.Contains(StandardDataFormats.Text) ? await content.GetTextAsync() : "";
+            if (disposing) return;
             if (System.Text.Encoding.UTF8.GetByteCount(value) > 16384) throw new InvalidDataException("Clipboard text exceeds 16 KiB");
             values[id + ".value"] = value;
             Dispatch(Attr(nodes[id], "onRead"), id);
@@ -346,6 +358,7 @@ public sealed partial class NativeWindow : Window
     }
     async void Dispatch(string handler, string sender)
     {
+        if (disposing) return;
         if (handler == "" || !nodes.TryGetValue(sender, out var node) || !node.Attributes().Any(a => a.Name.LocalName.StartsWith("on") && a.Value == handler)) return;
         if (pending.Contains((handler, sender))) return;
         if (pending.Count >= 32) { errors.Text = "Too many queued events"; return; }
@@ -368,11 +381,14 @@ public sealed partial class NativeWindow : Window
                     File.WriteAllText(secretPath, password.Password, new System.Text.UTF8Encoding(false));
                     arguments.Add("--hyui-secret:" + next.Sender); arguments.Add(secretPath);
                 }
-                Apply(await Run(arguments));
+                string response = await Run(arguments);
+                if (disposing) return;
+                Apply(response);
             } finally { if (secretPath != null) File.Delete(secretPath); }
         } } catch (Exception error) { errors.Text = error.Message; } finally { busy = false; }
     }
     async void ShowDialogs() {
+        if (disposing) return;
         if (Content is not FrameworkElement root || root.XamlRoot == null) return;
         foreach (var pair in nodes.Where(p => p.Value.Name.LocalName == "Dialog")) {
             string id = pair.Key;
@@ -385,6 +401,7 @@ public sealed partial class NativeWindow : Window
             dialogs[id] = dialog;
             try {
                 var result = await dialog.ShowAsync(); dialogs.Remove(id);
+                if (disposing) continue;
                 if (values[id + ".open"] != "true") continue;
                 values[id + ".open"] = "false";
                 values[id + ".value"] = (result == ContentDialogResult.Primary ? 0 : result == ContentDialogResult.Secondary ? 1 : buttons.Length - 1).ToString();

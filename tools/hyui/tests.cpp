@@ -144,6 +144,7 @@ private slots:
         QVERIFY(!bridge.apply("HYUI\tSET\ttip\tvisible\tfalse\n"));
         const QList<QByteArray> invalid = {
             "<Window version=\"1\"><Popover id=\"tip\" target=\"missing\" text=\"Help\"/></Window>",
+            "<Window version=\"1\"><Label id=\"anchor\" text=\"Help\"/><Popover id=\"tip\" target=\"anchor\" text=\"Help\"/></Window>",
             "<Window version=\"1\"><Button id=\"anchor\"/><Popover target=\"anchor\" text=\"Help\"/></Window>",
             "<Window version=\"1\"><Button id=\"anchor\"/><Popover id=\"tip\" target=\"anchor\"/></Window>",
             "<Window version=\"1\"><Button id=\"anchor\"/><Popover id=\"tip\" target=\"anchor\" text=\"Help\" visible=\"true\"/></Window>",

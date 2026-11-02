@@ -2,6 +2,7 @@
 #include <QCoreApplication>
 #include <QTimer>
 #include <QMap>
+#include <QPointer>
 #include <cmath>
 #import <AppKit/AppKit.h>
 
@@ -60,6 +61,7 @@ struct Layout {
 class AppKitView : public NativeView {
     const Document& doc;
     Bridge& bridge;
+    QObject signalScope;
     NSWindow* window;
     NSMutableArray* retained = [NSMutableArray new];
     QMap<QString, Item> items;
@@ -76,6 +78,7 @@ class AppKitView : public NativeView {
     QMap<QString, NSPopover*> popovers;
     QMap<QString, NSTextField*> popoverLabels;
     bool applying = false;
+    bool disposing = false;
     bool layoutDirty = true;
     NSSize viewportSize = NSZeroSize;
     NSTextField* error;
@@ -251,8 +254,10 @@ class AppKitView : public NativeView {
             alert.messageText = text(node->attributes.value("title", "Hydrogen"));
             alert.informativeText = text(bridge.state().value(node->id + ".text").toString());
             for (const QString& button : node->attributes.value("buttons", "OK").split('|')) { [alert addButtonWithTitle:text(button)]; }
-            QTimer::singleShot(0, &bridge, [this, node, alert] {
+            QPointer<QObject> alive(&signalScope);
+            QTimer::singleShot(0, &signalScope, [this, node, alert, alive] {
                 [alert beginSheetModalForWindow:window completionHandler:^(NSModalResponse response) {
+                    if (!alive || disposing) { return; }
                     alerts.remove(node->id);
                     if (!bridge.state().value(node->id + ".open").toBool()) { updateDialogs(); return; }
                     bridge.store(node->id, "open", false);
@@ -289,7 +294,7 @@ class AppKitView : public NativeView {
         if (tag == "Dialog") { dialogs.append(&node); return nil; }
         if (tag == "Timer") {
             QTimer* timer = new QTimer(&bridge); timer->setObjectName(node.id); timer->setInterval(a.value("interval", "1000").toInt());
-            QObject::connect(timer, &QTimer::timeout, &bridge, [this, &node] { bridge.dispatch(node.attributes["onTick"], node.id); }); timers.append(timer); return nil;
+            QObject::connect(timer, &QTimer::timeout, &signalScope, [this, &node] { bridge.dispatch(node.attributes["onTick"], node.id); }); timers.append(timer); return nil;
         }
         NSView* view = nil; id control = nil; id extra = nil;
         if (tag == "Tabs") {
@@ -372,7 +377,9 @@ class AppKitView : public NativeView {
                 }
                 panel.title = text(node.attributes.value("text"));
                 [retained addObject:panel];
+                QPointer<QObject> alive(&signalScope);
                 [panel beginSheetModalForWindow:window completionHandler:^(NSModalResponse response) {
+                    if (!alive || disposing) { return; }
                     if (response == NSModalResponseOK && panel.URL.path) {
                         handleEvent(node, "path", string(panel.URL.path), "onPick");
                     } else if (node.attributes.contains("onCancel")) {
@@ -514,6 +521,7 @@ public:
     AppKitView(const Document& document, Bridge& backend) : doc(document), bridge(backend) {
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
         window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1100, 820) styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
+        window.releasedWhenClosed = NO;
         window.title = text(doc.window.attributes.value("title", "Hydrogen")); window.delegate = action({});
         QString theme = doc.window.attributes.value("theme", "system");
         if (theme != "system") { window.appearance = [NSAppearance appearanceNamed:theme == "dark" ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua]; }
@@ -533,9 +541,9 @@ public:
         }
         content.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable; scroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         window.contentView = content;
-        QObject::connect(&bridge, &Bridge::changed, &bridge, [this] { update(); });
-        QObject::connect(&bridge, &Bridge::errorChanged, &bridge, [this] { error.stringValue = text(bridge.error()); layoutDirty = true; }); update();
-        QObject::connect(&bridge, &Bridge::clipboardRequested, &bridge, [this](const QString& id, const QString& operation, const QString& value) {
+        QObject::connect(&bridge, &Bridge::changed, &signalScope, [this] { update(); });
+        QObject::connect(&bridge, &Bridge::errorChanged, &signalScope, [this] { error.stringValue = text(bridge.error()); layoutDirty = true; }); update();
+        QObject::connect(&bridge, &Bridge::clipboardRequested, &signalScope, [this](const QString& id, const QString& operation, const QString& value) {
             NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
             if (operation == "WRITE") { [pasteboard clearContents]; [pasteboard setString:text(value) forType:NSPasteboardTypeString]; return; }
             const QString contents = string([pasteboard stringForType:NSPasteboardTypeString]);
@@ -543,6 +551,18 @@ public:
                 if (node.id == id && bridge.storeClipboardText(id, contents)) { bridge.dispatch(node.attributes.value("onRead"), id); break; }
             }
         });
+    }
+    ~AppKitView() override {
+        disposing = true;
+        QObject::disconnect(&bridge, nullptr, &signalScope, nullptr);
+        for (QTimer* timer : timers) { timer->stop(); }
+        for (NSPopover* popover : popovers) { popover.delegate = nil; [popover close]; }
+        for (NSAlert* alert : alerts) { if (window.attachedSheet == alert.window) { [window endSheet:alert.window returnCode:NSModalResponseCancel]; } }
+        window.delegate = nil;
+        window.toolbar.delegate = nil;
+        NSApp.mainMenu = nil;
+        [window close]; [window release]; window = nil;
+        [retained release]; retained = nil;
     }
     void present(int width, int height) override {
         NSRect area = NSScreen.mainScreen.visibleFrame; [window setContentSize:NSMakeSize(qMin(width, int(area.size.width - 32)), qMin(height, int(area.size.height - 64)))];

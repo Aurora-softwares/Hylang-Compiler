@@ -273,6 +273,8 @@ int main(int argc, char** argv) {
                 QFile report(output + "/report.json"); require(report.open(QIODevice::WriteOnly), "cannot write UI report");
                 report.write(QJsonDocument(QJsonObject{{"passed", true}, {"platform", "macos"}, {"screenshots", screenshots}, {"captures", captures}, {"state", QJsonObject::fromVariantMap(bridge.state())}}).toJson());
             }
+            view.reset();
+            require(bridge.apply("HYUI\tSET\tstatus\ttext\tDisposed safely\n"), "Bridge failed after AppKit view disposal");
             std::cout << "AppKit layout passed: wide/narrow panels, wrapping, bounds, non-overlap, scrolling, resize, backend updates, hidden controls, menus, tabs, list/table/radio events, images, native dialog responses\n";
             return 0;
         } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

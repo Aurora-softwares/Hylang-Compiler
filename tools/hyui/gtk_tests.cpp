@@ -23,7 +23,11 @@ class GtkUiTests {
         check(predicate(), message + ": " + bridge.error()); check(bridge.error().isEmpty(), bridge.error());
     }
     void idle() { settle(50); until([&] { return !bridge.busy(); }, "Backend event timed out"); }
-    void click(const QString& id) { view.api.call("g_signal_emit_by_name", view.controls[id]->widget, "clicked"); idle(); }
+    void click(const QString& id) {
+        if (id == "showPopover") { view.api.call("gtk_menu_button_popup", view.controls[id]->widget); }
+        else { view.api.call("g_signal_emit_by_name", view.controls[id]->widget, "clicked"); }
+        idle();
+    }
     void layout() {
         for (auto c : view.controls) {
             const QString tag = c->node->tag;
@@ -123,8 +127,14 @@ public:
         check(bridge.state()["pages.value"].toInt() == 1, "Toolbar gallery command did not reach Hydrogen");
         click("showPopover");
         W tip = view.controls["templateTip"]->dialog;
+        check(view.api.call<int>("g_type_check_instance_is_a", view.controls["showPopover"]->widget,
+                  view.api.call<unsigned long>("gtk_menu_button_get_type")), "Popover anchor must be a native GtkMenuButton");
         check(tip && view.api.call<int>("g_type_check_instance_is_a", tip, view.api.call<unsigned long>("gtk_popover_get_type")) &&
-              view.api.call<int>("gtk_widget_get_visible", tip), "Native GTK popover did not open");
+              view.api.call<int>("gtk_widget_get_visible", tip),
+              QString("Native GTK popover did not open: state=%1 mapped=%2 active=%3")
+                  .arg(bridge.state()["templateTip.open"].toBool())
+                  .arg(view.api.call<int>("gtk_widget_get_mapped", view.controls["showPopover"]->widget))
+                  .arg(view.api.call<int>("gtk_menu_button_get_active", view.controls["showPopover"]->widget)));
         check(bridge.apply("HYUI\tSET\ttemplateTip\ttext\tUpdated template tip\n"), "Cannot update popover text");
         check(QString::fromUtf8(view.api.call<const char*>("gtk_label_get_text", view.controls["templateTip"]->label)) == "Updated template tip", "Popover text did not update");
         view.api.call("gtk_popover_popdown", tip); idle();
@@ -248,6 +258,11 @@ int main(int argc, char** argv) {
         QFile file(sample); if (!file.open(QIODevice::ReadOnly)) { throw std::runtime_error("Cannot read sample"); }
         hyui::Document document; if (!document.parse(file.readAll().replace("theme=\"system\"", "theme=\"light\""))) { throw std::runtime_error(document.error.toStdString()); } document.sourcePath = sample;
         hyui::Bridge bridge(document, temporary.filePath("backend"), QFileInfo(sample).absolutePath());
-        hyui::GtkView view(document, bridge); hyui::GtkUiTests(view, bridge, QFileInfo(QString::fromUtf8(argv[3])).absoluteFilePath()).run(); return 0;
+        {
+            hyui::GtkView view(document, bridge);
+            hyui::GtkUiTests(view, bridge, QFileInfo(QString::fromUtf8(argv[3])).absoluteFilePath()).run();
+        }
+        if (!bridge.apply("HYUI\tSET\tstatus\ttext\tDisposed safely\n")) { throw std::runtime_error("Bridge failed after GTK view disposal"); }
+        return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

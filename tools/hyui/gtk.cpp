@@ -17,6 +17,7 @@
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QTimer>
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -94,6 +95,7 @@ class GtkView : public NativeView {
     Api api;
     const Document& document;
     Bridge& bridge;
+    QObject signalScope;
     QMap<QString, Control*> controls;
     std::vector<std::unique_ptr<Control>> owned;
     struct Row { W widget; W viewport; const Node* node; int columns = 1; bool homogeneous = true; };
@@ -145,9 +147,9 @@ public:
         api.call("adw_application_window_set_content", window, toolbar);
         attachContextMenus();
         attachPopovers();
-        QObject::connect(&bridge, &Bridge::changed, &bridge, [this] { update(); });
-        QObject::connect(&bridge, &Bridge::errorChanged, &bridge, [this] { api.text(error, "gtk_label_set_text", bridge.error()); });
-        QObject::connect(&bridge, &Bridge::clipboardRequested, &bridge, [this](const QString& id, const QString& operation, const QString& text) {
+        QObject::connect(&bridge, &Bridge::changed, &signalScope, [this] { update(); });
+        QObject::connect(&bridge, &Bridge::errorChanged, &signalScope, [this] { api.text(error, "gtk_label_set_text", bridge.error()); });
+        QObject::connect(&bridge, &Bridge::clipboardRequested, &signalScope, [this](const QString& id, const QString& operation, const QString& text) {
             W clipboard = api.call<W>("gdk_display_get_clipboard", api.call<W>("gdk_display_get_default"));
             if (operation == "WRITE") { api.call("gdk_clipboard_set_text", clipboard, text.toUtf8().constData()); return; }
             auto read = std::make_unique<ClipboardRead>();
@@ -156,6 +158,19 @@ public:
             api.call("gdk_clipboard_read_text_async", clipboard, nullptr, clipboardReadThunk, read.release());
         });
         update();
+    }
+    ~GtkView() override {
+        QObject::disconnect(&bridge, nullptr, &signalScope, nullptr);
+        for (QTimer* timer : timers) { timer->stop(); }
+        applying = true;
+        for (Control* control : controls) {
+            if (!control->dialog) { continue; }
+            if (control->node->tag == "FilePicker") { api.call("gtk_native_dialog_destroy", control->dialog); }
+            if (control->node->tag == "Dialog") { api.call("gtk_window_destroy", control->dialog); }
+            if (control->node->tag == "ContextMenu") { api.call("gtk_widget_unparent", control->dialog); }
+        }
+        if (window) { api.call("gtk_window_destroy", window); }
+        if (application) { api.call("g_object_unref", application); }
     }
     void append(W parent, W child) { if (child) { api.call("gtk_box_append", parent, child); } }
     void connect(Control* control, const char* signal, std::function<void()> callback, bool notify = false) {
@@ -202,14 +217,21 @@ public:
             if (node.tag != "Popover") { continue; }
             Control* control = controls.value(node.id);
             Control* target = controls.value(node.attributes.value("target"));
-            W anchor = target->container ? target->container : target->widget;
+            W anchor = target->widget;
             W popover = api.call<W>("gtk_popover_new");
             W label = api.call<W>("gtk_label_new", node.attributes.value("text").toUtf8().constData());
             api.call("gtk_label_set_wrap", label, 1);
+            api.call("gtk_label_set_selectable", label, 1);
             api.margin(label, 12);
             api.call("gtk_popover_set_child", popover, label);
-            api.call("gtk_widget_set_parent", popover, anchor);
+            api.call("gtk_menu_button_set_popover", anchor, popover);
             control->dialog = popover; control->label = label; control->buffer = popover; control->anchor = anchor;
+            connect(target, "notify::active", [this, target, control, anchor] {
+                if (applying || !api.call<int>("gtk_menu_button_get_active", anchor)) { return; }
+                control->popped = true;
+                const QString handler = target->node->attributes.value("onClick");
+                if (!handler.isEmpty()) { bridge.dispatch(handler, target->node->id); }
+            }, true);
             connect(control, "closed", [this, control] {
                 control->popped = false;
                 if (applying || !bridge.state().value(control->node->id + ".open").toBool()) { return; }
@@ -241,7 +263,7 @@ public:
         }
         if (tag == "Timer") {
             QTimer* timer = new QTimer(&bridge); timer->setInterval(a.value("interval", "1000").toInt());
-            QObject::connect(timer, &QTimer::timeout, &bridge, [this, &node] { bridge.dispatch(node.attributes["onTick"], node.id); });
+            QObject::connect(timer, &QTimer::timeout, &signalScope, [this, &node] { bridge.dispatch(node.attributes["onTick"], node.id); });
             timer->setObjectName(node.id); timers.append(timer); return nullptr;
         }
         W w = nullptr;
@@ -434,9 +456,11 @@ public:
                 api.call("gtk_native_dialog_show", c->dialog);
             });
         } else if (tag == "Button" || tag == "MenuItem" || tag == "ToolButton") {
-            w = api.call<W>("gtk_button_new_with_label", ""); c->widget = w;
+            bool popoverTarget = tag == "Button" && std::any_of(document.window.children.cbegin(), document.window.children.cend(),
+                [&node](const Node& child) { return child.tag == "Popover" && child.attributes.value("target") == node.id; });
+            w = popoverTarget ? api.call<W>("gtk_menu_button_new") : api.call<W>("gtk_button_new_with_label", ""); c->widget = w;
             if (a.value("primary") == "true") { api.css(w, "suggested-action"); }
-            connect(c, "clicked", [this, c] { QString handler = c->node->attributes.value("onClick"); if (!handler.isEmpty()) { bridge.dispatch(handler, c->node->id); } });
+            if (!popoverTarget) { connect(c, "clicked", [this, c] { QString handler = c->node->attributes.value("onClick"); if (!handler.isEmpty()) { bridge.dispatch(handler, c->node->id); } }); }
         } else if (tag == "Input" || tag == "SearchInput" || tag == "PasswordInput") {
             w = api.call<W>(tag == "SearchInput" ? "gtk_search_entry_new" : tag == "PasswordInput" ? "gtk_password_entry_new" : "gtk_entry_new"); c->widget = w;
             if (tag == "PasswordInput") { api.call("g_object_set", w, "placeholder-text", a.value("placeholder").toUtf8().constData(), nullptr); }
@@ -542,7 +566,9 @@ public:
             if (c->node->tag == "Popover") {
                 api.text(c->label, "gtk_label_set_text", state.value(it.key() + ".text").toString());
                 bool open = state.value(it.key() + ".open").toBool();
-                if (open && !c->popped && api.call<int>("gtk_widget_get_mapped", c->anchor)) { api.call("gtk_popover_popup", c->dialog); c->popped = true; }
+                if (open && !c->popped && api.call<int>("gtk_widget_get_mapped", c->anchor)) {
+                    api.call("gtk_menu_button_popup", c->anchor); c->popped = true;
+                }
                 if (!open && c->popped) { api.call("gtk_popover_popdown", c->dialog); c->popped = false; }
                 continue;
             }
@@ -573,7 +599,10 @@ public:
             if (tag == "ToolButton" && !toolbarId.isEmpty()) { enabled = enabled && state.value(toolbarId + ".enabled").toBool(); }
             api.call("gtk_widget_set_sensitive", c->widget, enabled ? 1 : 0);
             if (tag == "Label") { api.text(c->widget, "gtk_label_set_text", value("text").toString()); }
-            if (tag == "Button" || tag == "ToolButton" || tag == "FilePicker" || (tag == "MenuItem" && !c->node->attributes.contains("checked"))) { api.text(c->widget, "gtk_button_set_label", value("text").toString()); }
+            if (tag == "Button" && std::any_of(document.window.children.cbegin(), document.window.children.cend(),
+                [c](const Node& child) { return child.tag == "Popover" && child.attributes.value("target") == c->node->id; })) {
+                api.text(c->widget, "gtk_menu_button_set_label", value("text").toString());
+            } else if (tag == "Button" || tag == "ToolButton" || tag == "FilePicker" || (tag == "MenuItem" && !c->node->attributes.contains("checked"))) { api.text(c->widget, "gtk_button_set_label", value("text").toString()); }
             if ((tag == "Input" || tag == "SearchInput") && QString::fromUtf8(api.call<const char*>("gtk_editable_get_text", c->widget)) != value("text").toString()) { api.text(c->widget, "gtk_editable_set_text", value("text").toString()); }
             if (tag == "TextArea") {
                 char* current = nullptr; api.call("g_object_get", c->buffer, "text", &current, nullptr);

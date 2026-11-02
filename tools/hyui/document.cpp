@@ -209,6 +209,8 @@ bool Document::parse(const QByteArray& xml) {
                         if (child.tag == "ContextMenu") {
                             if (contextTargets.contains(target)) { return invalid("duplicate ContextMenu target"); }
                             contextTargets.insert(target);
+                        } else if (tag != "Button") {
+                            return invalid("Popover target must name a Button");
                         }
                     }
                 }

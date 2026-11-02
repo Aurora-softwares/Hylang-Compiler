@@ -214,5 +214,7 @@ public sealed partial class NativeWindow
         Check(File.ReadAllText(saved).Contains("Saved by the native UI CI test."), "Native Save did not persist input");
         Root.UpdateLayout(); CheckLayout();
         await File.WriteAllTextAsync(Path.Combine(output, "report.json"), JsonSerializer.Serialize(new { passed = true, platform = "windows", screenshots = shots, captures, state = values }, new JsonSerializerOptions { WriteIndented = true }));
+        DisposeNative();
+        Check(timers.Values.All(timer => !timer.IsEnabled) && pending.Count == 0, "Native window disposal left timers or backend events active");
     }
 }
