@@ -82,7 +82,7 @@ jobs:
       - name: Build self-hosted Stage 1 with integrated native UI packaging
         run: |
           mkdir -p build/self_hosting/linux build/bootstrap
-          build-ui/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.Linux.hyproj -o build/self_hosting/linux/hydrogen-stage1
+          build-ui/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build/self_hosting/linux/hydrogen-stage1
           cp build-ui/hyui-native build/bootstrap/hyui-native
           cp build-ui/hyui-launcher build/bootstrap/hyui-launcher
           test ! -e build/bootstrap/hyui
