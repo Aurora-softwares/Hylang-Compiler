@@ -621,6 +621,21 @@ fi
 step "Testing compiler..."
 run_test "$STAGE0" --help
 
+# On Windows, the WinUI 3 runtime SDK is exported from dotnet and a native
+# C++ launcher without Qt or the separate hyui executable. This is optional:
+# compiler-only bootstraps must continue to work without the desktop SDK.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        UI_WIN_LOG="$BUILD_DIR/ui-runtime-windows.log"
+        if cmake --build "$BOOTSTRAP_BUILD_DIR" --target hydrogen-ui-sdk --config Release \
+            --parallel >"$UI_WIN_LOG" 2>&1; then
+            printf 'Native Windows WinUI SDK exported.\\n'
+        else
+            printf 'Native WinUI SDK unavailable (requires .NET 8+); see %s\\n' "$UI_WIN_LOG"
+        fi
+        ;;
+esac
+
 # ------------------------------------------------------------------------------
 # Bootstrap compiler
 # ------------------------------------------------------------------------------
