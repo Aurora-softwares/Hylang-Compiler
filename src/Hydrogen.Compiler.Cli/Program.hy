@@ -1094,9 +1094,44 @@ namespace Hydrogen.Compiler.Cli {
                     System.Console.WriteLine("wrote " + output + " (linux-x64; native GTK4 UI)");
                     return 0;
                 }
-                // Other platforms retain their existing packaging flow until
-                // native runtime export and relocation have been ported.
-                return System.Host.Process.Run("hyui --package " + quotedProject + " --output " + quotedOutput + " --target " + projectType);
+                // The native runtime is exported once per OS and carried by
+                // the Hydrogen SDK. No separate hyui packaging executable.
+                string desktopTarget = projectType == "exe" && System.Host.Process.IsWindows()
+                    ? "windows-x64" : UIRuntimeManager.Target(projectType);
+                string sdk = UIRuntimeManager.SdkRoot(uiSdk);
+                string destination = UIDesktopPackager.Output(output, desktopTarget);
+                string preflightSdk = UIRuntimeManager.SdkRoot("");
+                string issue = UIProjectBuilder.Preflight(projectPath, preflightSdk);
+                if (issue != "") {
+                    System.Console.WriteLine("error: " + issue);
+                    return 1;
+                }
+                issue = UIDesktopPackager.Prepare(destination, desktopTarget, sdk);
+                if (issue != "") {
+                    System.Console.WriteLine("error: " + issue);
+                    return 1;
+                }
+                string nativeBackend = UIDesktopPackager.Backend(destination, desktopTarget);
+                NativeCompiler nativeCompiler = new NativeCompiler();
+                NativeCompilerResult nativeResult;
+                if (desktopTarget == "windows-x64") {
+                    nativeResult = nativeCompiler.BuildProjectWindows(projectPath, nativeBackend);
+                } else {
+                    nativeResult = nativeCompiler.BuildProjectMacOS(projectPath, nativeBackend);
+                }
+                if (!nativeResult.Success()) {
+                    System.Console.Write(nativeResult.DiagnosticsText());
+                    UIDesktopPackager.Abort(destination);
+                    return 1;
+                }
+                issue = UIDesktopPackager.Finish(projectPath, destination, desktopTarget);
+                if (issue != "") {
+                    System.Console.WriteLine("error: " + issue);
+                    UIDesktopPackager.Abort(destination);
+                    return 1;
+                }
+                System.Console.WriteLine("wrote " + destination + " (" + desktopTarget + "; native UI)");
+                return 0;
             }
             BuildProgress progress = new BuildProgress(hideProgress, hideSpinner, hideLog);
             if (manifest.Type() == "os" || manifest.Type() == "collection") {
