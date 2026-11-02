@@ -596,15 +596,12 @@ step "Building C++ Stage 0 compiler..."
 run cmake --build "$BOOTSTRAP_BUILD_DIR" --target hy --parallel
 require_executable "$STAGE0" "Stage 0 compiler"
 
-# Build optional native UI resources after Stage 0. Linux produces a GTK
-# application entry template, not a separate UI host/launcher pair. Qt Core
-# 6.8+ remains a build dependency for this transitional GTK4 renderer.
-if [[ "${HYDROGEN_BUILD_UI:-auto}" != "OFF" && "${HYDROGEN_BUILD_UI:-auto}" != "off" ]]; then
+# Linux now compiles its real GTK4 frontend from the native SDK source
+# when building a UI project. Qt is no longer needed for default Linux builds.
+# Legacy Qt tooling is available only with HYDROGEN_BUILD_UI=ON.
+if [[ "$(uname -s)" != Linux || "${HYDROGEN_BUILD_UI:-off}" == ON || "${HYDROGEN_BUILD_UI:-off}" == on ]]; then
     UI_LOG="$BUILD_DIR/ui-runtime-build.log"
     UI_TARGETS=(hyui-native hyui-launcher)
-    if [[ "$(uname -s)" == Linux ]]; then
-        UI_TARGETS=(hydrogen-gtk-app)
-    fi
     if cmake -S "$PROJECT_DIR" -B "$BOOTSTRAP_BUILD_DIR" \
         -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON >"$UI_LOG" 2>&1 &&
        cmake --build "$BOOTSTRAP_BUILD_DIR" \
@@ -855,22 +852,19 @@ bootstrap_target Linux "$LINUX_PROJECT_FILE" native "$LINUX_DIR" "" || true
 bootstrap_target Windows "$WINDOWS_PROJECT_FILE" wine "$WINDOWS_DIR" .exe || true
 bootstrap_target macOS "$MACOS_PROJECT_FILE" darling "$MACOS_DIR" "" || true
 
-# The UI SDK is optional, not a prerequisite for a compiler build.
-# On Linux the target emits a GTK entry executable template. Generated
-# applications do not launch hyui-native or hyui-launcher.
-# Set HYDROGEN_BOOTSTRAP_UI=off to skip this optional step on headless systems.
-if [[ -x "$LINUX_STAGE1" && "${HYDROGEN_BOOTSTRAP_UI:-auto}" != off ]]; then
+# Standalone hyui tooling is a legacy opt-in on Linux; it is not
+# needed to build directly generated GTK4 applications. Other platforms
+# keep their existing optional SDK export flow.
+if [[ -x "$LINUX_STAGE1" && "${HYDROGEN_BOOTSTRAP_UI:-auto}" != off &&
+      ( "$(uname -s)" != Linux || "${HYDROGEN_BOOTSTRAP_UI:-auto}" == on ) ]]; then
     UI_BUILD_DIR="$BUILD_DIR/ui"
     UI_BOOTSTRAP_TARGET=hyui
-    if [[ "$(uname -s)" == Linux ]]; then
-        UI_BOOTSTRAP_TARGET=hydrogen-gtk-app
-    fi
     if cmake -S "$PROJECT_DIR" -B "$UI_BUILD_DIR" \
         -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON \
         >"$STEP_LOG_DIR/hyui-configure.log" 2>&1 &&
        cmake --build "$UI_BUILD_DIR" --target "$UI_BOOTSTRAP_TARGET" --parallel \
         >"$STEP_LOG_DIR/hyui-build.log" 2>&1; then
-        success "Native UI GTK application template ready in $UI_BUILD_DIR"
+        success "Optional standalone HYUI desktop tooling ready in $UI_BUILD_DIR"
     else
         warning "Optional HYUI SDK not built (requires Qt 6.8+); see $STEP_LOG_DIR/hyui-configure.log and hyui-build.log"
     fi
