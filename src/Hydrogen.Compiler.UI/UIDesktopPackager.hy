@@ -130,6 +130,11 @@ namespace Hydrogen.Compiler.UI {
                 Has(relative, "__hyui")) { return "unsafe desktop UI asset path"; }
             string path = PathUtils.Join(root, relative);
             if (!Exists(path) || IsLink(path)) { return "missing or linked UI asset: " + relative; }
+            if (System.Host.Process.IsWindows() &&
+                PS("if((Get-ChildItem -LiteralPath " + PQ(path) +
+                    " -Recurse -Force -Attributes ReparsePoint -ErrorAction Stop | Measure-Object).Count -gt 0){exit 0}else{exit 1}")) {
+                return "UI assets must not contain links";
+            }
             if (!System.Host.Process.IsWindows() &&
                 Unix("find -- " + SQ(path) + " -type l -print -quit | grep -q .")) {
                 return "UI assets must not contain links";
