@@ -91,6 +91,24 @@ jobs:
           test -x build/Studio
           test -x build/Studio.runtime/hyui
           test -x build/Studio.runtime/app/__hyui_backend
+      - name: Rebuild owned UI package without replacing unowned files
+        run: |
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/Studio
+          test -x build/Studio
+          test -x build/Studio.runtime/app/__hyui_backend
+          printf 'sentinel' > build/unowned-file
+          if ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/unowned-file; then
+            echo "ERROR: Hydrogen overwrote an unowned executable"
+            exit 1
+          fi
+          test "$(cat build/unowned-file)" = sentinel
+          test ! -e build/Studio.ui-backup
+          test ! -e build/Studio.ui-backup.runtime
+      - name: Diagnose Hydrogen source formatter changes
+        if: always()
+        run: |
+          build-ui/hy fmt src || true
+          git diff -- src | head -c 90000 || true
       - name: Test integrated GTK application without hyui packaging tool
         env:
           GSK_RENDERER: cairo
