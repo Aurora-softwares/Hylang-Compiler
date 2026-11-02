@@ -9,6 +9,23 @@ namespace Hydrogen.Compiler.UI {
             return "";
         }
 
+        // Explicit SDK directory supports installed and relocated compilers.
+        // The default preserves repository bootstrap behaviour.
+        public static string SdkRoot(string requested) {
+            if (requested != "") { return requested; }
+            if (System.IO.File.Exists("build/bootstrap/hyui-native")) { return "build/bootstrap"; }
+            if (System.IO.File.Exists("build/hyui-native")) { return "build"; }
+            return "build/bootstrap";
+        }
+
+        public static string NativeHost(string sdkRoot) {
+            return Hydrogen.Compiler.Core.PathUtils.Join(sdkRoot, "hyui-native");
+        }
+
+        public static string NativeLauncher(string sdkRoot) {
+            return Hydrogen.Compiler.Core.PathUtils.Join(sdkRoot, "hyui-launcher");
+        }
+
         public static string NativeRuntimeDirectory(string output, string target) {
             if (target == "macos-x64") { return output + ".app/Contents"; }
             return output + ".runtime";
