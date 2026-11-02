@@ -5,6 +5,7 @@
 #include <gtk/gtk.h>
 #include <gio/gio.h>
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -65,7 +66,7 @@ struct Parser {
         for(int i=0;keys && keys[i];++i)n->attrs[keys[i]]=values[i];
         Node* ref=n.get();
         if(self->stack.empty()) {
-            if(self->root) throw std::runtime_error("HYUI has multiple root elements");
+            if(self->root) return;
             self->root=std::move(n);
         } else self->stack.back()->children.push_back(std::move(n));
         self->stack.push_back(ref);
@@ -146,7 +147,14 @@ struct App {
     static void listSelected(GtkListBox*,GtkListBoxRow*,gpointer data) { clicked(nullptr,data); }
     static void switchChanged(GObject*,GParamSpec*,gpointer data) { clicked(nullptr,data); }
     void bind(GtkWidget* widget,const char* signal,Node* n,const char* handler) {
-        if(auto* h=hook(n,handler)) g_signal_connect(widget,signal,G_CALLBACK(changedSimple),h);
+        if(auto* h=hook(n,handler)) {
+            std::string kind=signal;
+            if(kind=="row-selected")
+                g_signal_connect(widget,signal,G_CALLBACK(listSelected),h);
+            else if(kind.compare(0,8,"notify::")==0)
+                g_signal_connect(widget,signal,G_CALLBACK(changed),h);
+            else g_signal_connect(widget,signal,G_CALLBACK(changedSimple),h);
+        }
     }
     std::string value(const Control& c) {
         auto* w=c.widget;
@@ -238,6 +246,8 @@ struct App {
                 if(n->tag=="CheckBox")gtk_check_button_set_active(GTK_CHECK_BUTTON(w),truth(v));
                 if(n->tag=="Switch")gtk_switch_set_active(GTK_SWITCH(w),truth(v));
             } else if(prop=="value" && w) {
+                if(n->tag=="ProgressBar")
+                    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w),std::clamp(number(v)/100.0,0.0,1.0));
                 if(n->tag=="Slider")gtk_range_set_value(GTK_RANGE(w),number(v));
                 if(n->tag=="NumberInput")gtk_spin_button_set_value(GTK_SPIN_BUTTON(w),number(v));
                 if(n->tag=="Select")gtk_drop_down_set_selected(GTK_DROP_DOWN(w),number(v));
@@ -250,8 +260,7 @@ struct App {
             } else if(prop=="running" && w && n->tag=="Spinner") {
                 if(truth(v))gtk_spinner_start(GTK_SPINNER(w));
                 else gtk_spinner_stop(GTK_SPINNER(w));
-            } else if(prop=="value" && w && n->tag=="ProgressBar")
-                gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w),std::clamp(number(v)/100.0,0.0,1.0));
+            }
         }
         applying=false;
     }
