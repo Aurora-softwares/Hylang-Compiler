@@ -65,7 +65,7 @@ public sealed partial class NativeWindow : Window
     }
     static int Number(XElement n, string key, int fallback) => int.TryParse(Attr(n, key), out int result) ? result : fallback;
     static bool Allowed(XElement node, string property) => property switch {
-        "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer"),
+        "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer" or "ContextMenu"),
         "text" => node.Name.LocalName is "Label" or "Input" or "SearchInput" or "TextArea" or "Button" or "FilePicker" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog",
         "path" => node.Name.LocalName == "FilePicker",
         "value" => node.Name.LocalName is "State" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog",
@@ -106,6 +106,7 @@ public sealed partial class NativeWindow : Window
         app.Title = Attr(document, "title", "Hydrogen");
         var body = new StackPanel { Spacing = 20, Padding = new Thickness(Number(document, "padding", 24)) };
         foreach (var child in document.Elements()) { var widget = app.Build(child); if (widget != null) body.Children.Add(widget); }
+        app.AttachContextMenus(document);
         body.Children.Add(app.errors);
         var scroll = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         app.Content = scroll; scroll.Loaded += (_, _) => app.ShowDialogs();
@@ -127,6 +128,15 @@ public sealed partial class NativeWindow : Window
         if (document.Attribute("onLoad") != null) app.Dispatch(Attr(document, "onLoad"), Attr(document, "id"));
         return app;
     }
+    void AttachContextMenus(XElement document) {
+        foreach (var node in document.Elements("ContextMenu")) {
+            string targetId = Attr(node, "target");
+            if (!controls.TryGetValue(targetId, out var target)) throw new InvalidDataException("ContextMenu target is not a visual control");
+            var flyout = new MenuFlyout();
+            foreach (var item in node.Elements()) flyout.Items.Add((MenuFlyoutItemBase)Build(item)!);
+            target.ContextFlyout = flyout;
+        }
+    }
     FrameworkElement? Build(XElement node)
     {
         string tag = node.Name.LocalName, id = Attr(node, "id", "_hyui" + nodes.Count);
@@ -139,7 +149,7 @@ public sealed partial class NativeWindow : Window
         if (tag == "FilePicker") values[id + ".path"] = "";
         FrameworkElement? element;
         void Changed(string property, string value, string action = "onChange") { if (applying || (property == "value" && value == "-1") || values.GetValueOrDefault(id + "." + property) == value) return; values[id + "." + property] = value; if (node.Attribute(action) != null) Dispatch(Attr(node, action), id); }
-        if (tag is "State" or "Dialog") return null;
+        if (tag is "State" or "Dialog" or "ContextMenu") return null;
         if (tag == "Timer") {
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(Math.Max(100, Number(node, "interval", 1000))) };
             timer.Tick += (_, _) => Dispatch(Attr(node, "onTick"), id); timers[id] = timer; return null;

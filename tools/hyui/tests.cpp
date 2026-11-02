@@ -167,6 +167,20 @@ private slots:
         QCOMPARE(bridge.error(), QString());
         QCOMPARE(bridge.state()["status.text"].toString().normalized(QString::NormalizationForm_C), path.normalized(QString::NormalizationForm_C));
     }
+    void contextMenuContract() {
+        hyui::Document d;
+        QVERIFY(d.parse(R"(<Window version="1"><ListBox id="items" items="One|Two"/><ContextMenu target="items"><MenuItem id="inspect" text="Inspect" onClick="Inspect"/></ContextMenu></Window>)"));
+        QVERIFY(d.handlers["Inspect"].contains("inspect"));
+        QVERIFY(d.properties[d.window.children[1].id].isEmpty());
+        for (const QByteArray xml : {
+                 QByteArray(R"(<Window version="1"><ContextMenu target="missing"><MenuItem text="Inspect" onClick="Inspect"/></ContextMenu></Window>)"),
+                 QByteArray(R"(<Window version="1"><Button id="target"/><ContextMenu target="target"/></Window>)"),
+                 QByteArray(R"(<Window version="1"><Button id="target"/><ContextMenu target="target"><Button text="Bad"/></ContextMenu></Window>)"),
+                 QByteArray(R"(<Window version="1"><Button id="target"/><ContextMenu target="target"><MenuItem text="One"/></ContextMenu><ContextMenu target="target"><MenuItem text="Two"/></ContextMenu></Window>)"),
+                 QByteArray(R"(<Window version="1"><Button id="target"/><ContextMenu target="target" visible="false"><MenuItem text="Bad"/></ContextMenu></Window>)"),
+                 QByteArray(R"(<Window version="1"><Button id="target"/><ContextMenu target="target"><MenuItem text="Bad" shortcut="Primary+B" onClick="Bad"/></ContextMenu></Window>)")
+             }) { QVERIFY2(!d.parse(xml), xml.constData()); }
+    }
 
     void callbacksUseArgumentVectors() {
         hyui::Document d;

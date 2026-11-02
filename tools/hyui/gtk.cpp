@@ -56,6 +56,8 @@ struct Control {
     std::function<void(W)> itemAction;
     std::function<void(int)> responseAction;
     std::function<int()> shortcutAction;
+    std::function<void(double, double)> pressAction;
+    std::function<int(unsigned, unsigned)> keyAction;
     QVector<W> choices;
     W dialog = nullptr;
 };
@@ -64,6 +66,8 @@ void responseThunk(W, int response, W data) { static_cast<Control*>(data)->respo
 void signalThunk(W, W data) { static_cast<Control*>(data)->action(); }
 void notifyThunk(W, W, W data) { static_cast<Control*>(data)->action(); }
 int shortcutThunk(W, W, W data) { return static_cast<Control*>(data)->shortcutAction(); }
+void pressThunk(W, int, double x, double y, W data) { static_cast<Control*>(data)->pressAction(x, y); }
+int keyThunk(W, unsigned key, unsigned, unsigned modifiers, W data) { return static_cast<Control*>(data)->keyAction(key, modifiers); }
 int closeThunk(W, W) { QCoreApplication::quit(); return 0; }
 
 class GtkView : public NativeView {
@@ -118,6 +122,7 @@ public:
         api.call("gtk_scrolled_window_set_child", scroll, body);
         api.call("adw_toolbar_view_set_content", toolbar, scroll);
         api.call("adw_application_window_set_content", window, toolbar);
+        attachContextMenus();
         QObject::connect(&bridge, &Bridge::changed, &bridge, [this] { update(); });
         QObject::connect(&bridge, &Bridge::errorChanged, &bridge, [this] { api.text(error, "gtk_label_set_text", bridge.error()); });
         update();
@@ -129,6 +134,38 @@ public:
         auto thunk = notify ? reinterpret_cast<void(*)()>(notifyThunk) : reinterpret_cast<void(*)()>(signalThunk);
         api.call<unsigned long>("g_signal_connect_data", object, signal, thunk, hook.get(), nullptr, 0);
         owned.push_back(std::move(hook));
+    }
+    void attachContextMenus() {
+        for (const Node& node : document.window.children) {
+            if (node.tag != "ContextMenu") { continue; }
+            Control* menu = controls.value(node.id);
+            Control* target = controls.value(node.attributes.value("target"));
+            W anchor = target->container ? target->container : target->widget;
+            W popover = api.call<W>("gtk_popover_new"), box = api.call<W>("gtk_box_new", 1, 4);
+            for (const Node& child : node.children) { append(box, build(child)); }
+            api.call("gtk_popover_set_child", popover, box);
+            api.call("gtk_widget_set_parent", popover, anchor);
+            menu->dialog = popover;
+            auto popup = [this, popover](double x, double y) {
+                struct Rect { int x, y, width, height; } point{int(x), int(y), 1, 1};
+                api.call("gtk_popover_set_pointing_to", popover, &point);
+                api.call("gtk_popover_popup", popover);
+            };
+            menu->pressAction = popup;
+            W gesture = api.call<W>("gtk_gesture_click_new");
+            api.call("gtk_gesture_single_set_button", gesture, 3u);
+            api.call<unsigned long>("g_signal_connect_data", gesture, "pressed", reinterpret_cast<void(*)()>(pressThunk), menu, nullptr, 0);
+            api.call("gtk_widget_add_controller", anchor, gesture);
+            menu->buffer = gesture;
+            menu->keyAction = [popup, this, anchor](unsigned key, unsigned modifiers) {
+                if (key != 0xff67u && !(key == 0xffc7u && (modifiers & 1u))) { return 0; }
+                popup(api.call<int>("gtk_widget_get_width", anchor) / 2.0, api.call<int>("gtk_widget_get_height", anchor) / 2.0);
+                return 1;
+            };
+            W keys = api.call<W>("gtk_event_controller_key_new");
+            api.call<unsigned long>("g_signal_connect_data", keys, "key-pressed", reinterpret_cast<void(*)()>(keyThunk), menu, nullptr, 0);
+            api.call("gtk_widget_add_controller", anchor, keys);
+        }
     }
     W build(const Node& node) {
         const auto& a = node.attributes;
@@ -144,7 +181,7 @@ public:
         };
         int minimum = a.value("minimum", "0").toInt(), maximum = a.value("maximum", "100").toInt();
         const QString tag = node.tag;
-        if (tag == "State" || tag == "Dialog") { return nullptr; }
+        if (tag == "State" || tag == "Dialog" || tag == "ContextMenu") { return nullptr; }
         if (tag == "Timer") {
             QTimer* timer = new QTimer(&bridge); timer->setInterval(a.value("interval", "1000").toInt());
             QObject::connect(timer, &QTimer::timeout, &bridge, [this, &node] { bridge.dispatch(node.attributes["onTick"], node.id); });

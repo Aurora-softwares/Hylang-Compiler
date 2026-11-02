@@ -26,6 +26,7 @@ namespace HydrogenStudio {
             if (handler == "PickedSaveLocation") { Application.SetText("selectionText", "Save: " + Application.Value(args, "saveDocument")); }
             if (handler == "PickedFolder") { Application.SetText("selectionText", "Folder: " + Application.Value(args, "chooseFolder")); }
             if (handler == "PickerCancelled") { Application.SetText("selectionText", "File selection cancelled."); }
+            if (handler == "InspectTemplate") { Application.SetText("selectionText", "Inspect template index: " + Application.Value(args, "templates")); }
             if (handler == "CheckPassword") {
                 string secret = Application.SecretValue(args, "templatePassword");
                 Application.SetText("selectionText", secret == "gallery-pass" ? "Private code accepted." : "Private code rejected.");

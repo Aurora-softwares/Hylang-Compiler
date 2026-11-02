@@ -177,6 +177,15 @@ class AppKitView : public NativeView {
         bridge.store(node.id, property, value);
         if (node.attributes.contains(event)) { bridge.dispatch(node.attributes[event], node.id); }
     }
+    NSMenuItem* makeMenuItem(const Node& entry) {
+        const QString shortcut = entry.attributes.value("shortcut");
+        NSString* key = shortcut.isEmpty() ? @"" : text(shortcut.right(1).toLower());
+        NSMenuItem* item = [[[NSMenuItem alloc] initWithTitle:text(entry.attributes.value("text")) action:@selector(fire:) keyEquivalent:key] autorelease];
+        if (!shortcut.isEmpty()) { item.keyEquivalentModifierMask = NSEventModifierFlagCommand | (shortcut.contains("+Shift+") ? NSEventModifierFlagShift : 0); }
+        item.target = action([this, &entry](id) { if (entry.attributes.contains("checked")) { bridge.store(entry.id, "checked", !bridge.state().value(entry.id + ".checked").toBool()); update(); } if (entry.attributes.contains("onClick")) { bridge.dispatch(entry.attributes["onClick"], entry.id); } });
+        menuItems.insert(entry.id, item);
+        return item;
+    }
     void buildMenu(const Node& node) {
         NSMenu* bar = [[[NSMenu alloc] init] autorelease]; bar.autoenablesItems = NO;
         NSMenuItem* application = [[[NSMenuItem alloc] initWithTitle:@"Hydrogen" action:nil keyEquivalent:@""] autorelease];
@@ -185,17 +194,20 @@ class AppKitView : public NativeView {
         for (const Node& menu : node.children) {
             NSMenuItem* heading = [[[NSMenuItem alloc] initWithTitle:text(menu.attributes.value("text")) action:nil keyEquivalent:@""] autorelease];
             NSMenu* submenu = [[[NSMenu alloc] initWithTitle:heading.title] autorelease]; submenu.autoenablesItems = NO;
-            for (const Node& entry : menu.children) {
-                const QString shortcut = entry.attributes.value("shortcut");
-                NSString* key = shortcut.isEmpty() ? @"" : text(shortcut.right(1).toLower());
-                NSMenuItem* item = [[[NSMenuItem alloc] initWithTitle:text(entry.attributes.value("text")) action:@selector(fire:) keyEquivalent:key] autorelease];
-                if (!shortcut.isEmpty()) { item.keyEquivalentModifierMask = NSEventModifierFlagCommand | (shortcut.contains("+Shift+") ? NSEventModifierFlagShift : 0); }
-                item.target = action([this, &entry](id) { if (entry.attributes.contains("checked")) { bridge.store(entry.id, "checked", !bridge.state().value(entry.id + ".checked").toBool()); update(); } if (entry.attributes.contains("onClick")) { bridge.dispatch(entry.attributes["onClick"], entry.id); } });
-                [submenu addItem:item]; menuItems.insert(entry.id, item);
-            }
+            for (const Node& entry : menu.children) { [submenu addItem:makeMenuItem(entry)]; }
             heading.submenu = submenu; [bar addItem:heading]; menuItems.insert(menu.id, heading);
         }
         NSApp.mainMenu = bar;
+    }
+    void attachContextMenus() {
+        for (const Node& node : doc.window.children) {
+            if (node.tag != "ContextMenu") { continue; }
+            NSMenu* menu = [[[NSMenu alloc] initWithTitle:@""] autorelease]; menu.autoenablesItems = NO;
+            for (const Node& entry : node.children) { [menu addItem:makeMenuItem(entry)]; }
+            Item target = items.value(node.attributes.value("target"));
+            target.view.menu = menu;
+            if ([target.control isKindOfClass:NSView.class]) { [(NSView*)target.control setMenu:menu]; }
+        }
     }
     void updateDialogs() {
         for (const Node* node : dialogs) {
@@ -221,6 +233,7 @@ class AppKitView : public NativeView {
         const auto& a = node.attributes; QString tag = node.tag;
         if (tag == "State") { return nil; }
         if (tag == "MenuBar") { buildMenu(node); return nil; }
+        if (tag == "ContextMenu") { return nil; }
         if (tag == "Dialog") { dialogs.append(&node); return nil; }
         if (tag == "Timer") {
             QTimer* timer = new QTimer(&bridge); timer->setObjectName(node.id); timer->setInterval(a.value("interval", "1000").toInt());
@@ -421,6 +434,7 @@ public:
         if (theme != "system") { window.appearance = [NSAppearance appearanceNamed:theme == "dark" ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua]; }
         body = stack();
         for (const auto& node : doc.window.children) { add(body, build(node)); }
+        attachContextMenus();
         error = [NSTextField wrappingLabelWithString:@""]; add(body, error);
         scroll = [[[NSScrollView alloc] init] autorelease]; scroll.hasVerticalScroller = YES; scroll.autohidesScrollers = YES;
         NSView* documentView = [[[HYLayoutView alloc] init] autorelease]; [documentView addSubview:body]; scroll.documentView = documentView;

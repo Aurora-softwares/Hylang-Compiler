@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -17,6 +19,23 @@ namespace Hydrogen.Native;
 // peers. It is enabled only by the explicit --ui-test launch argument in CI.
 public sealed partial class NativeWindow
 {
+    delegate bool WindowVisitor(nint window, nint data);
+    [DllImport("user32.dll")] static extern bool EnumWindows(WindowVisitor callback, nint data);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(nint window, out uint processId);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(nint window, StringBuilder name, int length);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(nint window);
+    [DllImport("user32.dll")] static extern bool PostMessage(nint window, uint message, nint wParam, nint lParam);
+    static nint NativePickerWindow() {
+        nint found = 0;
+        EnumWindows((window, _) => {
+            GetWindowThreadProcessId(window, out uint processId);
+            if (processId != Environment.ProcessId || !IsWindowVisible(window)) return true;
+            var name = new StringBuilder(64);
+            if (GetClassName(window, name, name.Capacity) > 0 && name.ToString() == "#32770") { found = window; return false; }
+            return true;
+        }, 0);
+        return found;
+    }
     static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     async Task Until(Func<bool> predicate, string message, int timeout = 8000) {
         var watch = Stopwatch.StartNew();
@@ -105,6 +124,11 @@ public sealed partial class NativeWindow
         await Until(() => ((BitmapImage)((Image)controls["logo"]).Source).PixelWidth > 0, "Bundled image did not decode");
         ((RadioButtons)controls["channel"]).SelectedIndex = 1; await Idle(); Check(values["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         ((ListView)controls["templates"]).SelectedIndex = 2; await Idle(); Check(values["selectionText.text"] == "Template index: 2", "List event did not reach Hydrogen");
+        var context = controls["templates"].ContextFlyout as MenuFlyout;
+        Check(context != null && context.Items.Count == 1 && ReferenceEquals(context.Items[0], controls["inspectTemplate"]), "Native WinUI context menu is missing");
+        context.ShowAt(controls["templates"]); await Task.Delay(100); context.Hide();
+        Invoke(controls["inspectTemplate"]); await Idle();
+        Check(values["selectionText.text"] == "Inspect template index: 2", "Context menu command did not reach Hydrogen");
         ((ListView)controls["projects"]).SelectedIndex = 1; await Idle(); Check(values["selectionText.text"] == "Project index: 1", "Table event did not reach Hydrogen");
         Check(controls["templateSearch"] is AutoSuggestBox, "SearchInput must use a WinUI AutoSuggestBox");
         var search = (AutoSuggestBox)controls["templateSearch"];
@@ -129,6 +153,12 @@ public sealed partial class NativeWindow
         values["openDocument.path"] = @"C:\Aurora Notes\café.txt";
         Dispatch("PickedDocument", "openDocument"); await Idle();
         Check(values["selectionText.text"] == @"Open: C:\Aurora Notes\café.txt", "Selected file path did not reach Hydrogen");
+        Invoke(controls["openDocument"]);
+        await Until(() => NativePickerWindow() != 0 || errors.Text != "", "Native Windows file picker did not open");
+        nint nativePicker = NativePickerWindow(); Check(nativePicker != 0, "Native Windows file dialog was not found");
+        Check(PostMessage(nativePicker, 0x0010, 0, 0), "Cannot close native Windows file picker");
+        await Until(() => !activePickers.Contains("openDocument"), "Native file picker did not complete cancellation"); await Idle();
+        Check(values["selectionText.text"] == "File selection cancelled.", "Native Windows file picker cancellation did not reach Hydrogen");
         Check(ToolTipService.GetToolTip(controls["save"])?.ToString() == "Write the current plan to the chosen path", "Native button tooltip is missing");
         Check(controls["templateDetails"] is ScrollViewer, "ScrollView must use a WinUI ScrollViewer");
         var details = (ScrollViewer)controls["templateDetails"];

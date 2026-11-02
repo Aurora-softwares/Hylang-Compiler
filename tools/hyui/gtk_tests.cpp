@@ -110,6 +110,15 @@ public:
         check(bridge.state()["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         view.api.call("gtk_list_box_select_row", view.controls["templates"]->widget, view.api.call<W>("gtk_list_box_get_row_at_index", view.controls["templates"]->widget, 2)); idle();
         check(bridge.state()["selectionText.text"] == "Template index: 2", "List selection did not reach Hydrogen");
+        W context = view.controls["templateContext"]->dialog;
+        check(context && view.api.call<int>("g_type_check_instance_is_a", context, view.api.call<unsigned long>("gtk_popover_get_type")), "ContextMenu must use a native GtkPopover");
+        view.api.call("g_signal_emit_by_name", view.controls["templateContext"]->buffer, "pressed", 1, 12.0, 12.0); settle();
+        check(view.api.call<int>("gtk_widget_get_visible", context), "Right-click did not open the context menu");
+        click("inspectTemplate");
+        check(bridge.state()["selectionText.text"] == "Inspect template index: 2", "Context menu command did not reach Hydrogen");
+        view.api.call("gtk_popover_popdown", context);
+        check(!view.controls["templateContext"]->keyAction('x', 0) && view.controls["templateContext"]->keyAction(0xffc7u, 1u), "Menu-key gesture did not reopen the context menu");
+        view.api.call("gtk_popover_popdown", context);
         W search = view.controls["templateSearch"]->widget;
         check(view.api.call<int>("g_type_check_instance_is_a", search, view.api.call<unsigned long>("gtk_search_entry_get_type")), "SearchInput must use GtkSearchEntry");
         check(view.api.call<int>("gtk_widget_get_visible", search), "Hydrogen did not reveal SearchInput");

@@ -14,6 +14,7 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"GridPanel", {"gap", "columns", "minItemWidth"}},
     {"Panel", {"title", "padding", "gap"}},
     {"MenuBar", {}}, {"Menu", {"text"}}, {"MenuItem", {"text", "onClick", "checked", "shortcut"}},
+    {"ContextMenu", {"target"}},
     {"Tabs", {"value", "onChange"}}, {"Tab", {"title", "gap"}},
     {"ListBox", {"items", "value", "height", "onChange"}},
     {"Table", {"columns", "rows", "value", "height", "onChange"}},
@@ -41,7 +42,7 @@ static const QSet<QString> booleans = {"visible", "enabled", "fill", "primary", 
 static const QSet<QString> numbers = {"width", "height", "padding", "gap", "breakpoint", "columns", "minItemWidth",
                                       "preferredWidth", "minimum", "maximum", "interval"};
 static bool container(const QString& tag) {
-    return tag == "Tabs" || tag == "Tab" || tag == "MenuBar" || tag == "Menu" || tag == "Window" || tag == "Panel" || tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel" || tag == "ScrollView";
+    return tag == "Tabs" || tag == "Tab" || tag == "MenuBar" || tag == "Menu" || tag == "ContextMenu" || tag == "Window" || tag == "Panel" || tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel" || tag == "ScrollView";
 }
 
 QString Document::resourcePath(const QString& relative) const {
@@ -56,6 +57,7 @@ bool Document::parse(const QByteArray& xml) {
     if (xml.size() > 1024 * 1024) { error = "HYUI documents are limited to 1 MiB"; return false; }
     QXmlStreamReader reader(xml);
     QSet<QString> ids;
+    QMap<QString, QString> tagsById;
     QSet<QString> shortcuts;
     int count = 0;
     auto invalid = [&](const QString& message) {
@@ -71,7 +73,7 @@ bool Document::parse(const QByteArray& xml) {
         if ((depth == 0) != (node.tag == "Window")) { return invalid("exactly one root Window is required"); }
         for (const auto& attr : reader.attributes()) {
             QString key = attr.qualifiedName().toString(), value = attr.value().toString();
-            const bool visual = node.tag != "Window" && node.tag != "Timer" && node.tag != "State";
+            const bool visual = node.tag != "Window" && node.tag != "Timer" && node.tag != "State" && node.tag != "ContextMenu";
             const bool tooltipTarget = node.tag != "MenuBar" && node.tag != "Menu" && node.tag != "MenuItem" && node.tag != "Dialog";
             if (!attributes[node.tag].contains(key) && !(key == "id" || (visual && common.contains(key) && (key != "tooltip" || tooltipTarget)))) {
                 return invalid("unknown attribute '" + key + "' on " + node.tag);
@@ -122,9 +124,11 @@ bool Document::parse(const QByteArray& xml) {
             return invalid("invalid or duplicate id '" + node.id + "'");
         }
         ids.insert(node.id);
+        tagsById.insert(node.id, node.tag);
+        if (node.tag == "ContextMenu" && node.attributes.value("target").isEmpty()) { return invalid("ContextMenu requires target"); }
         if (node.tag == "PasswordInput") { secretInputs.insert(node.id); }
         QSet<QString> props;
-        if (node.tag != "Window" && node.tag != "Timer" && node.tag != "State") { props = {"visible", "enabled"}; }
+        if (node.tag != "Window" && node.tag != "Timer" && node.tag != "State" && node.tag != "ContextMenu") { props = {"visible", "enabled"}; }
         for (const QString& prop : {"text", "value", "checked", "running", "indeterminate", "open"}) {
             if (attributes[node.tag].contains(prop)) { props.insert(prop); }
         }
@@ -165,16 +169,31 @@ bool Document::parse(const QByteArray& xml) {
                 if ((node.tag == "Tabs" && childTag != "Tab") || (node.tag == "MenuBar" && childTag != "Menu") ||
                     (node.tag == "Menu" && childTag != "MenuItem") ||
                     (childTag == "Tab" && node.tag != "Tabs") || (childTag == "Menu" && node.tag != "MenuBar") ||
-                    (childTag == "MenuItem" && node.tag != "Menu") || (childTag == "MenuBar" && node.tag != "Window") ||
-                    (childTag == "Dialog" && node.tag != "Window")) { return invalid("invalid placement of " + childTag); }
+                    (childTag == "MenuItem" && node.tag != "Menu" && node.tag != "ContextMenu") || (childTag == "MenuBar" && node.tag != "Window") ||
+                    (childTag == "Dialog" && node.tag != "Window") || (childTag == "ContextMenu" && node.tag != "Window") ||
+                    (node.tag == "ContextMenu" && childTag != "MenuItem")) { return invalid("invalid placement of " + childTag); }
                 Node child;
                 if (!read(child, depth + 1)) { return false; }
+                if (node.tag == "ContextMenu" && child.attributes.contains("shortcut")) { return invalid("ContextMenu items do not support global shortcuts"); }
                 node.children.push_back(std::move(child));
             } else if (token == QXmlStreamReader::EndElement) {
                 if (node.tag == "Window") {
                     int menus = 0; for (const Node& child : node.children) { if (child.tag == "MenuBar") { ++menus; } }
                     if (menus > 1) { return invalid("Window permits one MenuBar"); }
+                    QSet<QString> contextTargets;
+                    for (const Node& child : node.children) {
+                        if (child.tag != "ContextMenu") { continue; }
+                        QString target = child.attributes.value("target");
+                        QString tag = tagsById.value(target);
+                        if (contextTargets.contains(target) || tag.isEmpty() ||
+                            tag == "Window" || tag == "ContextMenu" || tag == "MenuBar" || tag == "Menu" || tag == "MenuItem" ||
+                            tag == "Dialog" || tag == "State" || tag == "Timer") {
+                            return invalid("ContextMenu target must name one visual control");
+                        }
+                        contextTargets.insert(target);
+                    }
                 }
+                if (node.tag == "ContextMenu" && node.children.empty()) { return invalid("ContextMenu requires MenuItem children"); }
                 if (node.tag == "Tabs") {
                     if (node.children.empty() || initialState[node.id + ".value"].toInt() >= int(node.children.size())) { return invalid("Tabs requires pages and a valid selected value"); }
                     ranges[node.id] = qMakePair(0, int(node.children.size()) - 1);

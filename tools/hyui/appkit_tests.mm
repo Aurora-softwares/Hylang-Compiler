@@ -127,6 +127,11 @@ int main(int argc, char** argv) {
             NSScrollView* list = (NSScrollView*)find(gallery, @"templates"); NSTableView* table = (NSTableView*)list.documentView;
             [table selectRowIndexes:[NSIndexSet indexSetWithIndex:2] byExtendingSelection:NO]; finish();
             require(bridge.state()["selectionText.text"].toString() == "Template index: 2", "list event failed");
+            NSMenu* contextMenu = table.menu;
+            require([contextMenu isKindOfClass:NSMenu.class] && contextMenu.numberOfItems == 1, "native context menu was not attached to the list");
+            NSMenuItem* inspect = [contextMenu itemAtIndex:0];
+            [inspect.target performSelector:inspect.action withObject:inspect]; finish();
+            require(bridge.state()["selectionText.text"].toString() == "Inspect template index: 2", "context menu command did not reach Hydrogen");
             NSScrollView* projects = (NSScrollView*)find(gallery, @"projects");
             [(NSTableView*)projects.documentView selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO]; finish();
             require(bridge.state()["selectionText.text"].toString() == "Project index: 1", "table event failed");
@@ -163,6 +168,17 @@ int main(int argc, char** argv) {
                 [pickerParent endSheet:panel returnCode:NSModalResponseCancel]; finish();
                 require(bridge.state()["selectionText.text"].toString() == "File selection cancelled.", "Native file picker cancellation failed");
             }
+            [(NSButton*)find(gallery, @"saveDocument") performClick:nil]; view->pump();
+            NSWindow* saveParent = NSApp.windows.firstObject;
+            if (!saveParent.attachedSheet) { for (NSWindow* candidate in NSApp.windows) { if (candidate.attachedSheet) { saveParent = candidate; break; } } }
+            NSSavePanel* savePanel = (NSSavePanel*)saveParent.attachedSheet;
+            require([savePanel isKindOfClass:NSSavePanel.class], "native save panel did not open");
+            savePanel.directoryURL = [NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES];
+            savePanel.nameFieldStringValue = @"hydrogen-café.txt";
+            [saveParent endSheet:savePanel returnCode:NSModalResponseOK];
+            for (int i = 0; i < 100; ++i) { app.processEvents(); view->pump(); QThread::msleep(2); } finish();
+            require(bridge.state()["saveDocument.path"].toString().endsWith("hydrogen-café.txt") &&
+                    bridge.state()["selectionText.text"].toString().startsWith("Save: "), "selected native save path did not reach Hydrogen");
             require([find(gallery, @"save").toolTip isEqualToString:@"Write the current plan to the chosen path"], "native button tooltip is missing");
             NSScrollView* details = (NSScrollView*)find(gallery, @"templateDetails");
             view->pump();
