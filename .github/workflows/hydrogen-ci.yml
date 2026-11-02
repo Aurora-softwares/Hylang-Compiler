@@ -60,6 +60,63 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  macos-ui-sdk:
+    name: Export x64 native AppKit runtime SDK
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt deployment tools
+        run: brew install qtbase
+      - name: Build and export native AppKit runtime
+        run: |
+          cmake -S . -B build-sdk -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON -DCMAKE_PREFIX_PATH="$(brew --prefix qtbase)" -DCMAKE_OSX_ARCHITECTURES=x86_64
+          cmake --build build-sdk --target hydrogen-ui-sdk --parallel 3
+          test -f build-sdk/native-sdk/macos-x64.app/Contents/hyui-runtime.json
+          test -x build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui
+          test -x build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui-launcher
+          lipo -archs build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui | grep -q x86_64
+          plutil -lint build-sdk/native-sdk/macos-x64.app/Contents/Info.plist
+      - name: Upload exported macOS runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-sdk-macos-${{ github.run_id }}
+          path: build-sdk/native-sdk/macos-x64.app
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-ui-sdk:
+    name: Export native WinUI 3 runtime SDK without Qt
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build WinUI host and launcher without standalone hyui packager
+        shell: pwsh
+        run: |
+          cmake -S . -B build-sdk -DHYDROGEN_BUILD_UI=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-sdk --target hydrogen-ui-sdk --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $runtime = 'build-sdk/native-sdk/windows-x64'
+          if (!(Test-Path "$runtime/hyui-runtime.json") -or !(Test-Path "$runtime/hyui.exe") -or !(Test-Path "$runtime/hyui-launcher.exe")) {
+            throw 'Windows native runtime export is incomplete'
+          }
+          $manifest = Get-Content "$runtime/hyui-runtime.json" -Raw | ConvertFrom-Json
+          if ($manifest.target -ne 'windows-x64' -or $manifest.renderer -ne 'winui3') {
+            throw 'Native WinUI runtime manifest is incorrect'
+          }
+      - name: Upload exported Windows runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-sdk-windows-${{ github.run_id }}
+          path: build-sdk/native-sdk/windows-x64
+          if-no-files-found: error
+          retention-days: 14
+
   linux-ui:
     name: GTK UI interactions and appearance
     runs-on: ubuntu-24.04
