@@ -1,19 +1,16 @@
 using Hydrogen.Compiler.Core;
 
 namespace Hydrogen.Compiler.UI {
-    // Linux GTK4 packaging. The output executable starts the native GTK
-    // event loop directly; the Hydrogen backend remains a separate executable
-    // until the in-process application ABI lands in a later milestone.
+    // Linux native packaging. The compiler builds the Hydrogen backend itself.
+    // This module only stages the OS host and application assets.
     public class UIPackager {
         public static string Prepare(string projectPath, string output, string target, string sdkRoot) {
             if (target != "linux-x64") {
                 return "self-hosted UI packaging currently supports linux-x64 only";
             }
-            if (!System.IO.File.Exists(UIRuntimeManager.NativeGtkApplication(sdkRoot))) {
-                return "GTK4 application runtime missing: build target hydrogen-gtk-app with Qt 6.8+ and HYDROGEN_BUILD_UI=ON";
-            }
-            if (Run("command -v patchelf >/dev/null 2>&1") != 0) {
-                return "patchelf is required to package relocatable GTK4 applications";
+            if (!System.IO.File.Exists(UIRuntimeManager.NativeHost(sdkRoot)) ||
+                !System.IO.File.Exists(UIRuntimeManager.NativeLauncher(sdkRoot))) {
+                return "native UI SDK missing: build with Qt 6.8+ and HYDROGEN_BUILD_UI=ON";
             }
             string stage = output + ".ui-staging";
             if (Run("test -e " + Quote(stage)) == 0 ||
@@ -58,12 +55,15 @@ namespace Hydrogen.Compiler.UI {
                 if (error != "") { return error; }
                 i = i + 1;
             }
+            if (Run("cp -- " + Quote(UIRuntimeManager.NativeHost(sdkRoot)) + " " + Quote(runtime + "/hyui")) != 0) {
+                return "failed to copy GTK4 native host";
+            }
             if (Run("mkdir -p -- " + Quote(runtime + "/lib")) != 0) {
                 return "failed to stage native UI libraries";
             }
             // GTK4 remains a system library; bundle Qt Core's nonvisual runtime
             // dependencies, matching the native packager's Linux deployment rule.
-            string qtDependencies = "ldd " + Quote(UIRuntimeManager.NativeGtkApplication(sdkRoot)) +
+            string qtDependencies = "ldd " + Quote(runtime + "/hyui") +
                 " | awk '$1 ~ /^(libQt6Core[.]so|libicu|libdouble-conversion|libb2[.]so|libpcre2-16[.]so)/ && $2 == \"=>\" { print $3 }'" +
                 " | while IFS= read -r lib; do cp -L -- \"$lib\" " + Quote(runtime + "/lib/") +
                 " || exit 1; done";
@@ -74,22 +74,13 @@ namespace Hydrogen.Compiler.UI {
                 "\",\"backend\":\"__hyui_backend\",\"target\":\"linux-x64\"}");
             System.IO.File.WriteAllText(runtime + "/hyui-runtime.json",
                 "{\"format\":1,\"target\":\"linux-x64\",\"renderer\":\"gtk4\"}");
-            // The real GTK renderer is the application's executable, not a
-            // launcher that spawns hyui-native. Its Qt Core helper libraries
-            // are bundled privately and located using an executable-relative
-            // RPATH; no environment variable or global installation required.
-            if (Run("cp -- " + Quote(UIRuntimeManager.NativeGtkApplication(sdkRoot)) + " " + Quote(output + ".ui-launcher")) != 0) {
-                return "failed to stage GTK4 application executable";
-            }
-            string rpath = "$ORIGIN/" + PathUtils.BaseName(output) + ".runtime/lib";
-            if (Run("patchelf --force-rpath --set-rpath " + Quote(rpath) +
-                    " " + Quote(output + ".ui-launcher")) != 0) {
-                return "failed to set relocatable GTK4 application library path";
+            if (Run("cp -- " + Quote(UIRuntimeManager.NativeLauncher(sdkRoot)) + " " + Quote(output + ".ui-launcher")) != 0) {
+                return "failed to stage application launcher";
             }
             bool replacing = Run("test -e " + Quote(output)) == 0;
             if (replacing) {
                 if (Run("mv -- " + Quote(output) + " " + Quote(output + ".ui-backup")) != 0) {
-                    return "failed to back up existing GTK4 application";
+                    return "failed to back up existing UI launcher";
                 }
                 if (Run("mv -- " + Quote(output + ".runtime") + " " +
                         Quote(output + ".ui-backup.runtime")) != 0) {
@@ -103,7 +94,7 @@ namespace Hydrogen.Compiler.UI {
             }
             if (Run("mv -- " + Quote(output + ".ui-launcher") + " " + Quote(output)) != 0) {
                 Restore(output, replacing, true);
-                return "failed to publish GTK4 application executable";
+                return "failed to publish native UI launcher";
             }
             if (replacing) {
                 Run("rm -f -- " + Quote(output + ".ui-backup"));
