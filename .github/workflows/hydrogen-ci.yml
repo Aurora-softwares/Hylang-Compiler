@@ -24,6 +24,26 @@ permissions:
   contents: read
 
 jobs:
+  linux-gtk-direct:
+    name: Hydrogen Stage 1 builds direct GTK4 application (no Qt host)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK4 build and virtual display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libgtk-4-dev xvfb dbus-x11 file python3
+      - name: Build self-hosted Hydrogen Stage 1 without Qt
+        run: |
+          cmake -S . -B build/bootstrap -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=OFF
+          cmake --build build/bootstrap --target hy --parallel 3
+          mkdir -p build/self_hosting/linux
+          ./build/bootstrap/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build/self_hosting/linux/hydrogen-stage1
+      - name: Build and run direct native GTK4 Studio
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' \
+            bash tests/ui/test-linux-gtk-direct.sh
   macos-ui:
     name: AppKit UI interactions and appearance
     runs-on: macos-15-intel
