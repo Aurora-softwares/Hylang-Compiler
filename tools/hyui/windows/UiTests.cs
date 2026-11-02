@@ -129,6 +129,9 @@ public sealed partial class NativeWindow
         var toolbar = controls["studioToolbar"] as CommandBar;
         Check(toolbar != null && toolbar.Visibility == Visibility.Visible && toolbar.PrimaryCommands.Count == 2 &&
               ReferenceEquals(toolbar.PrimaryCommands[0], controls["toolbarWorkspace"]), "Native WinUI toolbar is missing");
+        Apply("HYUI\tSET\tstudioToolbar\tenabled\tfalse\n");
+        Check(!toolbar.IsEnabled, "Disabled toolbar left commands active");
+        Apply("HYUI\tSET\tstudioToolbar\tenabled\ttrue\n");
         Invoke(controls["toolbarWorkspace"]); await Idle(); Check(values["pages.value"] == "0", "Toolbar workspace command did not reach Hydrogen");
         Invoke(controls["toolbarControls"]); await Idle(); Check(values["pages.value"] == "1", "Toolbar gallery command did not reach Hydrogen");
         var context = controls["templates"].ContextFlyout as MenuFlyout;

@@ -114,6 +114,9 @@ public:
         check(view.api.call<int>("gtk_widget_get_visible", toolbarCommand) &&
               view.api.call<W>("gtk_widget_get_ancestor", toolbarCommand, view.api.call<unsigned long>("adw_header_bar_get_type")) != nullptr,
               "Native libadwaita toolbar command is missing");
+        check(bridge.apply("HYUI\tSET\tstudioToolbar\tenabled\tfalse\n"), "Cannot disable native toolbar");
+        check(!view.api.call<int>("gtk_widget_is_sensitive", toolbarCommand), "Disabled toolbar left a command active");
+        check(bridge.apply("HYUI\tSET\tstudioToolbar\tenabled\ttrue\n"), "Cannot restore native toolbar");
         click("toolbarWorkspace");
         check(bridge.state()["pages.value"].toInt() == 0, "Toolbar workspace command did not reach Hydrogen");
         click("toolbarControls");

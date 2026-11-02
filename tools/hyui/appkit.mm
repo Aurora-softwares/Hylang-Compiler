@@ -430,7 +430,12 @@ class AppKitView : public NativeView {
         }
         for (auto it = items.cbegin(); it != items.cend(); ++it) {
             Item c = it.value(); auto value = [&](QString p) { return state.value(it.key() + '.' + p); }; QString tag = c.node->tag;
-            if (tag != "Tab") { c.view.hidden = !value("visible").toBool(); } if ([c.control respondsToSelector:@selector(setEnabled:)]) { [c.control setEnabled:value("enabled").toBool()]; }
+            if (tag != "Tab") { c.view.hidden = !value("visible").toBool(); }
+            bool enabled = value("enabled").toBool();
+            if (tag == "ToolButton") {
+                for (const Node& parent : doc.window.children) { if (parent.tag == "Toolbar") { enabled = enabled && state.value(parent.id + ".enabled").toBool(); break; } }
+            }
+            if ([c.control respondsToSelector:@selector(setEnabled:)]) { [c.control setEnabled:enabled]; }
             if (tag == "Label" || tag == "Input" || tag == "SearchInput") { if (string([c.control stringValue]) != value("text").toString()) { [c.control setStringValue:text(value("text").toString())]; } }
             if (tag == "TextArea") { if (string([(NSTextView*)c.control string]) != value("text").toString()) { [(NSTextView*)c.control setString:text(value("text").toString())]; } }
             if (tag == "Button" || tag == "ToolButton" || tag == "FilePicker" || tag == "CheckBox") { [(NSButton*)c.control setTitle:text(value("text").toString())]; }

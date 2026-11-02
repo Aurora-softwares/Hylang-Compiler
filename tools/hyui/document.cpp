@@ -77,7 +77,10 @@ bool Document::parse(const QByteArray& xml) {
             QString key = attr.qualifiedName().toString(), value = attr.value().toString();
             const bool visual = node.tag != "Window" && node.tag != "Timer" && node.tag != "State" && node.tag != "ContextMenu" && node.tag != "Clipboard";
             const bool tooltipTarget = node.tag != "MenuBar" && node.tag != "Menu" && node.tag != "MenuItem" && node.tag != "Dialog";
-            if (!attributes[node.tag].contains(key) && !(key == "id" || (visual && common.contains(key) && (key != "tooltip" || tooltipTarget)))) {
+            const bool supportedCommon = node.tag == "Toolbar" ? (key == "visible" || key == "enabled") :
+                node.tag == "ToolButton" ? (key == "visible" || key == "enabled" || key == "accessibleName" || key == "tooltip") :
+                common.contains(key) && (key != "tooltip" || tooltipTarget);
+            if (!attributes[node.tag].contains(key) && !(key == "id" || (visual && supportedCommon))) {
                 return invalid("unknown attribute '" + key + "' on " + node.tag);
             }
             if (value.size() > 16384) { return invalid("attribute exceeds 16384 characters"); }

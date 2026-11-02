@@ -537,7 +537,9 @@ public:
             bool visible = value("visible").toBool();
             if (tag == "ToolButton" && !toolbarId.isEmpty()) { visible = visible && state.value(toolbarId + ".visible").toBool(); }
             api.call("gtk_widget_set_visible", c->container ? c->container : c->widget, visible ? 1 : 0);
-            api.call("gtk_widget_set_sensitive", c->widget, value("enabled").toBool() ? 1 : 0);
+            bool enabled = value("enabled").toBool();
+            if (tag == "ToolButton" && !toolbarId.isEmpty()) { enabled = enabled && state.value(toolbarId + ".enabled").toBool(); }
+            api.call("gtk_widget_set_sensitive", c->widget, enabled ? 1 : 0);
             if (tag == "Label") { api.text(c->widget, "gtk_label_set_text", value("text").toString()); }
             if (tag == "Button" || tag == "ToolButton" || tag == "FilePicker" || (tag == "MenuItem" && !c->node->attributes.contains("checked"))) { api.text(c->widget, "gtk_button_set_label", value("text").toString()); }
             if ((tag == "Input" || tag == "SearchInput") && QString::fromUtf8(api.call<const char*>("gtk_editable_get_text", c->widget)) != value("text").toString()) { api.text(c->widget, "gtk_editable_set_text", value("text").toString()); }

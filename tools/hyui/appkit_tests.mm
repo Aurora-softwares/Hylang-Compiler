@@ -133,6 +133,9 @@ int main(int argc, char** argv) {
             NSButton* workspaceCommand = (NSButton*)nativeToolbar.items[0].view;
             NSButton* galleryCommand = (NSButton*)nativeToolbar.items[1].view;
             require([workspaceCommand isKindOfClass:NSButton.class] && [galleryCommand isKindOfClass:NSButton.class], "toolbar commands must be AppKit buttons");
+            require(bridge.apply("HYUI\tSET\tstudioToolbar\tenabled\tfalse\n"), "cannot disable native toolbar");
+            require(!workspaceCommand.enabled && !galleryCommand.enabled, "disabled toolbar left commands active");
+            require(bridge.apply("HYUI\tSET\tstudioToolbar\tenabled\ttrue\n"), "cannot restore native toolbar");
             [workspaceCommand performClick:nil]; finish();
             require(bridge.state()["pages.value"].toInt() == 0, "toolbar workspace command did not reach Hydrogen");
             [galleryCommand performClick:nil]; finish();

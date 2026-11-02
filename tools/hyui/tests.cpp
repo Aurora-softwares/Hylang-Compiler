@@ -115,6 +115,8 @@ private slots:
         QVERIFY(bridge.apply("HYUI\tSET\tcommands\tvisible\ttrue\nHYUI\tSET\topen\ttext\tOpen file\nHYUI\tSET\tsave\tenabled\tfalse\n"));
         QCOMPARE(bridge.state()["open.text"].toString(), "Open file");
         QCOMPARE(bridge.state()["save.enabled"].toBool(), false);
+        QVERIFY(bridge.apply("HYUI\tSET\tcommands\tenabled\tfalse\n"));
+        QCOMPARE(bridge.state()["commands.enabled"].toBool(), false);
         const QList<QByteArray> invalid = {
             "<Window version=\"1\"><Toolbar/></Window>",
             "<Window version=\"1\"><ToolButton text=\"Open\" onClick=\"Open\"/></Window>",
@@ -122,7 +124,9 @@ private slots:
             "<Window version=\"1\"><Toolbar><Button text=\"Bad\"/></Toolbar></Window>",
             "<Window version=\"1\"><Toolbar><ToolButton text=\"Open\"/></Toolbar></Window>",
             "<Window version=\"1\"><Toolbar><ToolButton onClick=\"Open\"/></Toolbar></Window>",
-            "<Window version=\"1\"><Toolbar><ToolButton text=\"Open\" onClick=\"Open\"/></Toolbar><Toolbar><ToolButton text=\"Again\" onClick=\"Again\"/></Toolbar></Window>"
+            "<Window version=\"1\"><Toolbar><ToolButton text=\"Open\" onClick=\"Open\"/></Toolbar><Toolbar><ToolButton text=\"Again\" onClick=\"Again\"/></Toolbar></Window>",
+            "<Window version=\"1\"><Toolbar tooltip=\"ignored\"><ToolButton text=\"Open\" onClick=\"Open\"/></Toolbar></Window>",
+            "<Window version=\"1\"><Toolbar><ToolButton text=\"Open\" onClick=\"Open\" preferredWidth=\"100\"/></Toolbar></Window>"
         };
         for (const auto& xml : invalid) { QVERIFY2(!d.parse(xml), xml.constData()); }
     }
