@@ -95,7 +95,7 @@ struct Parser {
     }
 };
 struct App;
-struct Hook { App* app; Node* node; std::string handler; int index=-1; };
+struct Hook { App* app; Node* node; std::string handler; int index=-1; GtkWidget* popup=nullptr; };
 struct Control { Node* node; GtkWidget* widget; std::string kind; };
 struct App {
     fs::path folder, backend;
@@ -349,6 +349,10 @@ struct App {
             Node* n=it->second.node;GtkWidget* w=it->second.widget;
             state[name+"."+prop]=v;
             if(prop=="open" && n->tag=="Dialog" && truth(v))showDialog(n);
+            if(prop=="open" && n->tag=="Popover" && w) {
+                if(truth(v))gtk_popover_popup(GTK_POPOVER(w));
+                else gtk_popover_popdown(GTK_POPOVER(w));
+            }
             if(prop=="visible" && w)gtk_widget_set_visible(w,truth(v));
             else if(prop=="enabled" && w)gtk_widget_set_sensitive(w,truth(v));
             else if(prop=="text" && w) {
@@ -616,6 +620,55 @@ struct App {
         if(w && number(attr(n,"preferredWidth"))>0)gtk_widget_set_size_request(w,number(attr(n,"preferredWidth")),-1);
         return w;
     }
+    static void contextPressed(GtkGestureClick*,gint,gdouble,gdouble,gpointer data) {
+        auto* h=static_cast<Hook*>(data);
+        if(h->popup)gtk_popover_popup(GTK_POPOVER(h->popup));
+    }
+    static void popoverClosed(GtkPopover*,gpointer data) {
+        auto* h=static_cast<Hook*>(data);
+        const auto name=h->app->id(h->node);
+        h->app->state[name+".open"]="false";
+        if(!h->app->applying && !h->handler.empty())h->app->dispatch(h->handler,name);
+    }
+    void attachPopovers() {
+        for(auto& child:document.root->children) {
+            Node* n=child.get();
+            if(n->tag!="ContextMenu" && n->tag!="Popover")continue;
+            auto target=controls.find(attr(n,"target"));
+            if(target==controls.end() || !target->second.widget)continue;
+            GtkWidget* pop=gtk_popover_new();
+            if(n->tag=="ContextMenu") {
+                GtkWidget* contents=gtk_box_new(GTK_ORIENTATION_VERTICAL,2);
+                for(auto& item:n->children)
+                    append(contents,build(item.get()),n,item.get());
+                gtk_popover_set_child(GTK_POPOVER(pop),contents);
+            } else {
+                GtkWidget* contents=gtk_label_new(attr(n,"text").c_str());
+                gtk_widget_set_margin_start(contents,14);
+                gtk_widget_set_margin_end(contents,14);
+                gtk_widget_set_margin_top(contents,12);
+                gtk_widget_set_margin_bottom(contents,12);
+                gtk_popover_set_child(GTK_POPOVER(pop),contents);
+            }
+            gtk_widget_set_parent(pop,target->second.widget);
+            registerControl(n,pop,n->tag.c_str());
+            if(n->tag=="ContextMenu") {
+                GtkGesture* gesture=gtk_gesture_click_new();
+                gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture),GDK_BUTTON_SECONDARY);
+                auto* h=hook(n,"onClick");
+                if(!h) {
+                    auto extra=std::make_unique<Hook>();
+                    extra->app=this;extra->node=n;h=extra.get();
+                    hooks.push_back(std::move(extra));
+                }
+                h->popup=pop;
+                g_signal_connect(gesture,"pressed",G_CALLBACK(contextPressed),h);
+                gtk_widget_add_controller(target->second.widget,GTK_EVENT_CONTROLLER(gesture));
+            } else if(auto* h=hook(n,"onClose")) {
+                g_signal_connect(pop,"closed",G_CALLBACK(popoverClosed),h);
+            }
+        }
+    }
     static gboolean tick(gpointer data) {
         auto* h=static_cast<Hook*>(data);
         if(truth(h->app->state[h->app->id(h->node)+".running"]))
@@ -661,6 +714,7 @@ struct App {
         for(auto& child:document.root->children)
             append(body,build(child.get()),n,child.get());
         gtk_window_present(GTK_WINDOW(window));
+        attachPopovers();
         for(auto& [name,c]:controls) {
             if(c.node->tag=="Timer") {
                 if(auto* h=hook(c.node,"onTick"))
