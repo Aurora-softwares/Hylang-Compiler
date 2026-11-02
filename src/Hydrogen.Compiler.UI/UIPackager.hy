@@ -21,6 +21,10 @@ namespace Hydrogen.Compiler.UI {
             }
             bool hasOutput = Run("test -e " + Quote(output)) == 0;
             bool hasRuntime = Run("test -e " + Quote(output + ".runtime")) == 0;
+            if (Run("test -L " + Quote(output)) == 0 ||
+                Run("test -L " + Quote(output + ".runtime")) == 0) {
+                return "refusing to follow a symlinked UI application output";
+            }
             if (hasOutput != hasRuntime) {
                 return "refusing to replace an incomplete or unowned UI package: " + output;
             }
@@ -97,6 +101,13 @@ namespace Hydrogen.Compiler.UI {
                 Run("rm -rf -- " + Quote(output + ".ui-backup.runtime"));
             }
             return "";
+        }
+
+        // Only temporary paths created by Prepare/Finish are deleted here.
+        // Existing user outputs and backup data are never removed by Abort.
+        public static void Abort(string output) {
+            Run("rm -rf -- " + Quote(output + ".ui-staging"));
+            Run("rm -f -- " + Quote(output + ".ui-launcher"));
         }
 
         private static void Restore(string output, bool replacing, bool newRuntimePublished) {
