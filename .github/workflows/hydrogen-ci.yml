@@ -79,6 +79,52 @@ jobs:
         run: |
           cmake -S . -B build-ui -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/qt/6.8.3/gcc_64"
           cmake --build build-ui --target hy hyui hyui_tests hyui_gtk_tests --parallel 3
+      - name: Build self-hosted Stage 1 with integrated native UI packaging
+        run: |
+          mkdir -p build/self_hosting/linux build/bootstrap
+          build-ui/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build/self_hosting/linux/hydrogen-stage1
+          cp build-ui/hyui-native build/bootstrap/hyui-native
+          cp build-ui/hyui-launcher build/bootstrap/hyui-launcher
+          test ! -e build/bootstrap/hyui
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/Studio
+          file build/Studio
+          test -x build/Studio
+          test -x build/Studio.runtime/hyui
+          test -x build/Studio.runtime/app/__hyui_backend
+      - name: Rebuild owned UI package without replacing unowned files
+        run: |
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/Studio
+          test -x build/Studio
+          test -x build/Studio.runtime/app/__hyui_backend
+          printf 'sentinel' > build/unowned-file
+          if ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/unowned-file; then
+            echo "ERROR: Hydrogen overwrote an unowned executable"
+            exit 1
+          fi
+          test "$(cat build/unowned-file)" = sentinel
+          test ! -e build/Studio.ui-backup
+          test ! -e build/Studio.ui-backup.runtime
+      - name: Enforce self-hosted compiler source formatting
+        run: build-ui/hy fmt --check src
+      - name: Build application from outside the repository with an explicit native SDK
+        run: |
+          mkdir -p "$RUNNER_TEMP/hydrogen-ui-relocation"
+          cd "$RUNNER_TEMP/hydrogen-ui-relocation"
+          "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1" build \
+            "$GITHUB_WORKSPACE/samples/ui_studio/Studio.hyproj" \
+            --ui-sdk "$GITHUB_WORKSPACE/build/bootstrap" \
+            -o "$RUNNER_TEMP/hydrogen-ui-relocation/Studio"
+          test -x "$RUNNER_TEMP/hydrogen-ui-relocation/Studio"
+          test -x "$RUNNER_TEMP/hydrogen-ui-relocation/Studio.runtime/hyui"
+      - name: Test integrated GTK application without hyui packaging tool
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' ./build/Studio --state-output build/integrated-studio-state.json --screenshot build/integrated-studio.png
+          test -s build/integrated-studio.png
+          grep -q 'Ready when you are' build/integrated-studio-state.json
       - name: Validate element contracts and visual comparator
         run: |
           build-ui/tools/hyui/hyui_tests

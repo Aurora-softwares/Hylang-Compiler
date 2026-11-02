@@ -3,6 +3,7 @@ using Hydrogen.Compiler.Core;
 using Hydrogen.Compiler.Diagnostics;
 using Hydrogen.Compiler.Syntax;
 using Hydrogen.Compiler.Text;
+using Hydrogen.Compiler.UI;
 
 namespace Hydrogen.Compiler.Cli {
     public class Program {
@@ -1053,6 +1054,7 @@ namespace Hydrogen.Compiler.Cli {
             string output = "";
             string target = "";
             bool uiBackend = false;
+            string uiSdk = "";
             bool hideProgress = false;
             bool hideSpinner = false;
             bool hideLog = false;
@@ -1076,6 +1078,13 @@ namespace Hydrogen.Compiler.Cli {
                     else if (target == "mac" || target == "macos" || target == "macos-x64") { target = "macos"; }
                     else { System.Console.WriteLine("error: unsupported desktop target"); return 1; }
                     option = option + 2;
+                } else if (args[option] == "--ui-sdk") {
+                    if (option + 1 >= args.Length || uiSdk != "") {
+                        System.Console.WriteLine("error: missing or repeated native UI SDK directory");
+                        return 1;
+                    }
+                    uiSdk = args[option + 1];
+                    option = option + 2;
                 } else if (args[option] == "--ui-backend") {
                     uiBackend = true;
                     option = option + 1;
@@ -1094,7 +1103,7 @@ namespace Hydrogen.Compiler.Cli {
                 }
             }
             if (output == "") {
-                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--hide-progress] [--hide-spinner] [--hide-log]");
+                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--ui-sdk <directory>] [--hide-progress] [--hide-spinner] [--hide-log]");
                 return 1;
             }
 
@@ -1128,26 +1137,38 @@ namespace Hydrogen.Compiler.Cli {
                     System.Console.WriteLine("error: UI projects require a desktop executable target");
                     return 1;
                 }
-                // Discover the UI SDK alongside a source checkout, or fall back to
-                // the installed hyui tool. Normal builds never require --ui-backend.
-                string packager = FindUIBuildTool(projectPath, "hyui");
-                string compiler = FindUIBuildTool(projectPath, "compiler");
-                string quotedPackager = QuoteCommandPath(packager);
-                if (quotedPackager == "") {
-                    System.Console.WriteLine("error: unsupported UI packager path");
-                    return 1;
-                }
-                string command = quotedPackager + " --package " + quotedProject +
-                    " --output " + quotedOutput + " --target " + projectType;
-                if (compiler != "") {
-                    string quotedCompiler = QuoteCommandPath(compiler);
-                    if (quotedCompiler == "") {
-                        System.Console.WriteLine("error: unsupported UI compiler path");
+                if (projectType == "exe" && !System.Host.Process.IsWindows()) {
+                    string sdkRoot = UIRuntimeManager.SdkRoot(uiSdk);
+                    string error = UIProjectBuilder.Preflight(projectPath, sdkRoot);
+                    if (error != "") {
+                        System.Console.WriteLine("error: " + error);
                         return 1;
                     }
-                    command = command + " --compiler " + quotedCompiler;
+                    error = UIPackager.Prepare(projectPath, output, "linux-x64", sdkRoot);
+                    if (error != "") {
+                        System.Console.WriteLine("error: " + error);
+                        return 1;
+                    }
+                    string backend = output + ".ui-staging/app/__hyui_backend";
+                    NativeCompiler uiCompiler = new NativeCompiler();
+                    NativeCompilerResult uiResult = uiCompiler.BuildProject(projectPath, backend);
+                    if (!uiResult.Success()) {
+                        System.Console.Write(uiResult.DiagnosticsText());
+                        UIPackager.Abort(output);
+                        return 1;
+                    }
+                    error = UIPackager.Finish(projectPath, output, "linux-x64", sdkRoot);
+                    if (error != "") {
+                        System.Console.WriteLine("error: " + error);
+                        UIPackager.Abort(output);
+                        return 1;
+                    }
+                    System.Console.WriteLine("wrote " + output + " (linux-x64; native GTK4 UI)");
+                    return 0;
                 }
-                return System.Host.Process.Run(command);
+                // Other platforms retain their existing packaging flow until
+                // native runtime export and relocation have been ported.
+                return System.Host.Process.Run("hyui --package " + quotedProject + " --output " + quotedOutput + " --target " + projectType);
             }
             BuildProgress progress = new BuildProgress(hideProgress, hideSpinner, hideLog);
             if (manifest.Type() == "os" || manifest.Type() == "collection") {
@@ -1393,7 +1414,7 @@ namespace Hydrogen.Compiler.Cli {
             System.Console.WriteLine("usage: hy compile <file.hy> --target uefi-x64 -o <output>");
             System.Console.WriteLine("usage: hy compile <file.hy> --target windows-x64 -o <output.exe>");
             System.Console.WriteLine("usage: hy compile <file.hy> --target macos-x64 -o <output>");
-            System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--hide-progress] [--hide-spinner] [--hide-log]");
+            System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--ui-sdk <directory>] [--hide-progress] [--hide-spinner] [--hide-log]");
             System.Console.WriteLine("usage: hy stage-compare <project.hyproj> --stage1 <path> --stage2 <path>");
             System.Console.WriteLine("usage: hy package pack <library.hyproj> -o <output.hypkg>");
             System.Console.WriteLine("usage: hy package add <project.hyproj> <source.hypkg>");

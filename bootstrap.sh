@@ -592,6 +592,23 @@ step "Building C++ Stage 0 compiler..."
 run cmake --build "$BOOTSTRAP_BUILD_DIR" --target hy --parallel
 require_executable "$STAGE0" "Stage 0 compiler"
 
+# Build native desktop *runtime* resources when Qt 6.8+ is available.
+# Only hyui-native and hyui-launcher are built: the obsolete hyui packaging
+# executable is not required by self-hosted Linux UI builds.
+if [[ "${HYDROGEN_BUILD_UI:-auto}" != "OFF" && "${HYDROGEN_BUILD_UI:-auto}" != "off" ]]; then
+    UI_LOG="$BUILD_DIR/ui-runtime-build.log"
+    if cmake -S "$PROJECT_DIR" -B "$BOOTSTRAP_BUILD_DIR" \
+        -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON >"$UI_LOG" 2>&1 &&
+       cmake --build "$BOOTSTRAP_BUILD_DIR" \
+        --target hyui-native hyui-launcher --parallel >>"$UI_LOG" 2>&1; then
+        printf 'Native desktop UI runtime is available.\\n'
+    else
+        cmake -S "$PROJECT_DIR" -B "$BOOTSTRAP_BUILD_DIR" \
+            -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=OFF >>"$UI_LOG" 2>&1 || true
+        printf 'Native desktop runtime unavailable (Qt 6.8+ required); see %s\\n' "$UI_LOG"
+    fi
+fi
+
 ## Testing
 step "Testing compiler..."
 run_test "$STAGE0" --help

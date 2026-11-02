@@ -37,7 +37,7 @@ namespace Hydrogen.UI {
             if (Sender(args) != id) { return ""; }
             int i = 3;
             while (i + 1 < args.Length) {
-                if (args[i] == "--hyui-secret:" + id) { return File.ReadAllText(args[i + 1]); }
+                if (args[i] == "--hyui-secret:" + id) { return System.IO.File.ReadAllText(args[i + 1]); }
                 i = i + 2;
             }
             return "";
