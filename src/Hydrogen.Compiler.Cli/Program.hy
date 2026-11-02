@@ -35,6 +35,25 @@ namespace Hydrogen.Compiler.Cli {
                     System.Console.WriteLine("usage: hy ui <file.hy|project.hyproj>");
                     return 1;
                 }
+                if (EndsWith(args[1], ".hyproj")) {
+                    string[] buildArgs = new string[4];
+                    buildArgs[0] = "build";
+                    buildArgs[1] = args[1];
+                    buildArgs[2] = "-o";
+                    buildArgs[3] = "build/ui-preview/HydrogenPreview";
+                    int built = Build(buildArgs);
+                    if (built != 0) { return built; }
+                    string preview = buildArgs[3];
+                    if (System.Host.Process.IsWindows()) {
+                        preview = preview + ".exe";
+                    } else if (System.Host.Process.Run("test \"$(uname -s)\" = Darwin") == 0) {
+                        preview = preview + ".app";
+                        return System.Host.Process.Run("open " + QuoteCommandPath(preview));
+                    }
+                    return System.Host.Process.Run(QuoteCommandPath(preview));
+                }
+                // Single-source .hy preview will be migrated once the self-hosted
+                // document parser can construct transient UI project manifests.
                 string source = QuoteCommandPath(args[1]);
                 if (source == "" || (System.Host.Process.IsWindows() &&
                     (Find(args[1], "%", 0) >= 0 || Find(args[1], "!", 0) >= 0))) {
