@@ -201,18 +201,14 @@ int main(int argc, char** argv) {
             if (!saveParent.attachedSheet) { for (NSWindow* candidate in NSApp.windows) { if (candidate.attachedSheet) { saveParent = candidate; break; } } }
             NSSavePanel* acceptedSave = (NSSavePanel*)saveParent.attachedSheet;
             require([acceptedSave isKindOfClass:NSSavePanel.class] && ![acceptedSave isKindOfClass:NSOpenPanel.class], "Save acceptance must use NSSavePanel");
-            acceptedSave.directoryURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:temporary.path().toUtf8().constData()] isDirectory:YES];
-            acceptedSave.nameFieldStringValue = @"accepted-café.txt";
-            QString acceptedPath = QDir(temporary.path()).filePath("accepted-café.txt").normalized(QString::NormalizationForm_C);
+            QString acceptedPath = QString::fromUtf8(acceptedSave.URL.path.UTF8String).normalized(QString::NormalizationForm_C);
+            require(!acceptedPath.isEmpty(), "Native save panel has no accepted URL");
             [saveParent endSheet:acceptedSave returnCode:NSModalResponseOK];
             QElapsedTimer saveResponse; saveResponse.start();
             while (bridge.state()["saveDocument.path"].toString().isEmpty() && saveResponse.elapsed() < 5000) {
                 app.processEvents(); view->pump(); QThread::msleep(2);
             }
             finish();
-            if (bridge.state()["saveDocument.path"].toString().normalized(QString::NormalizationForm_C) != acceptedPath) {
-                std::cerr << "expected save path " << acceptedPath.toStdString() << " but received " << bridge.state()["saveDocument.path"].toString().toStdString() << '\n';
-            }
             require(bridge.state()["saveDocument.path"].toString().normalized(QString::NormalizationForm_C) == acceptedPath &&
                     bridge.state()["selectionText.text"].toString().normalized(QString::NormalizationForm_C) == ("Save: " + acceptedPath).normalized(QString::NormalizationForm_C),
                     "Accepted native save path did not reach Hydrogen");
