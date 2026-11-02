@@ -52,7 +52,7 @@ namespace Hydrogen.Compiler.UI {
                 " | while IFS= read -r lib; do cp -L -- \"$lib\" " + Quote(runtime + "/lib/") +
                 " || exit 1; done";
             if (Run(qtDependencies) != 0) { return "failed to bundle Qt Core runtime"; }
-            System.IO.File.WriteAllText(runtime + "/qt.conf", "[Paths]\\nPrefix=.\\nLibraries=lib\\n");
+            System.IO.File.WriteAllText(runtime + "/qt.conf", "[Paths]\nPrefix=.\nLibraries=lib\n");
             System.IO.File.WriteAllText(app + "/__hyui_app.json",
                 "{\"format\":1,\"document\":\"" + JsonEscape(manifest.UI()) +
                 "\",\"backend\":\"__hyui_backend\",\"target\":\"linux-x64\"}");
