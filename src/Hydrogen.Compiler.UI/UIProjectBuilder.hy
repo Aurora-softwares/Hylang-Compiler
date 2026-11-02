@@ -22,7 +22,28 @@ namespace Hydrogen.Compiler.UI {
             if (resolved == parent || StartsWith(resolved, parent + "/../")) {
                 return "UI document escapes project directory";
             }
-            return UIValidator.Preflight(resolved);
+            string error = UIValidator.Preflight(resolved);
+            if (error != "") { return error; }
+            // The native host is already required by the packaged application.
+            // Reuse its authoritative .hyui schema parser during compilation,
+            // instead of accepting a subset of the existing UI format.
+            string host = "build/bootstrap/hyui-native";
+            if (!System.IO.File.Exists(host)) { return "native UI runtime is not built: " + host; }
+            if (System.Host.Process.Run(Quote(host) + " --validate --document " + Quote(resolved)) != 0) {
+                return "native .hyui validation failed: " + resolved;
+            }
+            return "";
+        }
+
+        private static string Quote(string value) {
+            string quoted = "'";
+            int i = 0;
+            while (i < value.Length) {
+                if (value[i] == "'") { quoted = quoted + "'\\''"; }
+                else { quoted = quoted + value[i]; }
+                i = i + 1;
+            }
+            return quoted + "'";
         }
 
         private static bool Contains(string value, string needle) {
