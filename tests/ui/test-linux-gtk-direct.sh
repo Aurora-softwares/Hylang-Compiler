@@ -31,6 +31,8 @@ ldd "$output" | grep -q 'libgtk-4'
 # gtk_application_new and the GTK event loop require a running display.
 export GDK_BACKEND=x11
 export GTK_A11Y=none
+# GTK warnings about invalid widget types must be caught as regressions.
+export G_DEBUG=fatal-criticals
 "$output" --event ShowControls:showControls --state-output "$work/state.json"
 python3 - "$work/state.json" <<'PY'
 import json
