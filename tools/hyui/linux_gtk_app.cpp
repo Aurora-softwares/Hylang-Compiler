@@ -51,7 +51,10 @@ static std::string escapeJson(const std::string& s) {
 }
 static std::string decode(std::string s) {
     // Reverse percent transport in the same order as Hydrogen's Bridge.
-    for(auto p:{{"%09","\t"},{"%0D","\r"},{"%0A","\n"},{"%25","%"}}) {
+    const std::pair<const char*,const char*> replacements[] = {
+        {"%09","\t"},{"%0D","\r"},{"%0A","\n"},{"%25","%"}
+    };
+    for(const auto& p:replacements) {
         std::size_t at=0;
         while((at=s.find(p.first,at))!=std::string::npos) {s.replace(at,3,p.second);at+=std::strlen(p.second);}
     }
