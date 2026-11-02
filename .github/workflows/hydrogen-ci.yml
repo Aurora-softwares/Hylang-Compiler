@@ -193,6 +193,9 @@ jobs:
           test -x build/Studio
           test -x build/Studio.runtime/hyui
           test -x build/Studio.runtime/app/__hyui_backend
+      - name: Validate native-host-free UI backend code generation
+        run: |
+          bash tests/ui/test-ui-backend-no-host.sh --compiler "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1"
       - name: Cross-package Windows and macOS native UI backends with SDK fixtures
         run: |
           mkdir -p build/native-sdk/windows-x64 build/native-sdk/macos-x64.app/Contents/MacOS
