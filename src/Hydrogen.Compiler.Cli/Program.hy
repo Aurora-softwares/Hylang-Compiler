@@ -1131,6 +1131,40 @@ namespace Hydrogen.Compiler.Cli {
                 }
                 bool onMacOS = !System.Host.Process.IsWindows() &&
                     System.Host.Process.Run("test \"$(uname -s)\" = Darwin") == 0;
+                if (projectType == "exe" && !System.Host.Process.IsWindows() && !onMacOS && uiSdk == "") {
+                    // Linux default: generate this application's native GTK4
+                    // frontend directly, without Qt, hyui-native or launcher.
+                    // The compiled Hydrogen event backend remains private
+                    // until the cross-platform single-process milestone.
+                    string uiError = UIProjectBuilder.Preflight(projectPath, "");
+                    if (uiError != "") {
+                        System.Console.WriteLine("error: " + uiError);
+                        return 1;
+                    }
+                    uiError = UIGtkDirectPackager.Prepare(output);
+                    if (uiError != "") {
+                        System.Console.WriteLine("error: " + uiError);
+                        return 1;
+                    }
+                    NativeCompiler gtkCompiler = new NativeCompiler();
+                    NativeCompilerResult gtkResult = gtkCompiler.BuildProject(
+                        projectPath, UIGtkDirectPackager.Backend(output));
+                    if (!gtkResult.Success()) {
+                        System.Console.Write(gtkResult.DiagnosticsText());
+                        UIGtkDirectPackager.Abort(output);
+                        return 1;
+                    }
+                    uiError = UIGtkDirectPackager.Finish(projectPath, output);
+                    if (uiError != "") {
+                        System.Console.WriteLine("error: " + uiError);
+                        UIGtkDirectPackager.Abort(output);
+                        return 1;
+                    }
+                    System.Console.WriteLine("wrote " + output + " (linux-x64; directly compiled native GTK4 UI)");
+                    return 0;
+                }
+                // Legacy external runtime packaging is retained only for
+                // explicitly provided --ui-sdk values during migration.
                 if (projectType == "exe" && !System.Host.Process.IsWindows() && (!onMacOS || target != "")) {
                     string sdkRoot = UIRuntimeManager.SdkRoot(uiSdk);
                     string error = UIProjectBuilder.Preflight(projectPath, sdkRoot);
