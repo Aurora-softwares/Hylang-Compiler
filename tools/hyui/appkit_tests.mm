@@ -196,6 +196,24 @@ int main(int argc, char** argv) {
                 [pickerParent endSheet:panel returnCode:NSModalResponseCancel]; finish();
                 require(bridge.state()["selectionText.text"].toString() == "File selection cancelled.", "Native file picker cancellation failed");
             }
+            [(NSButton*)find(gallery, @"saveDocument") performClick:nil]; view->pump();
+            NSWindow* saveParent = NSApp.windows.firstObject;
+            if (!saveParent.attachedSheet) { for (NSWindow* candidate in NSApp.windows) { if (candidate.attachedSheet) { saveParent = candidate; break; } } }
+            NSSavePanel* acceptedSave = (NSSavePanel*)saveParent.attachedSheet;
+            require([acceptedSave isKindOfClass:NSSavePanel.class] && ![acceptedSave isKindOfClass:NSOpenPanel.class], "Save acceptance must use NSSavePanel");
+            acceptedSave.directoryURL = [NSURL fileURLWithPath:[NSString stringWithUTF8String:temporary.path().toUtf8().constData()] isDirectory:YES];
+            acceptedSave.nameFieldStringValue = @"accepted-café.txt";
+            QString acceptedPath = QString::fromUtf8(acceptedSave.URL.path.UTF8String);
+            require(acceptedPath.normalized(QString::NormalizationForm_C).endsWith("accepted-café.txt"), "Native save panel did not select the requested path");
+            [saveParent endSheet:acceptedSave returnCode:NSModalResponseOK];
+            QElapsedTimer saveResponse; saveResponse.start();
+            while (bridge.state()["saveDocument.path"].toString().isEmpty() && saveResponse.elapsed() < 5000) {
+                app.processEvents(); view->pump(); QThread::msleep(2);
+            }
+            finish();
+            require(bridge.state()["saveDocument.path"].toString().normalized(QString::NormalizationForm_C) == acceptedPath.normalized(QString::NormalizationForm_C) &&
+                    bridge.state()["selectionText.text"].toString().normalized(QString::NormalizationForm_C) == ("Save: " + acceptedPath).normalized(QString::NormalizationForm_C),
+                    "Accepted native save path did not reach Hydrogen");
             require([find(gallery, @"save").toolTip isEqualToString:@"Write the current plan to the chosen path"], "native button tooltip is missing");
             NSScrollView* details = (NSScrollView*)find(gallery, @"templateDetails");
             view->pump();
