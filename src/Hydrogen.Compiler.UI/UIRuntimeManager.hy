@@ -13,6 +13,9 @@ namespace Hydrogen.Compiler.UI {
         // The default preserves repository bootstrap behaviour.
         public static string SdkRoot(string requested) {
             if (requested != "") { return requested; }
+            if (System.IO.File.Exists("build/bootstrap/hydrogen-gtk-app")) { return "build/bootstrap"; }
+            if (System.IO.File.Exists("build/ui/hydrogen-gtk-app")) { return "build/ui"; }
+            if (System.IO.File.Exists("build/hydrogen-gtk-app")) { return "build"; }
             if (System.IO.File.Exists("build/bootstrap/hyui-native")) { return "build/bootstrap"; }
             if (System.IO.File.Exists("build/hyui-native")) { return "build"; }
             return "build/bootstrap";
@@ -37,6 +40,10 @@ namespace Hydrogen.Compiler.UI {
                 }
             }
             return SdkRoot("");
+        }
+
+        public static string NativeGtkApplication(string sdkRoot) {
+            return Hydrogen.Compiler.Core.PathUtils.Join(sdkRoot, "hydrogen-gtk-app");
         }
 
         public static string NativeHost(string sdkRoot) {
