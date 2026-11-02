@@ -1,0 +1,12 @@
+format = 2
+name = "Hydrogen.Compiler.UI"
+version = "0.1.0"
+type = "lib"
+sources = ["UIDocumentParser.hy", "UIValidator.hy", "UIRuntimeManager.hy", "UIPackager.hy", "UIProjectBuilder.hy"]
+project_references = ["../Hydrogen.Compiler.Core/Hydrogen.Compiler.Core.hyproj"]
+
+[package]
+id = "Hydrogen.Compiler.UI"
+description = "Self-hosted Hydrogen UI build and validation support"
+authors = ["Aurora Softwares"]
+license = "MIT"
