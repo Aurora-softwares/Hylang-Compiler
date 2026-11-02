@@ -186,7 +186,10 @@ class AppKitView : public NativeView {
             NSMenuItem* heading = [[[NSMenuItem alloc] initWithTitle:text(menu.attributes.value("text")) action:nil keyEquivalent:@""] autorelease];
             NSMenu* submenu = [[[NSMenu alloc] initWithTitle:heading.title] autorelease]; submenu.autoenablesItems = NO;
             for (const Node& entry : menu.children) {
-                NSMenuItem* item = [[[NSMenuItem alloc] initWithTitle:text(entry.attributes.value("text")) action:@selector(fire:) keyEquivalent:@""] autorelease];
+                const QString shortcut = entry.attributes.value("shortcut");
+                NSString* key = shortcut.isEmpty() ? @"" : text(shortcut.right(1).toLower());
+                NSMenuItem* item = [[[NSMenuItem alloc] initWithTitle:text(entry.attributes.value("text")) action:@selector(fire:) keyEquivalent:key] autorelease];
+                if (!shortcut.isEmpty()) { item.keyEquivalentModifierMask = NSEventModifierFlagCommand | (shortcut.contains("+Shift+") ? NSEventModifierFlagShift : 0); }
                 item.target = action([this, &entry](id) { if (entry.attributes.contains("checked")) { bridge.store(entry.id, "checked", !bridge.state().value(entry.id + ".checked").toBool()); update(); } if (entry.attributes.contains("onClick")) { bridge.dispatch(entry.attributes["onClick"], entry.id); } });
                 [submenu addItem:item]; menuItems.insert(entry.id, item);
             }

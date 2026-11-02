@@ -55,6 +55,7 @@ struct Control {
     std::function<void()> action;
     std::function<void(W)> itemAction;
     std::function<void(int)> responseAction;
+    std::function<int()> shortcutAction;
     QVector<W> choices;
     W dialog = nullptr;
 };
@@ -62,6 +63,7 @@ void factoryThunk(W, W item, W data) { static_cast<Control*>(data)->itemAction(i
 void responseThunk(W, int response, W data) { static_cast<Control*>(data)->responseAction(response); }
 void signalThunk(W, W data) { static_cast<Control*>(data)->action(); }
 void notifyThunk(W, W, W data) { static_cast<Control*>(data)->action(); }
+int shortcutThunk(W, W, W data) { return static_cast<Control*>(data)->shortcutAction(); }
 int closeThunk(W, W) { QCoreApplication::quit(); return 0; }
 
 class GtkView : public NativeView {
@@ -76,6 +78,7 @@ class GtkView : public NativeView {
     QVector<QTimer*> timers;
     bool applying = false;
     W fittedMonitor = nullptr;
+    W shortcutController = nullptr;
     int fittedWidth = 0, fittedHeight = 0;
 public:
     W window = nullptr;
@@ -92,6 +95,9 @@ public:
         application = api.call<W>("adw_application_new", "software.aurora.HydrogenUI", 32);
         if (!api.call<int>("g_application_register", application, nullptr, nullptr)) { throw std::runtime_error("cannot register the native GTK application"); }
         window = api.call<W>("adw_application_window_new", application);
+        shortcutController = api.call<W>("gtk_shortcut_controller_new");
+        api.call("gtk_shortcut_controller_set_scope", shortcutController, 2);
+        api.call("gtk_widget_add_controller", window, shortcutController);
         api.text(window, "gtk_window_set_title", doc.window.attributes.value("title", "Hydrogen"));
         api.call("gtk_window_set_deletable", window, 1);
         api.call("gtk_window_set_resizable", window, 1);
@@ -401,6 +407,22 @@ public:
         else if (tag == "Spacer") { w = api.call<W>("gtk_box_new", 1, 0); api.call("gtk_widget_set_size_request", w, -1, a.value("height", "12").toInt()); }
         if (!w) { return nullptr; }
         c->widget = w;
+        if (tag == "MenuItem" && a.contains("shortcut")) {
+            const QString shortcut = a["shortcut"];
+            const QString triggerText = QString("<Control>") + (shortcut.contains("+Shift+") ? "<Shift>" : "") + shortcut.right(1).toLower();
+            W trigger = api.call<W>("gtk_shortcut_trigger_parse_string", triggerText.toUtf8().constData());
+            if (!trigger) { throw std::runtime_error("invalid native keyboard shortcut"); }
+            c->shortcutAction = [this, c] {
+                const QString id = c->node->id;
+                if (!bridge.state().value(id + ".enabled").toBool() || !bridge.state().value(id + ".visible").toBool()) { return 0; }
+                if (c->node->attributes.contains("checked")) {
+                    api.call("gtk_check_button_set_active", c->widget, bridge.state().value(id + ".checked").toBool() ? 0 : 1);
+                } else { api.call("g_signal_emit_by_name", c->widget, "clicked"); }
+                return 1;
+            };
+            W action = api.call<W>("gtk_callback_action_new", shortcutThunk, c, nullptr);
+            api.call("gtk_shortcut_controller_add_shortcut", shortcutController, api.call<W>("gtk_shortcut_new", trigger, action));
+        }
         if (a.contains("accessibleName")) { api.call("gtk_accessible_update_property", w, 4, a["accessibleName"].toUtf8().constData(), -1); }
         if (a.contains("tooltip")) { api.text(w, "gtk_widget_set_tooltip_text", a["tooltip"]); }
         api.call("gtk_widget_set_hexpand", w, a.value("fill", tag == "Button" || tag == "FilePicker" || tag == "Spinner" ? "false" : "true") == "true" ? 1 : 0);

@@ -13,7 +13,7 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"ScrollView", {"height", "gap"}},
     {"GridPanel", {"gap", "columns", "minItemWidth"}},
     {"Panel", {"title", "padding", "gap"}},
-    {"MenuBar", {}}, {"Menu", {"text"}}, {"MenuItem", {"text", "onClick", "checked"}},
+    {"MenuBar", {}}, {"Menu", {"text"}}, {"MenuItem", {"text", "onClick", "checked", "shortcut"}},
     {"Tabs", {"value", "onChange"}}, {"Tab", {"title", "gap"}},
     {"ListBox", {"items", "value", "height", "onChange"}},
     {"Table", {"columns", "rows", "value", "height", "onChange"}},
@@ -56,6 +56,7 @@ bool Document::parse(const QByteArray& xml) {
     if (xml.size() > 1024 * 1024) { error = "HYUI documents are limited to 1 MiB"; return false; }
     QXmlStreamReader reader(xml);
     QSet<QString> ids;
+    QSet<QString> shortcuts;
     int count = 0;
     auto invalid = [&](const QString& message) {
         error = QString("line %1: %2").arg(reader.lineNumber()).arg(message);
@@ -107,6 +108,14 @@ bool Document::parse(const QByteArray& xml) {
         }
         if (node.tag == "FilePicker" && (node.attributes.value("text").isEmpty() || !node.attributes.contains("onPick"))) {
             return invalid("FilePicker requires text and onPick");
+        }
+        if (node.attributes.contains("shortcut")) {
+            const QString shortcut = node.attributes["shortcut"];
+            if (!QRegularExpression("^Primary\\+(Shift\\+)?[A-Z0-9]$").match(shortcut).hasMatch() ||
+                !node.attributes.contains("onClick") || shortcuts.contains(shortcut)) {
+                return invalid("shortcut must be a unique Primary+key or Primary+Shift+key on a command");
+            }
+            shortcuts.insert(shortcut);
         }
         node.id = node.attributes.value("id", "_hyui" + QString::number(count));
         if (!QRegularExpression("^[A-Za-z_][A-Za-z0-9_]{0,63}$").match(node.id).hasMatch() || ids.contains(node.id)) {

@@ -196,6 +196,16 @@ int main(int argc, char** argv) {
             NSMenuItem* menu = [NSApp.mainMenu itemAtIndex:1]; NSMenuItem* workspaceItem = [menu.submenu itemAtIndex:0];
             [workspaceItem.target performSelector:workspaceItem.action withObject:workspaceItem]; finish();
             require(bridge.state()["pages.value"].toInt() == 0, "menu event failed");
+            NSMenuItem* galleryItem = [menu.submenu itemAtIndex:1];
+            require([workspaceItem.keyEquivalent isEqualToString:@"1"] && [galleryItem.keyEquivalent isEqualToString:@"2"] &&
+                    workspaceItem.keyEquivalentModifierMask == NSEventModifierFlagCommand, "native menu shortcuts are missing");
+            NSWindow* shortcutWindow = NSApp.windows.firstObject;
+            for (NSString* key in @[@"2", @"1"]) {
+                NSEvent* event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:NSEventModifierFlagCommand
+                    timestamp:0 windowNumber:shortcutWindow.windowNumber context:nil characters:key charactersIgnoringModifiers:key isARepeat:NO keyCode:0];
+                require([NSApp.mainMenu performKeyEquivalent:event], "native menu did not recognize keyboard shortcut"); finish();
+                require(bridge.state()["pages.value"].toInt() == ([key isEqualToString:@"2"] ? 1 : 0), "keyboard shortcut did not reach Hydrogen");
+            }
             auto waitFor = [&](std::function<bool()> predicate, const char* message) {
                 QElapsedTimer timeout; timeout.start(); while (!predicate() && timeout.elapsed() < 8000) { app.processEvents(); view->pump(); QThread::msleep(5); }
                 require(predicate(), message); finish();

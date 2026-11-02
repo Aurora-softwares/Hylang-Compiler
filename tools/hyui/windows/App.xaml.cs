@@ -6,7 +6,9 @@ using System.Xml.Linq;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.Windows.Storage.Pickers;
+using Windows.System;
 
 namespace Hydrogen.Native;
 
@@ -52,6 +54,15 @@ public sealed partial class NativeWindow : Window
     string backend = "", directory = "", documentDirectory = "";
     bool applying, busy;
     static string Attr(XElement n, string key, string fallback = "") => (string?)n.Attribute(key) ?? fallback;
+    static void AddShortcut(MenuFlyoutItemBase item, XElement node) {
+        string shortcut = Attr(node, "shortcut");
+        if (shortcut == "") return;
+        char key = shortcut[^1];
+        item.KeyboardAccelerators.Add(new KeyboardAccelerator {
+            Key = Enum.Parse<VirtualKey>(char.IsDigit(key) ? "Number" + key : key.ToString()),
+            Modifiers = VirtualKeyModifiers.Control | (shortcut.Contains("+Shift+") ? VirtualKeyModifiers.Shift : VirtualKeyModifiers.None)
+        });
+    }
     static int Number(XElement n, string key, int fallback) => int.TryParse(Attr(n, key), out int result) ? result : fallback;
     static bool Allowed(XElement node, string property) => property switch {
         "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer"),
@@ -140,8 +151,8 @@ public sealed partial class NativeWindow : Window
         } else if (tag == "MenuItem") {
             if (node.Attribute("checked") != null) {
                 var item = new ToggleMenuFlyoutItem { Text = Attr(node, "text"), IsChecked = Attr(node, "checked") == "true" };
-                item.Click += (_, _) => { if (!applying) { values[id + ".checked"] = item.IsChecked ? "true" : "false"; Dispatch(Attr(node, "onClick"), id); } }; element = item;
-            } else { var item = new MenuFlyoutItem { Text = Attr(node, "text") }; item.Click += (_, _) => Dispatch(Attr(node, "onClick"), id); element = item; }
+                item.Click += (_, _) => { if (!applying) { values[id + ".checked"] = item.IsChecked ? "true" : "false"; Dispatch(Attr(node, "onClick"), id); } }; AddShortcut(item, node); element = item;
+            } else { var item = new MenuFlyoutItem { Text = Attr(node, "text") }; item.Click += (_, _) => Dispatch(Attr(node, "onClick"), id); AddShortcut(item, node); element = item; }
         } else if (tag == "Tabs") {
             var tabs = new TabView { IsAddTabButtonVisible = false, CanDragTabs = false, CanReorderTabs = false };
             foreach (var page in node.Elements()) tabs.TabItems.Add(new TabViewItem { Header = Attr(page, "title"), IsClosable = false, Content = Build(page) });

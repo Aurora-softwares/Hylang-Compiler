@@ -2,8 +2,8 @@
 <Window version="1" id="studio" title="Hydrogen Studio" width="1120" height="900" theme="system" material="auto">
   <MenuBar>
     <Menu text="Studio">
-      <MenuItem id="showWorkspace" text="Workspace" onClick="ShowWorkspace" />
-      <MenuItem id="showControls" text="Control gallery" onClick="ShowControls" />
+      <MenuItem id="showWorkspace" text="Workspace" shortcut="Primary+1" onClick="ShowWorkspace" />
+      <MenuItem id="showControls" text="Control gallery" shortcut="Primary+2" onClick="ShowControls" />
     </Menu>
     <Menu text="Help"><MenuItem id="aboutMenu" text="About Hydrogen Studio" onClick="About" /></Menu>
   </MenuBar>

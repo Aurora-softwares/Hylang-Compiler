@@ -169,6 +169,14 @@ public:
         const Node* menu = view.controls["showWorkspace"]->node;
         for (auto c : view.controls) { if (c->node->tag == "Menu" && c->node->attributes.value("text") == "Studio") { view.api.call("gtk_menu_button_popup", c->widget); settle(); click(menu->id); view.api.call("gtk_menu_button_popdown", c->widget); break; } }
         check(bridge.state()["pages.value"].toInt() == 0, "Native menu did not select workspace");
+        check(view.api.call<unsigned>("g_list_model_get_n_items", view.shortcutController) == 2, "Native menu shortcuts were not registered");
+        for (unsigned index : {1u, 0u}) {
+            W shortcut = view.api.call<W>("g_list_model_get_item", view.shortcutController, index);
+            check(shortcut != nullptr, "Native shortcut is missing");
+            check(view.api.call<int>("gtk_shortcut_action_activate", view.api.call<W>("gtk_shortcut_get_action", shortcut), 0, view.window, nullptr), "Native keyboard action did not activate");
+            view.api.call("g_object_unref", shortcut); idle();
+            check(bridge.state()["pages.value"].toInt() == int(index), "Keyboard shortcut did not reach the Hydrogen menu handler");
+        }
         view.api.text(view.controls["projectName"]->widget, "gtk_editable_set_text", "CI Notes"); idle();
         check(bridge.state()["summary.text"].toString().startsWith("CI Notes"), "Input event failed");
         view.api.call("gtk_check_button_set_active", view.controls["symbols"]->widget, 0); idle();

@@ -144,6 +144,10 @@ public sealed partial class NativeWindow
         var primary = DialogButton(dialog, "Continue"); Check(primary != null, "Dialog primary button is missing"); Invoke(primary!);
         await Until(() => values["dialogResult.text"].StartsWith("Confirmed."), "Dialog result did not reach Hydrogen"); await Idle();
         Invoke(controls["showWorkspace"]); await Idle(); Check(tabs.SelectedIndex == 0, "Menu failed to select workspace");
+        var workspaceShortcut = controls["showWorkspace"].KeyboardAccelerators.Single();
+        var galleryShortcut = controls["showControls"].KeyboardAccelerators.Single();
+        Check(workspaceShortcut.Key == Windows.System.VirtualKey.Number1 && galleryShortcut.Key == Windows.System.VirtualKey.Number2 &&
+              workspaceShortcut.Modifiers == Windows.System.VirtualKeyModifiers.Control, "Native WinUI menu accelerators are missing");
         ((TextBox)controls["projectName"]).Text = "CI Notes"; await Idle(); Check(values["summary.text"].StartsWith("CI Notes"), "Input event failed");
         ((CheckBox)controls["symbols"]).IsChecked = false; await Idle(); Check(values["summary.text"].Contains("Debug symbols: false"), "Checkbox event failed");
         ((ComboBox)controls["target"]).SelectedIndex = 2; await Idle(); Check(values["summary.text"].Contains("macOS"), "Select event failed");

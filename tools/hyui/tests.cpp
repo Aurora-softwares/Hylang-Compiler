@@ -50,7 +50,7 @@ private slots:
 
     void expandedControlsValidateAndBind() {
         hyui::Document d;
-        QVERIFY(d.parse(R"(<Window version="1"><MenuBar><Menu text="File"><MenuItem id="open" text="Open" onClick="Open"/></Menu></MenuBar><Tabs id="tabs" value="1" onChange="Choose"><Tab title="One"><Image source="assets/logo.png" height="80"/></Tab><Tab title="Two"><ListBox id="list" items="One|Two" value="1"/><Table id="table" columns="Name|State" rows="A|Ready&#10;B|Waiting"/><RadioGroup id="radio" items="Stable|Preview"/></Tab></Tabs><Dialog id="confirm" title="Confirm" text="Continue?" buttons="Yes|No" open="false" onClose="Closed"/></Window>)"));
+        QVERIFY(d.parse(R"(<Window version="1"><MenuBar><Menu text="File"><MenuItem id="open" text="Open" shortcut="Primary+O" onClick="Open"/></Menu></MenuBar><Tabs id="tabs" value="1" onChange="Choose"><Tab title="One"><Image source="assets/logo.png" height="80"/></Tab><Tab title="Two"><ListBox id="list" items="One|Two" value="1"/><Table id="table" columns="Name|State" rows="A|Ready&#10;B|Waiting"/><RadioGroup id="radio" items="Stable|Preview"/></Tab></Tabs><Dialog id="confirm" title="Confirm" text="Continue?" buttons="Yes|No" open="false" onClose="Closed"/></Window>)"));
         QCOMPARE(d.ranges["tabs"].second, 1);
         QCOMPARE(d.ranges["list"].second, 1);
         QCOMPARE(d.ranges["table"].second, 1);
@@ -64,6 +64,9 @@ private slots:
             "<Window version=\"1\"><Tab/></Window>",
             "<Window version=\"1\"><MenuItem/></Window>",
             "<Window version=\"1\"><MenuBar><Button/></MenuBar></Window>",
+            "<Window version=\"1\"><MenuBar><Menu text=\"File\"><MenuItem text=\"Open\" shortcut=\"Ctrl+O\" onClick=\"Open\"/></Menu></MenuBar></Window>",
+            "<Window version=\"1\"><MenuBar><Menu text=\"File\"><MenuItem text=\"Open\" shortcut=\"Primary+O\"/></Menu></MenuBar></Window>",
+            "<Window version=\"1\"><MenuBar><Menu text=\"File\"><MenuItem text=\"Open\" shortcut=\"Primary+O\" onClick=\"Open\"/><MenuItem text=\"Again\" shortcut=\"Primary+O\" onClick=\"Again\"/></Menu></MenuBar></Window>",
             "<Window version=\"1\"><ListBox/></Window>",
             "<Window version=\"1\"><RadioGroup items=\"One\" value=\"1\"/></Window>",
             "<Window version=\"1\"><Table columns=\"A|B\" rows=\"One\"/></Window>",
