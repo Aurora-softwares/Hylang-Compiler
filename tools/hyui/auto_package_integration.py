@@ -44,9 +44,9 @@ def run(*command, cwd=ROOT):
 
 
 assert compiler.is_file(), "Stage 1 compiler is missing"
-assert (ROOT / "build-ui/hyui").is_file(), "HYUI host is missing"
+assert (ROOT / "build-ui/hyui-native").is_file(), "native GTK4 runtime is missing"
 build = run(compiler, "build", project, "-o", output)
-assert "bundled UI and native desktop host" in build.stdout, build.stdout
+assert "native GTK4 UI" in build.stdout, build.stdout
 runtime = Path(str(output) + ".runtime")
 assert output.is_file() and os.access(output, os.X_OK), "native app launcher missing"
 assert (runtime / "hyui").is_file(), "native host missing from package"
@@ -64,7 +64,7 @@ run(output, "--state-output", state_file, "--screenshot", screenshot, cwd=work)
 state = json.loads(state_file.read_text())
 assert state["projectName.text"] == "Aurora Notes", state
 assert "Ready when you are" in state["status.text"], state
-assert screenshot.read_bytes().startswith(b"\\x89PNG\\r\\n\\x1a\\n")
+assert screenshot.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 # A UI event must reach Hydrogen and change the native window state.
 run(output, "--event", "ShowControls:showControls", "--state-output",
