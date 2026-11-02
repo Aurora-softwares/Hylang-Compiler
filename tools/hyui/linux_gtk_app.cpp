@@ -514,7 +514,9 @@ struct App {
             w=tag=="SearchInput"?gtk_search_entry_new():gtk_entry_new();
             gtk_editable_set_text(GTK_EDITABLE(w),attr(n,"text").c_str());
             if(tag=="PasswordInput")gtk_entry_set_visibility(GTK_ENTRY(w),FALSE);
-            gtk_entry_set_placeholder_text(GTK_ENTRY(w),attr(n,"placeholder").c_str());
+            const std::string placeholder=attr(n,"placeholder");
+            if(GTK_IS_ENTRY(w))gtk_entry_set_placeholder_text(GTK_ENTRY(w),placeholder.c_str());
+            else g_object_set(G_OBJECT(w),"placeholder-text",placeholder.c_str(),nullptr);
             bind(w,"changed",n,"onChange");
             bind(w,"activate",n,"onSubmit");
         } else if(tag=="TextArea") {
