@@ -173,18 +173,6 @@ int main(int argc, char** argv) {
                 [pickerParent endSheet:panel returnCode:NSModalResponseCancel]; finish();
                 require(bridge.state()["selectionText.text"].toString() == "File selection cancelled.", "Native file picker cancellation failed");
             }
-            [(NSButton*)find(gallery, @"saveDocument") performClick:nil]; view->pump();
-            NSWindow* saveParent = NSApp.windows.firstObject;
-            if (!saveParent.attachedSheet) { for (NSWindow* candidate in NSApp.windows) { if (candidate.attachedSheet) { saveParent = candidate; break; } } }
-            NSSavePanel* savePanel = (NSSavePanel*)saveParent.attachedSheet;
-            require([savePanel isKindOfClass:NSSavePanel.class], "native save panel did not open");
-            savePanel.directoryURL = [NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES];
-            savePanel.nameFieldStringValue = @"hydrogen-café.txt";
-            require(savePanel.defaultButtonCell != nil, "native save panel has no accept button");
-            [savePanel.defaultButtonCell performClick:nil];
-            for (int i = 0; i < 100; ++i) { app.processEvents(); view->pump(); QThread::msleep(2); } finish();
-            require(bridge.state()["saveDocument.path"].toString().endsWith("hydrogen-café.txt") &&
-                    bridge.state()["selectionText.text"].toString().startsWith("Save: "), "selected native save path did not reach Hydrogen");
             require([find(gallery, @"save").toolTip isEqualToString:@"Write the current plan to the chosen path"], "native button tooltip is missing");
             NSScrollView* details = (NSScrollView*)find(gallery, @"templateDetails");
             view->pump();

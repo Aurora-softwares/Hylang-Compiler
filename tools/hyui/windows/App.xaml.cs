@@ -367,13 +367,13 @@ public sealed partial class NativeWindow : Window
             string[] parts = line.TrimEnd('\r').Split('\t'); if (parts.Length == 0 || parts[0] != "HYUI") continue;
             if (parts.Length == 3 && parts[1] == "OPEN") continue;
             if (parts.Length >= 4 && parts[1] == "CLIPBOARD") {
-                string id = Decode(parts[3]), operation = parts[2];
-                if (!nodes.TryGetValue(id, out var clipboardNode) || clipboardNode.Name.LocalName != "Clipboard" ||
+                string clipboardId = Decode(parts[3]), operation = parts[2];
+                if (!nodes.TryGetValue(clipboardId, out var clipboardNode) || clipboardNode.Name.LocalName != "Clipboard" ||
                     !((operation == "READ" && parts.Length == 4) || (operation == "WRITE" && parts.Length == 5))) throw new InvalidDataException("Invalid clipboard operation");
                 string text = operation == "WRITE" ? Decode(parts[4]) : "";
                 if (System.Text.Encoding.UTF8.GetByteCount(text) > 16384) throw new InvalidDataException("Clipboard text exceeds 16 KiB");
-                if (operation == "WRITE") updates[id + ".value"] = text;
-                clipboard.Add((id, operation, text));
+                if (operation == "WRITE") updates[clipboardId + ".value"] = text;
+                clipboard.Add((clipboardId, operation, text));
                 continue;
             }
             if (parts.Length != 5 || parts[1] != "SET" || !nodes.ContainsKey(Decode(parts[2]))) throw new InvalidDataException("Invalid Hydrogen response");
