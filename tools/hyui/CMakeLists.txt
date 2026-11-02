@@ -83,3 +83,22 @@ if(TARGET Qt6::Test)
     add_test(NAME hyui_contract COMMAND hyui_tests)
     set_tests_properties(hyui_contract PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
+
+# Platform-native runtime SDK for the self-hosted Hydrogen compiler.
+if(WIN32 OR APPLE)
+    get_filename_component(HYDROGEN_QT_PREFIX "${Qt6_DIR}/../../.." ABSOLUTE)
+    add_custom_target(hydrogen-ui-sdk
+        COMMAND ${CMAKE_COMMAND}
+            "-DHYDROGEN_UI_PLATFORM=${CMAKE_SYSTEM_NAME}"
+            "-DHYDROGEN_UI_BUILD_DIR=${CMAKE_BINARY_DIR}"
+            "-DHYDROGEN_UI_SDK_DIR=${CMAKE_BINARY_DIR}/native-sdk"
+            "-DHYDROGEN_UI_QT_PREFIX=${HYDROGEN_QT_PREFIX}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/ExportNativeRuntime.cmake"
+        VERBATIM)
+    add_dependencies(hydrogen-ui-sdk hyui-launcher)
+    if(WIN32)
+        add_dependencies(hydrogen-ui-sdk hyui-winui)
+    else()
+        add_dependencies(hydrogen-ui-sdk hyui-native)
+    endif()
+endif()
