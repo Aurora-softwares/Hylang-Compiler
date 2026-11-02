@@ -2,8 +2,9 @@ using Hydrogen.Compiler.Core;
 
 namespace Hydrogen.Compiler.UI {
     public class UIProjectBuilder {
-        // This provides a safe pure-Hydrogen entry point for future packaging.
-        // It does not replace the production build path before runtime parity.
+        // Document preflight runs inside every self-hosted compiler stage.
+        // The OS-native renderer is optional for preflight but is still needed
+        // when packaging and running graphical applications.
         public static string Preflight(string projectPath, string sdkRoot) {
             if (!System.IO.File.Exists(projectPath)) { return "project not found: " + projectPath; }
             HyprojManifest manifest = HyprojManifest.Load(projectPath);
@@ -24,21 +25,12 @@ namespace Hydrogen.Compiler.UI {
             }
             string error = UIValidator.Preflight(resolved);
             if (error != "") { return error; }
-            // The native host is already required by the packaged application.
-            // Reuse its authoritative .hyui schema parser during compilation,
-            // instead of accepting a subset of the existing UI format.
+            // Run the native validator only when installed. This keeps
+            // compiler-side UI validation usable on clean stage1/2/3 installs
+            // even when the platform-native UI SDK has not been exported.
             string host = UIRuntimeManager.NativeHost(sdkRoot);
-            if (!System.IO.File.Exists(host)) {
-                // WinUI hosts are supplied as exported native runtimes rather
-                // than a Qt validation executable. The Hydrogen lexical check
-                // runs here; the WinUI host validates the full schema on launch.
-                if (System.Host.Process.IsWindows()) {
-                    System.Console.WriteLine("warning: full native .hyui schema validation is deferred to WinUI startup");
-                    return "";
-                }
-                return "native UI runtime is not built: " + host;
-            }
-            if (System.Host.Process.Run(Quote(host) + " --validate --document " + Quote(resolved)) != 0) {
+            if (System.IO.File.Exists(host) && !System.Host.Process.IsWindows() &&
+                System.Host.Process.Run(Quote(host) + " --validate --document " + Quote(resolved)) != 0) {
                 return "native .hyui validation failed: " + resolved;
             }
             return "";
