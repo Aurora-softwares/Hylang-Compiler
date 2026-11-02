@@ -1095,24 +1095,25 @@ namespace Hydrogen.Compiler.Cli {
             // It must validate the document even when no native UI renderer
             // is installed, otherwise it can silently compile broken views.
             if (uiBackend) {
-                if (!manifest.HasUI()) {
-                    System.Console.WriteLine("error: --ui-backend requires a project with a UI document");
-                    return 1;
-                }
                 if (projectType != "exe" && projectType != "windows" && projectType != "macos") {
                     System.Console.WriteLine("error: --ui-backend requires a desktop executable target");
                     return 1;
                 }
-                string validationSdk = uiSdk;
-                if (validationSdk == "") {
-                    // Do not require or invoke a native host just to compile
-                    // Hydrogen application code on any of the three stages.
-                    validationSdk = UIRuntimeManager.SdkRoot("");
-                }
-                string uiError = UIProjectBuilder.Preflight(projectPath, validationSdk);
-                if (uiError != "") {
-                    System.Console.WriteLine("error: " + uiError);
-                    return 1;
+                // Declared views are validated by the compiler. A transient
+                // single-file UI preview project can instead select its view
+                // with Application.Open at runtime and has no manifest ui key.
+                if (manifest.HasUI()) {
+                    string validationSdk = uiSdk;
+                    if (validationSdk == "") {
+                        // Do not require a native host just to compile Hydrogen
+                        // application code on any of the three stages.
+                        validationSdk = UIRuntimeManager.SdkRoot("");
+                    }
+                    string uiError = UIProjectBuilder.Preflight(projectPath, validationSdk);
+                    if (uiError != "") {
+                        System.Console.WriteLine("error: " + uiError);
+                        return 1;
+                    }
                 }
             }
             if (manifest.HasUI() && !uiBackend) {
