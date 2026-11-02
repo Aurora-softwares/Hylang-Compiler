@@ -104,11 +104,8 @@ jobs:
           test "$(cat build/unowned-file)" = sentinel
           test ! -e build/Studio.ui-backup
           test ! -e build/Studio.ui-backup.runtime
-      - name: Diagnose Hydrogen source formatter changes
-        if: always()
-        run: |
-          build-ui/hy fmt src || true
-          git diff -- src | head -c 90000 || true
+      - name: Enforce self-hosted compiler source formatting
+        run: build-ui/hy fmt --check src
       - name: Build application from outside the repository with an explicit native SDK
         run: |
           mkdir -p "$RUNNER_TEMP/hydrogen-ui-relocation"
