@@ -508,7 +508,12 @@ class AppKitView : public NativeView {
         }
         for (const Node& node : doc.window.children) {
             if (node.tag == "Toolbar") {
-                window.toolbar.visible = state.value(node.id + ".visible").toBool();
+                bool visible = state.value(node.id + ".visible").toBool();
+                if (window.toolbar.visible != visible) {
+                    NSSize contentSize = window.contentView.bounds.size;
+                    window.toolbar.visible = visible;
+                    [window setContentSize:contentSize];
+                }
                 for (NSToolbarItem* item in window.toolbar.items) {
                     item.label = text(state.value(string(item.itemIdentifier) + ".text").toString());
                 }

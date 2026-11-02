@@ -125,8 +125,11 @@ int main(int argc, char** argv) {
             [(NSButton*)radio.subviews[1] performClick:nil]; finish();
             require(bridge.state()["channel.value"].toInt() == 1 && bridge.state()["channelText.text"].toString() == "Preview channel selected.", "radio event failed");
             NSScrollView* list = (NSScrollView*)find(gallery, @"templates"); NSTableView* table = (NSTableView*)list.documentView;
+            NSSize sizeBeforeToolbar = NSApp.windows.firstObject.contentView.bounds.size;
             [table selectRowIndexes:[NSIndexSet indexSetWithIndex:2] byExtendingSelection:NO]; finish();
             require(bridge.state()["selectionText.text"].toString() == "Template index: 2", "list event failed");
+            require(qAbs(NSApp.windows.firstObject.contentView.bounds.size.height - sizeBeforeToolbar.height) <= 1,
+                    "showing the native toolbar changed the window content height");
             NSToolbar* nativeToolbar = NSApp.windows.firstObject.toolbar;
             require([nativeToolbar isKindOfClass:NSToolbar.class] && nativeToolbar.visible && nativeToolbar.items.count == 2,
                     "native AppKit toolbar is missing");
