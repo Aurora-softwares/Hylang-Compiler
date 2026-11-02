@@ -13,10 +13,19 @@ namespace Hydrogen.Compiler.UI {
                 return "native UI SDK missing: build with Qt 6.8+ and HYDROGEN_BUILD_UI=ON";
             }
             string stage = output + ".ui-staging";
-            if (Run("test -e " + Quote(output)) == 0 ||
-                Run("test -e " + Quote(output + ".runtime")) == 0 ||
-                Run("test -e " + Quote(stage)) == 0) {
-                return "UI output or staging directory already exists: " + output;
+            if (Run("test -e " + Quote(stage)) == 0 ||
+                Run("test -e " + Quote(output + ".ui-launcher")) == 0 ||
+                Run("test -e " + Quote(output + ".ui-backup")) == 0 ||
+                Run("test -e " + Quote(output + ".ui-backup.runtime")) == 0) {
+                return "UI packaging staging or backup path already exists: " + output;
+            }
+            bool hasOutput = Run("test -e " + Quote(output)) == 0;
+            bool hasRuntime = Run("test -e " + Quote(output + ".runtime")) == 0;
+            if (hasOutput != hasRuntime) {
+                return "refusing to replace an incomplete or unowned UI package: " + output;
+            }
+            if (hasOutput && !System.IO.File.Exists(output + ".runtime/hyui-runtime.json")) {
+                return "refusing to overwrite a non-Hydrogen UI application: " + output;
             }
             if (Run("mkdir -p -- " + Quote(stage + "/app")) != 0) {
                 return "cannot create UI runtime directory";
@@ -64,11 +73,40 @@ namespace Hydrogen.Compiler.UI {
             if (Run("cp -- " + Quote("build/bootstrap/hyui-launcher") + " " + Quote(output + ".ui-launcher")) != 0) {
                 return "failed to stage application launcher";
             }
-            if (Run("mv -- " + Quote(runtime) + " " + Quote(output + ".runtime")) != 0 ||
-                Run("mv -- " + Quote(output + ".ui-launcher") + " " + Quote(output)) != 0) {
-                return "failed to publish native UI application";
+            bool replacing = Run("test -e " + Quote(output)) == 0;
+            if (replacing) {
+                if (Run("mv -- " + Quote(output) + " " + Quote(output + ".ui-backup")) != 0) {
+                    return "failed to back up existing UI launcher";
+                }
+                if (Run("mv -- " + Quote(output + ".runtime") + " " +
+                        Quote(output + ".ui-backup.runtime")) != 0) {
+                    Run("mv -- " + Quote(output + ".ui-backup") + " " + Quote(output));
+                    return "failed to back up existing UI runtime";
+                }
+            }
+            if (Run("mv -- " + Quote(runtime) + " " + Quote(output + ".runtime")) != 0) {
+                Restore(output, replacing, false);
+                return "failed to publish native UI runtime";
+            }
+            if (Run("mv -- " + Quote(output + ".ui-launcher") + " " + Quote(output)) != 0) {
+                Restore(output, replacing, true);
+                return "failed to publish native UI launcher";
+            }
+            if (replacing) {
+                Run("rm -f -- " + Quote(output + ".ui-backup"));
+                Run("rm -rf -- " + Quote(output + ".ui-backup.runtime"));
             }
             return "";
+        }
+
+        private static void Restore(string output, bool replacing, bool newRuntimePublished) {
+            if (newRuntimePublished) {
+                Run("rm -rf -- " + Quote(output + ".runtime"));
+            }
+            if (replacing) {
+                Run("mv -- " + Quote(output + ".ui-backup.runtime") + " " + Quote(output + ".runtime"));
+                Run("mv -- " + Quote(output + ".ui-backup") + " " + Quote(output));
+            }
         }
 
         private static string CopyResource(string root, string app, string relative) {
