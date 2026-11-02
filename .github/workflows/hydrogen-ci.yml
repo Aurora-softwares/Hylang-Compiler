@@ -208,7 +208,7 @@ jobs:
           cp build-ui/hyui-native build/bootstrap/hyui-native
           cp build-ui/hyui-launcher build/bootstrap/hyui-launcher
           test ! -e build/bootstrap/hyui
-          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/Studio
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/Studio
           file build/Studio
           test -x build/Studio
           test -x build/Studio.runtime/hyui
@@ -236,11 +236,11 @@ jobs:
           file build/StudioMac.app/Contents/Resources/app/__hyui_backend
       - name: Rebuild owned UI package without replacing unowned files
         run: |
-          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/Studio
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/Studio
           test -x build/Studio
           test -x build/Studio.runtime/app/__hyui_backend
           printf 'sentinel' > build/unowned-file
-          if ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/unowned-file; then
+          if ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/unowned-file; then
             echo "ERROR: Hydrogen overwrote an unowned executable"
             exit 1
           fi
