@@ -398,7 +398,7 @@ struct App {
         std::size_t bytes=0;
         for(auto& [name,c]:controls) {
             const auto& tag=c.node->tag;
-            if(tag=="PasswordInput"||tag=="Clipboard" && name!=sender)continue;
+            if(tag=="PasswordInput"||(tag=="Clipboard" && name!=sender))continue;
             std::string prop;
             if(tag=="Clipboard" && name==sender)prop="value";
             else if(tag=="FilePicker")prop="path";
@@ -424,8 +424,7 @@ struct App {
             GError* err=nullptr;
             int fd=g_file_open_tmp("hydrogen-ui-secret-XXXXXX",&secretFile,&err);
             if(fd<0) {
-                if(err){std::cerr<<err->message<<"
-";g_error_free(err);}
+                if(err){std::cerr<<err->message<<"\n";g_error_free(err);}
                 return;
             }
             if(write(fd,password.data(),password.size())!=ssize_t(password.size())) {
