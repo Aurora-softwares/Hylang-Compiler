@@ -109,6 +109,16 @@ jobs:
         run: |
           build-ui/hy fmt src || true
           git diff -- src | head -c 90000 || true
+      - name: Build application from outside the repository with an explicit native SDK
+        run: |
+          mkdir -p "$RUNNER_TEMP/hydrogen-ui-relocation"
+          cd "$RUNNER_TEMP/hydrogen-ui-relocation"
+          "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1" build \
+            "$GITHUB_WORKSPACE/samples/ui_studio/Studio.hyproj" \
+            --ui-sdk "$GITHUB_WORKSPACE/build/bootstrap" \
+            -o "$RUNNER_TEMP/hydrogen-ui-relocation/Studio"
+          test -x "$RUNNER_TEMP/hydrogen-ui-relocation/Studio"
+          test -x "$RUNNER_TEMP/hydrogen-ui-relocation/Studio.runtime/hyui"
       - name: Test integrated GTK application without hyui packaging tool
         env:
           GSK_RENDERER: cairo
