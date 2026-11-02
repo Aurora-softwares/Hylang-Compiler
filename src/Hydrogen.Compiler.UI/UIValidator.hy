@@ -6,8 +6,8 @@ namespace Hydrogen.Compiler.UI {
         // Preflight only: comprehensive attributes, event and placement rules
         // remain enforced by the existing native document parser.
         public static string Preflight(string documentPath) {
-            if (!File.Exists(documentPath)) { return "UI document not found: " + documentPath; }
-            UIDocumentParser parser = new UIDocumentParser(File.ReadAllText(documentPath));
+            if (!System.IO.File.Exists(documentPath)) { return "UI document not found: " + documentPath; }
+            UIDocumentParser parser = new UIDocumentParser(System.IO.File.ReadAllText(documentPath));
             if (!parser.Scan()) { return parser.Error(); }
             return "";
         }
