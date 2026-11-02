@@ -18,6 +18,27 @@ namespace Hydrogen.Compiler.UI {
             return "build/bootstrap";
         }
 
+        public static string PackageSdk(string requested, string target) {
+            if (requested != "") { return requested; }
+            if (target == "windows-x64") {
+                if (System.IO.File.Exists("build/bootstrap/native-sdk/windows-x64/hyui-runtime.json")) {
+                    return "build/bootstrap/native-sdk";
+                }
+                if (System.IO.File.Exists("build/native-sdk/windows-x64/hyui-runtime.json")) {
+                    return "build/native-sdk";
+                }
+            }
+            if (target == "macos-x64") {
+                if (System.IO.File.Exists("build/bootstrap/native-sdk/macos-x64.app/Contents/hyui-runtime.json")) {
+                    return "build/bootstrap/native-sdk";
+                }
+                if (System.IO.File.Exists("build/native-sdk/macos-x64.app/Contents/hyui-runtime.json")) {
+                    return "build/native-sdk";
+                }
+            }
+            return SdkRoot("");
+        }
+
         public static string NativeHost(string sdkRoot) {
             return Hydrogen.Compiler.Core.PathUtils.Join(sdkRoot, "hyui-native");
         }
