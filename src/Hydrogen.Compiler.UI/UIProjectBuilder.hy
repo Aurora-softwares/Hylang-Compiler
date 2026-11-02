@@ -13,7 +13,8 @@ namespace Hydrogen.Compiler.UI {
             string target = UIRuntimeManager.Target(manifest.Type());
             if (target == "") { return "UI projects require a desktop executable target"; }
             string uiPath = manifest.UI();
-            if (uiPath == "" || uiPath[0] == "/" || uiPath[0] == "\\") {
+            if (uiPath == "" || uiPath[0] == "/" || uiPath[0] == "\\" ||
+                Contains(uiPath, "..") || Contains(uiPath, "\\") || Contains(uiPath, ":")) {
                 return "UI document path must be project-relative";
             }
             string resolved = PathUtils.Join(PathUtils.DirName(projectPath), uiPath);
@@ -22,6 +23,17 @@ namespace Hydrogen.Compiler.UI {
                 return "UI document escapes project directory";
             }
             return UIValidator.Preflight(resolved);
+        }
+
+        private static bool Contains(string value, string needle) {
+            int i = 0;
+            while (i + needle.Length <= value.Length) {
+                int j = 0;
+                while (j < needle.Length && value[i + j] == needle[j]) { j = j + 1; }
+                if (j == needle.Length) { return true; }
+                i = i + 1;
+            }
+            return false;
         }
 
         private static bool StartsWith(string value, string prefix) {
