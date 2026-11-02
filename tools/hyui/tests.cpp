@@ -105,6 +105,28 @@ private slots:
         QVERIFY(!d.parse("<Window version=\"1\"><MenuBar tooltip=\"invalid\"/></Window>"));
     }
 
+    void nativeToolbarContract() {
+        hyui::Document d;
+        QVERIFY(d.parse(R"(<Window version="1"><Toolbar id="commands" visible="false"><ToolButton id="open" text="Open" onClick="Open" accessibleName="Open document"/><ToolButton id="save" text="Save" onClick="Save"/></Toolbar></Window>)"));
+        QCOMPARE(d.window.children[0].children.size(), size_t(2));
+        QCOMPARE(d.initialState["commands.visible"].toBool(), false);
+        QVERIFY(d.handlers["Open"].contains("open"));
+        hyui::Bridge bridge(d, {}, {});
+        QVERIFY(bridge.apply("HYUI\tSET\tcommands\tvisible\ttrue\nHYUI\tSET\topen\ttext\tOpen file\nHYUI\tSET\tsave\tenabled\tfalse\n"));
+        QCOMPARE(bridge.state()["open.text"].toString(), "Open file");
+        QCOMPARE(bridge.state()["save.enabled"].toBool(), false);
+        const QList<QByteArray> invalid = {
+            "<Window version=\"1\"><Toolbar/></Window>",
+            "<Window version=\"1\"><ToolButton text=\"Open\" onClick=\"Open\"/></Window>",
+            "<Window version=\"1\"><Panel><Toolbar><ToolButton text=\"Open\" onClick=\"Open\"/></Toolbar></Panel></Window>",
+            "<Window version=\"1\"><Toolbar><Button text=\"Bad\"/></Toolbar></Window>",
+            "<Window version=\"1\"><Toolbar><ToolButton text=\"Open\"/></Toolbar></Window>",
+            "<Window version=\"1\"><Toolbar><ToolButton onClick=\"Open\"/></Toolbar></Window>",
+            "<Window version=\"1\"><Toolbar><ToolButton text=\"Open\" onClick=\"Open\"/></Toolbar><Toolbar><ToolButton text=\"Again\" onClick=\"Again\"/></Toolbar></Window>"
+        };
+        for (const auto& xml : invalid) { QVERIFY2(!d.parse(xml), xml.constData()); }
+    }
+
     void scrollViewContract() {
         hyui::Document d;
         QVERIFY(d.parse(R"(<Window version="1"><ScrollView id="details" height="90" gap="6" enabled="false" tooltip="Scroll details"><Label text="First"/><Button id="action" text="Run" onClick="Run"/></ScrollView></Window>)"));

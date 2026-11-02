@@ -16,6 +16,7 @@ namespace HydrogenStudio {
             if (handler == "ChooseTemplate") {
                 Application.SetText("selectionText", "Template index: " + Application.Value(args, "templates"));
                 Application.SetVisible("templateSearch", true);
+                Application.SetVisible("studioToolbar", true);
                 Application.SetVisible("templatePassword", true);
                 Application.SetVisible("openDocument", true);
                 Application.SetVisible("saveDocument", true);

@@ -72,7 +72,8 @@ public sealed partial class NativeWindow
         }
     }
     static void Invoke(FrameworkElement element) {
-        AutomationPeer peer = element is MenuFlyoutItem item ? new MenuFlyoutItemAutomationPeer(item) : new ButtonAutomationPeer((Button)element);
+        AutomationPeer peer = element is MenuFlyoutItem item ? new MenuFlyoutItemAutomationPeer(item) :
+            element is AppBarButton command ? new AppBarButtonAutomationPeer(command) : new ButtonAutomationPeer((Button)element);
         Check(peer.GetPattern(PatternInterface.Invoke) is IInvokeProvider, "Control lacks native Invoke pattern");
         ((IInvokeProvider)peer.GetPattern(PatternInterface.Invoke)).Invoke();
     }
@@ -125,6 +126,11 @@ public sealed partial class NativeWindow
         await Until(() => ((BitmapImage)((Image)controls["logo"]).Source).PixelWidth > 0, "Bundled image did not decode");
         ((RadioButtons)controls["channel"]).SelectedIndex = 1; await Idle(); Check(values["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         ((ListView)controls["templates"]).SelectedIndex = 2; await Idle(); Check(values["selectionText.text"] == "Template index: 2", "List event did not reach Hydrogen");
+        var toolbar = controls["studioToolbar"] as CommandBar;
+        Check(toolbar != null && toolbar.Visibility == Visibility.Visible && toolbar.PrimaryCommands.Count == 2 &&
+              ReferenceEquals(toolbar.PrimaryCommands[0], controls["toolbarWorkspace"]), "Native WinUI toolbar is missing");
+        Invoke(controls["toolbarWorkspace"]); await Idle(); Check(values["pages.value"] == "0", "Toolbar workspace command did not reach Hydrogen");
+        Invoke(controls["toolbarControls"]); await Idle(); Check(values["pages.value"] == "1", "Toolbar gallery command did not reach Hydrogen");
         var context = controls["templates"].ContextFlyout as MenuFlyout;
         Check(context != null && context.Items.Count == 1 && ReferenceEquals(context.Items[0], controls["inspectTemplate"]), "Native WinUI context menu is missing");
         context.ShowAt(controls["templates"]); await Task.Delay(100); context.Hide();

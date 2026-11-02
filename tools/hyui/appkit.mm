@@ -13,10 +13,12 @@
 - (BOOL)isFlipped { return YES; }
 @end
 
-@interface HYAction : NSObject<NSTextFieldDelegate, NSTextViewDelegate, NSWindowDelegate, NSTableViewDelegate, NSTableViewDataSource> {
+@interface HYAction : NSObject<NSTextFieldDelegate, NSTextViewDelegate, NSWindowDelegate, NSTableViewDelegate, NSTableViewDataSource, NSToolbarDelegate> {
 @public
     std::function<void(id)> callback;
     NSArray* tableRows;
+    NSArray<NSString*>* toolbarIdentifiers;
+    NSDictionary<NSString*, NSButton*>* toolbarButtons;
 }
 - (void)fire:(id)sender;
 @end
@@ -30,6 +32,15 @@
 }
 - (void)tableViewSelectionDidChange:(NSNotification*)note { [self fire:note.object]; }
 - (BOOL)windowShouldClose:(NSWindow*)window { QCoreApplication::quit(); return YES; }
+- (NSArray<NSString*>*)toolbarAllowedItemIdentifiers:(NSToolbar*)toolbar { return toolbarIdentifiers; }
+- (NSArray<NSString*>*)toolbarDefaultItemIdentifiers:(NSToolbar*)toolbar { return toolbarIdentifiers; }
+- (NSToolbarItem*)toolbar:(NSToolbar*)toolbar itemForItemIdentifier:(NSToolbarItemIdentifier)identifier willBeInsertedIntoToolbar:(BOOL)flag {
+    NSButton* button = toolbarButtons[identifier];
+    if (!button) { return nil; }
+    NSToolbarItem* item = [[[NSToolbarItem alloc] initWithItemIdentifier:identifier] autorelease];
+    item.label = button.title; item.paletteLabel = button.title; item.view = button;
+    return item;
+}
 @end
 
 namespace hyui {
@@ -233,6 +244,23 @@ class AppKitView : public NativeView {
         const auto& a = node.attributes; QString tag = node.tag;
         if (tag == "State") { return nil; }
         if (tag == "MenuBar") { buildMenu(node); return nil; }
+        if (tag == "Toolbar") {
+            NSMutableArray<NSString*>* identifiers = [NSMutableArray array];
+            NSMutableDictionary<NSString*, NSButton*>* buttons = [NSMutableDictionary dictionary];
+            for (const Node& child : node.children) {
+                NSButton* button = (NSButton*)build(child);
+                button.title = text(child.attributes.value("text"));
+                NSString* identifier = text(child.id);
+                [identifiers addObject:identifier]; buttons[identifier] = button;
+            }
+            HYAction* delegate = action(nullptr);
+            delegate->toolbarIdentifiers = identifiers; delegate->toolbarButtons = buttons;
+            [retained addObject:identifiers]; [retained addObject:buttons];
+            NSToolbar* toolbar = [[[NSToolbar alloc] initWithIdentifier:@"HydrogenToolbar"] autorelease];
+            toolbar.delegate = delegate; toolbar.allowsUserCustomization = NO;
+            window.toolbar = toolbar;
+            return nil;
+        }
         if (tag == "ContextMenu") { return nil; }
         if (tag == "Clipboard") { return nil; }
         if (tag == "Dialog") { dialogs.append(&node); return nil; }
@@ -330,7 +358,7 @@ class AppKitView : public NativeView {
                     [retained removeObject:panel];
                 }];
             }); view = button; control = button;
-        } else if (tag == "Button" || tag == "CheckBox" || tag == "Switch") {
+        } else if (tag == "Button" || tag == "ToolButton" || tag == "CheckBox" || tag == "Switch") {
             if (tag == "Switch") {
                 NSSwitch* toggle = [[[NSSwitch alloc] init] autorelease];
                 HYAction* target = action([this, &node](id sender) { handleEvent(node, "checked", [(NSSwitch*)sender state] == NSControlStateValueOn, "onChange"); });
@@ -405,7 +433,7 @@ class AppKitView : public NativeView {
             if (tag != "Tab") { c.view.hidden = !value("visible").toBool(); } if ([c.control respondsToSelector:@selector(setEnabled:)]) { [c.control setEnabled:value("enabled").toBool()]; }
             if (tag == "Label" || tag == "Input" || tag == "SearchInput") { if (string([c.control stringValue]) != value("text").toString()) { [c.control setStringValue:text(value("text").toString())]; } }
             if (tag == "TextArea") { if (string([(NSTextView*)c.control string]) != value("text").toString()) { [(NSTextView*)c.control setString:text(value("text").toString())]; } }
-            if (tag == "Button" || tag == "FilePicker" || tag == "CheckBox") { [(NSButton*)c.control setTitle:text(value("text").toString())]; }
+            if (tag == "Button" || tag == "ToolButton" || tag == "FilePicker" || tag == "CheckBox") { [(NSButton*)c.control setTitle:text(value("text").toString())]; }
             if (tag == "CheckBox" || tag == "Switch") { [c.control setState:value("checked").toBool() ? NSControlStateValueOn : NSControlStateValueOff]; }
             if (tag == "Tabs") {
                 [(NSSegmentedControl*)c.control setSelectedSegment:value("value").toInt()]; int index = 0;
@@ -424,6 +452,15 @@ class AppKitView : public NativeView {
             }
         }
         for (QTimer* timer : timers) { bool running = state.value(timer->objectName() + ".running").toBool(); if (running && !timer->isActive()) { timer->start(); } if (!running) { timer->stop(); } }
+        for (const Node& node : doc.window.children) {
+            if (node.tag == "Toolbar") {
+                window.toolbarVisible = state.value(node.id + ".visible").toBool();
+                for (NSToolbarItem* item in window.toolbar.items) {
+                    item.label = text(state.value(string(item.itemIdentifier) + ".text").toString());
+                }
+                break;
+            }
+        }
         applying = false; layoutDirty = true; updateDialogs();
     }
 public:

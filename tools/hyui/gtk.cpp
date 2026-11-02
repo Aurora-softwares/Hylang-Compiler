@@ -100,6 +100,8 @@ class GtkView : public NativeView {
     bool applying = false;
     W fittedMonitor = nullptr;
     W shortcutController = nullptr;
+    W header = nullptr;
+    QString toolbarId;
     int fittedWidth = 0, fittedHeight = 0;
 public:
     W window = nullptr;
@@ -124,7 +126,7 @@ public:
         api.call("gtk_window_set_resizable", window, 1);
         api.call<unsigned long>("g_signal_connect_data", window, "close-request", reinterpret_cast<void(*)()>(closeThunk), nullptr, nullptr, 0);
         W toolbar = api.call<W>("adw_toolbar_view_new");
-        W header = api.call<W>("adw_header_bar_new");
+        header = api.call<W>("adw_header_bar_new");
         // The header bar obtains its close/minimise/maximise buttons and their
         // layout from GTK's system settings, including Ubuntu's preferences.
         api.call("adw_toolbar_view_add_top_bar", toolbar, header);
@@ -207,6 +209,11 @@ public:
         int minimum = a.value("minimum", "0").toInt(), maximum = a.value("maximum", "100").toInt();
         const QString tag = node.tag;
         if (tag == "State" || tag == "Dialog" || tag == "ContextMenu" || tag == "Clipboard") { return nullptr; }
+        if (tag == "Toolbar") {
+            toolbarId = node.id;
+            for (const Node& child : node.children) { api.call("adw_header_bar_pack_start", header, build(child)); }
+            return nullptr;
+        }
         if (tag == "Timer") {
             QTimer* timer = new QTimer(&bridge); timer->setInterval(a.value("interval", "1000").toInt());
             QObject::connect(timer, &QTimer::timeout, &bridge, [this, &node] { bridge.dispatch(node.attributes["onTick"], node.id); });
@@ -401,7 +408,7 @@ public:
                 api.call<unsigned long>("g_signal_connect_data", c->dialog, "response", reinterpret_cast<void(*)()>(responseThunk), c, nullptr, 0);
                 api.call("gtk_native_dialog_show", c->dialog);
             });
-        } else if (tag == "Button" || tag == "MenuItem") {
+        } else if (tag == "Button" || tag == "MenuItem" || tag == "ToolButton") {
             w = api.call<W>("gtk_button_new_with_label", ""); c->widget = w;
             if (a.value("primary") == "true") { api.css(w, "suggested-action"); }
             connect(c, "clicked", [this, c] { QString handler = c->node->attributes.value("onClick"); if (!handler.isEmpty()) { bridge.dispatch(handler, c->node->id); } });
@@ -527,10 +534,12 @@ public:
             if (!c->widget) { continue; }
             auto value = [&](const QString& property) { return state.value(it.key() + '.' + property); };
             const QString tag = c->node->tag;
-            api.call("gtk_widget_set_visible", c->container ? c->container : c->widget, value("visible").toBool() ? 1 : 0);
+            bool visible = value("visible").toBool();
+            if (tag == "ToolButton" && !toolbarId.isEmpty()) { visible = visible && state.value(toolbarId + ".visible").toBool(); }
+            api.call("gtk_widget_set_visible", c->container ? c->container : c->widget, visible ? 1 : 0);
             api.call("gtk_widget_set_sensitive", c->widget, value("enabled").toBool() ? 1 : 0);
             if (tag == "Label") { api.text(c->widget, "gtk_label_set_text", value("text").toString()); }
-            if (tag == "Button" || tag == "FilePicker" || (tag == "MenuItem" && !c->node->attributes.contains("checked"))) { api.text(c->widget, "gtk_button_set_label", value("text").toString()); }
+            if (tag == "Button" || tag == "ToolButton" || tag == "FilePicker" || (tag == "MenuItem" && !c->node->attributes.contains("checked"))) { api.text(c->widget, "gtk_button_set_label", value("text").toString()); }
             if ((tag == "Input" || tag == "SearchInput") && QString::fromUtf8(api.call<const char*>("gtk_editable_get_text", c->widget)) != value("text").toString()) { api.text(c->widget, "gtk_editable_set_text", value("text").toString()); }
             if (tag == "TextArea") {
                 char* current = nullptr; api.call("g_object_get", c->buffer, "text", &current, nullptr);

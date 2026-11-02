@@ -7,6 +7,10 @@
     </Menu>
     <Menu text="Help"><MenuItem id="aboutMenu" text="About Hydrogen Studio" onClick="About" /></Menu>
   </MenuBar>
+  <Toolbar id="studioToolbar" visible="false">
+    <ToolButton id="toolbarWorkspace" text="Workspace" onClick="ShowWorkspace" accessibleName="Show workspace" />
+    <ToolButton id="toolbarControls" text="Control gallery" onClick="ShowControls" accessibleName="Show control gallery" />
+  </Toolbar>
   <ColumnPanel gap="6">
     <Label text="H  /  HYDROGEN STUDIO" role="caption" tone="accent" />
     <Label text="Build something native." role="title" />

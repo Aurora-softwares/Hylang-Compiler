@@ -67,7 +67,7 @@ public sealed partial class NativeWindow : Window
     static int Number(XElement n, string key, int fallback) => int.TryParse(Attr(n, key), out int result) ? result : fallback;
     static bool Allowed(XElement node, string property) => property switch {
         "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer" or "ContextMenu" or "Clipboard"),
-        "text" => node.Name.LocalName is "Label" or "Input" or "SearchInput" or "TextArea" or "Button" or "FilePicker" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog",
+        "text" => node.Name.LocalName is "Label" or "Input" or "SearchInput" or "TextArea" or "Button" or "ToolButton" or "FilePicker" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog",
         "path" => node.Name.LocalName == "FilePicker",
         "value" => node.Name.LocalName is "State" or "Clipboard" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog",
         "checked" => node.Name.LocalName is "CheckBox" or "Switch" or "MenuItem",
@@ -156,7 +156,15 @@ public sealed partial class NativeWindow : Window
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(Math.Max(100, Number(node, "interval", 1000))) };
             timer.Tick += (_, _) => Dispatch(Attr(node, "onTick"), id); timers[id] = timer; return null;
         }
-        if (tag == "MenuBar") {
+        if (tag == "Toolbar") {
+            var bar = new CommandBar { IsDynamicOverflowEnabled = true };
+            foreach (var child in node.Elements()) bar.PrimaryCommands.Add((AppBarButton)Build(child)!);
+            element = bar;
+        } else if (tag == "ToolButton") {
+            var button = new AppBarButton { Label = Attr(node, "text") };
+            button.Click += (_, _) => Dispatch(Attr(node, "onClick"), id);
+            element = button;
+        } else if (tag == "MenuBar") {
             var bar = new MenuBar(); foreach (var child in node.Elements()) bar.Items.Add((MenuBarItem)Build(child)!); element = bar;
         } else if (tag == "Menu") {
             var menu = new MenuBarItem { Title = Attr(node, "text") }; foreach (var child in node.Elements()) menu.Items.Add((MenuFlyoutItemBase)Build(child)!); element = menu;
@@ -397,6 +405,7 @@ public sealed partial class NativeWindow : Window
                 case MenuBarItem menu: menu.Title = Value("text"); break;
                 case ToggleMenuFlyoutItem menu: menu.Text = Value("text"); menu.IsChecked = Value("checked") == "true"; break;
                 case MenuFlyoutItem menu: menu.Text = Value("text"); break;
+                case AppBarButton command: command.Label = Value("text"); break;
                 case TabView tabs: tabs.SelectedIndex = int.Parse(Value("value")); break;
                 case RadioButtons group: group.SelectedIndex = int.Parse(Value("value")); break;
                 case ListView list: list.SelectedIndex = int.Parse(Value("value")); break;

@@ -110,6 +110,14 @@ public:
         check(bridge.state()["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         view.api.call("gtk_list_box_select_row", view.controls["templates"]->widget, view.api.call<W>("gtk_list_box_get_row_at_index", view.controls["templates"]->widget, 2)); idle();
         check(bridge.state()["selectionText.text"] == "Template index: 2", "List selection did not reach Hydrogen");
+        W toolbarCommand = view.controls["toolbarWorkspace"]->widget;
+        check(view.api.call<int>("gtk_widget_get_visible", toolbarCommand) &&
+              view.api.call<W>("gtk_widget_get_ancestor", toolbarCommand, view.api.call<unsigned long>("adw_header_bar_get_type")) != nullptr,
+              "Native libadwaita toolbar command is missing");
+        click("toolbarWorkspace");
+        check(bridge.state()["pages.value"].toInt() == 0, "Toolbar workspace command did not reach Hydrogen");
+        click("toolbarControls");
+        check(bridge.state()["pages.value"].toInt() == 1, "Toolbar gallery command did not reach Hydrogen");
         W context = view.controls["templateContext"]->dialog;
         check(context && view.api.call<int>("g_type_check_instance_is_a", context, view.api.call<unsigned long>("gtk_popover_get_type")), "ContextMenu must use a native GtkPopover");
         view.api.call("g_signal_emit_by_name", view.controls["templateContext"]->buffer, "pressed", 1, 12.0, 12.0); settle();
