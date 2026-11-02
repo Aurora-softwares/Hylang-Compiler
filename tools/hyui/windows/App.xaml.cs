@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.Windows.Storage.Pickers;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 
 namespace Hydrogen.Native;
@@ -65,10 +66,10 @@ public sealed partial class NativeWindow : Window
     }
     static int Number(XElement n, string key, int fallback) => int.TryParse(Attr(n, key), out int result) ? result : fallback;
     static bool Allowed(XElement node, string property) => property switch {
-        "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer" or "ContextMenu"),
+        "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer" or "ContextMenu" or "Clipboard"),
         "text" => node.Name.LocalName is "Label" or "Input" or "SearchInput" or "TextArea" or "Button" or "FilePicker" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog",
         "path" => node.Name.LocalName == "FilePicker",
-        "value" => node.Name.LocalName is "State" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog",
+        "value" => node.Name.LocalName is "State" or "Clipboard" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog",
         "checked" => node.Name.LocalName is "CheckBox" or "Switch" or "MenuItem",
         "running" => node.Name.LocalName is "Spinner" or "Timer",
         "open" => node.Name.LocalName == "Dialog",
@@ -147,9 +148,10 @@ public sealed partial class NativeWindow : Window
             values[id + "." + prop] = Attr(node, prop, prop is "enabled" or "visible" ? "true" : prop == "value" ? "0" : prop == "text" ? "" : prop == "running" && tag == "Spinner" ? "true" : "false");
         }
         if (tag == "FilePicker") values[id + ".path"] = "";
+        if (tag == "Clipboard") values[id + ".value"] = "";
         FrameworkElement? element;
         void Changed(string property, string value, string action = "onChange") { if (applying || (property == "value" && value == "-1") || values.GetValueOrDefault(id + "." + property) == value) return; values[id + "." + property] = value; if (node.Attribute(action) != null) Dispatch(Attr(node, action), id); }
-        if (tag is "State" or "Dialog" or "ContextMenu") return null;
+        if (tag is "State" or "Dialog" or "ContextMenu" or "Clipboard") return null;
         if (tag == "Timer") {
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(Math.Max(100, Number(node, "interval", 1000))) };
             timer.Tick += (_, _) => Dispatch(Attr(node, "onTick"), id); timers[id] = timer; return null;
@@ -300,6 +302,15 @@ public sealed partial class NativeWindow : Window
         } catch (Exception error) { errors.Text = error.Message; }
         finally { activePickers.Remove(id); }
     }
+    async void ReadClipboard(string id) {
+        try {
+            var content = Clipboard.GetContent();
+            string value = content.Contains(StandardDataFormats.Text) ? await content.GetTextAsync() : "";
+            if (System.Text.Encoding.UTF8.GetByteCount(value) > 16384) throw new InvalidDataException("Clipboard text exceeds 16 KiB");
+            values[id + ".value"] = value;
+            Dispatch(Attr(nodes[id], "onRead"), id);
+        } catch (Exception error) { errors.Text = error.Message; }
+    }
     async void Dispatch(string handler, string sender)
     {
         if (handler == "" || !nodes.TryGetValue(sender, out var node) || !node.Attributes().Any(a => a.Name.LocalName.StartsWith("on") && a.Value == handler)) return;
@@ -311,7 +322,8 @@ public sealed partial class NativeWindow : Window
             if (nodes[next.Sender].Name == "Timer" && values.GetValueOrDefault(next.Sender + ".running") != "true") continue;
             foreach (var pair in nodes) {
                 if (pair.Value.Name.LocalName == "PasswordInput") continue;
-                string property = pair.Value.Name.LocalName == "FilePicker" ? "path" : pair.Value.Name.LocalName is "State" or "Select" or "NumberInput" or "ProgressBar" or "Slider" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "Switch" or "MenuItem" ? "checked" : "text";
+                if (pair.Value.Name.LocalName == "Clipboard" && pair.Key != next.Sender) continue;
+                string property = pair.Value.Name.LocalName == "FilePicker" ? "path" : pair.Value.Name.LocalName is "State" or "Clipboard" or "Select" or "NumberInput" or "ProgressBar" or "Slider" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "Switch" or "MenuItem" ? "checked" : "text";
                 arguments.Add(pair.Key); arguments.Add(values.GetValueOrDefault(pair.Key + "." + property, ""));
             }
             if (arguments.Sum(a => a.Length) > 24000) throw new InvalidOperationException("Value snapshot too large");
@@ -350,14 +362,26 @@ public sealed partial class NativeWindow : Window
     void Apply(string output)
     {
         var updates = new Dictionary<string, string>(values);
+        var clipboard = new List<(string Id, string Operation, string Text)>();
         foreach (string line in output.Split('\n')) {
             string[] parts = line.TrimEnd('\r').Split('\t'); if (parts.Length == 0 || parts[0] != "HYUI") continue;
             if (parts.Length == 3 && parts[1] == "OPEN") continue;
+            if (parts.Length >= 4 && parts[1] == "CLIPBOARD") {
+                string id = Decode(parts[3]), operation = parts[2];
+                if (!nodes.TryGetValue(id, out var clipboardNode) || clipboardNode.Name.LocalName != "Clipboard" ||
+                    !((operation == "READ" && parts.Length == 4) || (operation == "WRITE" && parts.Length == 5))) throw new InvalidDataException("Invalid clipboard operation");
+                string text = operation == "WRITE" ? Decode(parts[4]) : "";
+                if (System.Text.Encoding.UTF8.GetByteCount(text) > 16384) throw new InvalidDataException("Clipboard text exceeds 16 KiB");
+                if (operation == "WRITE") updates[id + ".value"] = text;
+                clipboard.Add((id, operation, text));
+                continue;
+            }
             if (parts.Length != 5 || parts[1] != "SET" || !nodes.ContainsKey(Decode(parts[2]))) throw new InvalidDataException("Invalid Hydrogen response");
             string id = Decode(parts[2]), prop = Decode(parts[3]), value = Decode(parts[4]);
             if (!Allowed(nodes[id], prop)) throw new InvalidDataException("Unknown control property");
+            if (nodes[id].Name == "Clipboard" && System.Text.Encoding.UTF8.GetByteCount(value) > 16384) throw new InvalidDataException("Clipboard text exceeds 16 KiB");
             if (prop is "checked" or "running" or "indeterminate" or "enabled" or "visible" or "open") { if (value != "true" && value != "false") throw new InvalidDataException("Invalid boolean"); }
-            if (prop == "value" && nodes[id].Name != "State") {
+            if (prop == "value" && nodes[id].Name != "State" && nodes[id].Name != "Clipboard") {
                 var n = nodes[id]; string tag = n.Name.LocalName;
                 int maximum = tag is "Select" or "ListBox" or "RadioGroup" ? Attr(n, "items").Split('|').Length - 1 : tag == "Tabs" ? n.Elements().Count() - 1 : tag == "Table" ? Attr(n, "rows").Split('\n').Length - 1 : tag == "Dialog" ? Attr(n, "buttons", "OK").Split('|').Length - 1 : Number(n, "maximum", 100);
                 if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int number) || number < Number(n, "minimum", 0) || number > maximum) throw new InvalidDataException("Value outside range");
@@ -391,5 +415,9 @@ public sealed partial class NativeWindow : Window
         }
         foreach (var timer in timers) { if (values[timer.Key + ".running"] == "true") timer.Value.Start(); else timer.Value.Stop(); }
         applying = false; errors.Text = ""; ShowDialogs();
+        foreach (var request in clipboard) {
+            if (request.Operation == "READ") { ReadClipboard(request.Id); continue; }
+            var content = new DataPackage(); content.SetText(request.Text); Clipboard.SetContent(content);
+        }
     }
 }

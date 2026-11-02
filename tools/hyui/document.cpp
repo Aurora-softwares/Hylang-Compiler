@@ -15,6 +15,7 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"Panel", {"title", "padding", "gap"}},
     {"MenuBar", {}}, {"Menu", {"text"}}, {"MenuItem", {"text", "onClick", "checked", "shortcut"}},
     {"ContextMenu", {"target"}},
+    {"Clipboard", {"onRead"}},
     {"Tabs", {"value", "onChange"}}, {"Tab", {"title", "gap"}},
     {"ListBox", {"items", "value", "height", "onChange"}},
     {"Table", {"columns", "rows", "value", "height", "onChange"}},
@@ -53,7 +54,7 @@ QString Document::resourcePath(const QString& relative) const {
 }
 
 bool Document::parse(const QByteArray& xml) {
-    error.clear(); initialState.clear(); properties.clear(); handlers.clear(); secretInputs.clear(); ranges.clear(); window = {};
+    error.clear(); initialState.clear(); properties.clear(); handlers.clear(); secretInputs.clear(); clipboardIds.clear(); ranges.clear(); window = {};
     if (xml.size() > 1024 * 1024) { error = "HYUI documents are limited to 1 MiB"; return false; }
     QXmlStreamReader reader(xml);
     QSet<QString> ids;
@@ -73,7 +74,7 @@ bool Document::parse(const QByteArray& xml) {
         if ((depth == 0) != (node.tag == "Window")) { return invalid("exactly one root Window is required"); }
         for (const auto& attr : reader.attributes()) {
             QString key = attr.qualifiedName().toString(), value = attr.value().toString();
-            const bool visual = node.tag != "Window" && node.tag != "Timer" && node.tag != "State" && node.tag != "ContextMenu";
+            const bool visual = node.tag != "Window" && node.tag != "Timer" && node.tag != "State" && node.tag != "ContextMenu" && node.tag != "Clipboard";
             const bool tooltipTarget = node.tag != "MenuBar" && node.tag != "Menu" && node.tag != "MenuItem" && node.tag != "Dialog";
             if (!attributes[node.tag].contains(key) && !(key == "id" || (visual && common.contains(key) && (key != "tooltip" || tooltipTarget)))) {
                 return invalid("unknown attribute '" + key + "' on " + node.tag);
@@ -126,13 +127,16 @@ bool Document::parse(const QByteArray& xml) {
         ids.insert(node.id);
         tagsById.insert(node.id, node.tag);
         if (node.tag == "ContextMenu" && node.attributes.value("target").isEmpty()) { return invalid("ContextMenu requires target"); }
+        if (node.tag == "Clipboard" && (!node.attributes.contains("id") || !node.attributes.contains("onRead"))) { return invalid("Clipboard requires id and onRead"); }
         if (node.tag == "PasswordInput") { secretInputs.insert(node.id); }
+        if (node.tag == "Clipboard") { clipboardIds.insert(node.id); }
         QSet<QString> props;
-        if (node.tag != "Window" && node.tag != "Timer" && node.tag != "State" && node.tag != "ContextMenu") { props = {"visible", "enabled"}; }
+        if (node.tag != "Window" && node.tag != "Timer" && node.tag != "State" && node.tag != "ContextMenu" && node.tag != "Clipboard") { props = {"visible", "enabled"}; }
         for (const QString& prop : {"text", "value", "checked", "running", "indeterminate", "open"}) {
             if (attributes[node.tag].contains(prop)) { props.insert(prop); }
         }
         if (node.tag == "FilePicker") { props.insert("path"); }
+        if (node.tag == "Clipboard") { props.insert("value"); }
         properties.insert(node.id, props);
         for (const auto& prop : props) {
             QString value = node.attributes.value(prop);
@@ -140,7 +144,7 @@ bool Document::parse(const QByteArray& xml) {
             if (prop == "running") { value = node.attributes.value(prop, node.tag == "Spinner" ? "true" : "false"); }
             QVariant typed = value;
             if (booleans.contains(prop)) { typed = value == "true"; }
-            if (prop == "value" && node.tag != "State") { typed = value.isEmpty() ? 0 : value.toInt(); }
+            if (prop == "value" && node.tag != "State" && node.tag != "Clipboard") { typed = value.isEmpty() ? 0 : value.toInt(); }
             initialState.insert(node.id + "." + prop, typed);
         }
         for (auto it = node.attributes.cbegin(); it != node.attributes.cend(); ++it) {
@@ -149,7 +153,7 @@ bool Document::parse(const QByteArray& xml) {
         if (node.attributes.value("maximum", "100").toInt() < node.attributes.value("minimum", "0").toInt()) {
             return invalid("maximum must be greater than or equal to minimum");
         }
-        if (props.contains("value") && node.tag != "State") {
+        if (props.contains("value") && node.tag != "State" && node.tag != "Clipboard") {
             int minimum = node.attributes.value("minimum", "0").toInt();
             int maximum = node.attributes.value("maximum", "100").toInt();
             if (node.tag == "Select" || node.tag == "ListBox" || node.tag == "RadioGroup") { maximum = node.attributes.value("items").split('|').size() - 1; }
@@ -171,6 +175,7 @@ bool Document::parse(const QByteArray& xml) {
                     (childTag == "Tab" && node.tag != "Tabs") || (childTag == "Menu" && node.tag != "MenuBar") ||
                     (childTag == "MenuItem" && node.tag != "Menu" && node.tag != "ContextMenu") || (childTag == "MenuBar" && node.tag != "Window") ||
                     (childTag == "Dialog" && node.tag != "Window") || (childTag == "ContextMenu" && node.tag != "Window") ||
+                    (childTag == "Clipboard" && node.tag != "Window") ||
                     (node.tag == "ContextMenu" && childTag != "MenuItem")) { return invalid("invalid placement of " + childTag); }
                 Node child;
                 if (!read(child, depth + 1)) { return false; }
@@ -187,7 +192,7 @@ bool Document::parse(const QByteArray& xml) {
                         QString tag = tagsById.value(target);
                         if (contextTargets.contains(target) || tag.isEmpty() ||
                             tag == "Window" || tag == "ContextMenu" || tag == "MenuBar" || tag == "Menu" || tag == "MenuItem" ||
-                            tag == "Dialog" || tag == "State" || tag == "Timer") {
+                            tag == "Dialog" || tag == "State" || tag == "Timer" || tag == "Clipboard") {
                             return invalid("ContextMenu target must name one visual control");
                         }
                         contextTargets.insert(target);

@@ -234,6 +234,7 @@ class AppKitView : public NativeView {
         if (tag == "State") { return nil; }
         if (tag == "MenuBar") { buildMenu(node); return nil; }
         if (tag == "ContextMenu") { return nil; }
+        if (tag == "Clipboard") { return nil; }
         if (tag == "Dialog") { dialogs.append(&node); return nil; }
         if (tag == "Timer") {
             QTimer* timer = new QTimer(&bridge); timer->setObjectName(node.id); timer->setInterval(a.value("interval", "1000").toInt());
@@ -449,6 +450,14 @@ public:
         window.contentView = content;
         QObject::connect(&bridge, &Bridge::changed, &bridge, [this] { update(); });
         QObject::connect(&bridge, &Bridge::errorChanged, &bridge, [this] { error.stringValue = text(bridge.error()); layoutDirty = true; }); update();
+        QObject::connect(&bridge, &Bridge::clipboardRequested, &bridge, [this](const QString& id, const QString& operation, const QString& value) {
+            NSPasteboard* pasteboard = NSPasteboard.generalPasteboard;
+            if (operation == "WRITE") { [pasteboard clearContents]; [pasteboard setString:text(value) forType:NSPasteboardTypeString]; return; }
+            const QString contents = string([pasteboard stringForType:NSPasteboardTypeString]);
+            for (const Node& node : doc.window.children) {
+                if (node.id == id && bridge.storeClipboardText(id, contents)) { bridge.dispatch(node.attributes.value("onRead"), id); break; }
+            }
+        });
     }
     void present(int width, int height) override {
         NSRect area = NSScreen.mainScreen.visibleFrame; [window setContentSize:NSMakeSize(qMin(width, int(area.size.width - 32)), qMin(height, int(area.size.height - 64)))];

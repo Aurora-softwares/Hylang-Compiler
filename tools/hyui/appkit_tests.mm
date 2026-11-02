@@ -132,6 +132,11 @@ int main(int argc, char** argv) {
             NSMenuItem* inspect = [contextMenu itemAtIndex:0];
             [inspect.target performSelector:inspect.action withObject:inspect]; finish();
             require(bridge.state()["selectionText.text"].toString() == "Inspect template index: 2", "context menu command did not reach Hydrogen");
+            [(NSButton*)find(gallery, @"copyPreview") performClick:nil]; finish();
+            require([[NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString] isEqualToString:@"Inspect template index: 2"], "native pasteboard write failed");
+            [(NSButton*)find(gallery, @"pastePreview") performClick:nil];
+            for (int i = 0; i < 100; ++i) { app.processEvents(); view->pump(); QThread::msleep(2); } finish();
+            require(bridge.state()["selectionText.text"].toString() == "Clipboard: Inspect template index: 2", "native pasteboard read did not reach Hydrogen");
             NSScrollView* projects = (NSScrollView*)find(gallery, @"projects");
             [(NSTableView*)projects.documentView selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO]; finish();
             require(bridge.state()["selectionText.text"].toString() == "Project index: 1", "table event failed");
@@ -175,7 +180,8 @@ int main(int argc, char** argv) {
             require([savePanel isKindOfClass:NSSavePanel.class], "native save panel did not open");
             savePanel.directoryURL = [NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES];
             savePanel.nameFieldStringValue = @"hydrogen-café.txt";
-            [saveParent endSheet:savePanel returnCode:NSModalResponseOK];
+            require(savePanel.defaultButtonCell != nil, "native save panel has no accept button");
+            [savePanel.defaultButtonCell performClick:nil];
             for (int i = 0; i < 100; ++i) { app.processEvents(); view->pump(); QThread::msleep(2); } finish();
             require(bridge.state()["saveDocument.path"].toString().endsWith("hydrogen-café.txt") &&
                     bridge.state()["selectionText.text"].toString().startsWith("Save: "), "selected native save path did not reach Hydrogen");

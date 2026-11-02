@@ -12,6 +12,7 @@
 #include <QJsonObject>
 #include <QLibrary>
 #include <QProcess>
+#include <QPointer>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -46,6 +47,22 @@ public:
         for (const char* side : {"gtk_widget_set_margin_top", "gtk_widget_set_margin_bottom", "gtk_widget_set_margin_start", "gtk_widget_set_margin_end"}) { call(side, widget, amount); }
     }
 };
+struct ClipboardRead {
+    QPointer<Bridge> bridge;
+    QString id, handler;
+    Api api;
+};
+void clipboardReadThunk(W clipboard, W result, W data) {
+    std::unique_ptr<ClipboardRead> read(static_cast<ClipboardRead*>(data));
+    W error = nullptr;
+    char* value = read->api.call<char*>("gdk_clipboard_read_text_finish", clipboard, result, &error);
+    if (read->bridge) {
+        const QString text = value ? QString::fromUtf8(value) : QString();
+        if (read->bridge->storeClipboardText(read->id, text)) { read->bridge->dispatch(read->handler, read->id); }
+    }
+    if (value) { read->api.call("g_free", value); }
+    if (error) { read->api.call("g_error_free", error); }
+}
 struct Control {
     W widget = nullptr;
     W container = nullptr;
@@ -125,6 +142,14 @@ public:
         attachContextMenus();
         QObject::connect(&bridge, &Bridge::changed, &bridge, [this] { update(); });
         QObject::connect(&bridge, &Bridge::errorChanged, &bridge, [this] { api.text(error, "gtk_label_set_text", bridge.error()); });
+        QObject::connect(&bridge, &Bridge::clipboardRequested, &bridge, [this](const QString& id, const QString& operation, const QString& text) {
+            W clipboard = api.call<W>("gdk_display_get_clipboard", api.call<W>("gdk_display_get_default"));
+            if (operation == "WRITE") { api.call("gdk_clipboard_set_text", clipboard, text.toUtf8().constData()); return; }
+            auto read = std::make_unique<ClipboardRead>();
+            read->bridge = &bridge; read->id = id;
+            for (const Node& node : document.window.children) { if (node.id == id) { read->handler = node.attributes.value("onRead"); break; } }
+            api.call("gdk_clipboard_read_text_async", clipboard, nullptr, clipboardReadThunk, read.release());
+        });
         update();
     }
     void append(W parent, W child) { if (child) { api.call("gtk_box_append", parent, child); } }
@@ -181,7 +206,7 @@ public:
         };
         int minimum = a.value("minimum", "0").toInt(), maximum = a.value("maximum", "100").toInt();
         const QString tag = node.tag;
-        if (tag == "State" || tag == "Dialog" || tag == "ContextMenu") { return nullptr; }
+        if (tag == "State" || tag == "Dialog" || tag == "ContextMenu" || tag == "Clipboard") { return nullptr; }
         if (tag == "Timer") {
             QTimer* timer = new QTimer(&bridge); timer->setInterval(a.value("interval", "1000").toInt());
             QObject::connect(timer, &QTimer::timeout, &bridge, [this, &node] { bridge.dispatch(node.attributes["onTick"], node.id); });

@@ -119,6 +119,10 @@ public:
         view.api.call("gtk_popover_popdown", context);
         check(!view.controls["templateContext"]->keyAction('x', 0) && view.controls["templateContext"]->keyAction(0xffc7u, 1u), "Menu-key gesture did not reopen the context menu");
         view.api.call("gtk_popover_popdown", context);
+        click("copyPreview");
+        check(bridge.state()["studioClipboard.value"] == "Inspect template index: 2", "Clipboard write did not update Hydrogen state");
+        click("pastePreview");
+        until([&] { return bridge.state()["selectionText.text"] == "Clipboard: Inspect template index: 2"; }, "Native GTK clipboard read did not reach Hydrogen");
         W search = view.controls["templateSearch"]->widget;
         check(view.api.call<int>("g_type_check_instance_is_a", search, view.api.call<unsigned long>("gtk_search_entry_get_type")), "SearchInput must use GtkSearchEntry");
         check(view.api.call<int>("gtk_widget_get_visible", search), "Hydrogen did not reveal SearchInput");

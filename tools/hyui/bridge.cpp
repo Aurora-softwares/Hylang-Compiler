@@ -1,5 +1,6 @@
 #include "bridge.hpp"
 #include <QRegularExpression>
+#include <QVector>
 
 namespace hyui {
 Bridge::Bridge(const Document& doc, QString executable, QString cwd, QObject* parent)
@@ -48,6 +49,13 @@ void Bridge::store(const QString& id, const QString& property, const QVariant& v
     // Backend updates notify all declarative bindings after the response commits.
     values[id + "." + property] = value;
 }
+bool Bridge::storeClipboardText(const QString& id, const QString& value) {
+    if (!document.clipboardIds.contains(id) || value.toUtf8().size() > 16384) {
+        fail("Clipboard text exceeds 16 KiB or names an unknown control"); return false;
+    }
+    store(id, "value", value);
+    return true;
+}
 
 bool Bridge::storeSecret(const QString& id, const QString& value) {
     if (!document.secretInputs.contains(id)) { return false; }
@@ -60,14 +68,29 @@ bool Bridge::storeSecret(const QString& id, const QString& value) {
 bool Bridge::apply(const QByteArray& response) {
     if (response.size() > 1024 * 1024) { fail("Hydrogen response exceeds 1 MiB"); return false; }
     QVariantMap updated = values;
+    struct ClipboardRequest { QString id, operation, text; };
+    QVector<ClipboardRequest> clipboard;
     for (QByteArray raw : response.split('\n')) {
         if (raw.endsWith('\r')) { raw.chop(1); }
         if (!raw.startsWith("HYUI\t")) { continue; }
         const auto parts = QString::fromUtf8(raw).split('\t');
         if (parts.size() == 3 && parts[1] == "OPEN") { continue; }
+        if (parts.size() >= 4 && parts[1] == "CLIPBOARD") {
+            const QString operation = parts[2], id = decode(parts[3]);
+            if (!document.clipboardIds.contains(id) ||
+                !((operation == "READ" && parts.size() == 4) || (operation == "WRITE" && parts.size() == 5))) {
+                fail("Malformed Clipboard operation"); return false;
+            }
+            QString text = operation == "WRITE" ? decode(parts[4]) : QString();
+            if (text.toUtf8().size() > 16384) { fail("Clipboard text exceeds 16 KiB"); return false; }
+            if (operation == "WRITE") { updated[id + ".value"] = text; }
+            clipboard.append({id, operation, text});
+            continue;
+        }
         if (parts.size() != 5 || parts[1] != "SET") { fail("Malformed HYUI backend response"); return false; }
         const QString id = decode(parts[2]), property = decode(parts[3]), text = decode(parts[4]);
         if (!document.properties.value(id).contains(property)) { fail("Backend tried to update an unknown control or property: " + id + "." + property); return false; }
+        if (document.clipboardIds.contains(id) && text.toUtf8().size() > 16384) { fail("Clipboard text exceeds 16 KiB"); return false; }
         const QString key = id + "." + property;
         QVariant typed = text;
         if (document.initialState[key].metaType().id() == QMetaType::Bool) {
@@ -94,6 +117,7 @@ bool Bridge::apply(const QByteArray& response) {
     applying = true;
     emit changed();
     applying = false;
+    for (const auto& request : clipboard) { emit clipboardRequested(request.id, request.operation, request.text); }
     return true;
 }
 
@@ -113,6 +137,7 @@ void Bridge::next() {
     QStringList args = {"--hyui-event", event.first, event.second};
     int size = 0;
     for (auto it = document.properties.cbegin(); it != document.properties.cend(); ++it) {
+        if (document.clipboardIds.contains(it.key()) && it.key() != event.second) { continue; }
         QString prop;
         if (it.value().contains("path")) { prop = "path"; }
         else if (it.value().contains("value")) { prop = "value"; }

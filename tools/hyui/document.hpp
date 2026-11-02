@@ -26,6 +26,7 @@ public:
     QMap<QString, QSet<QString>> properties;
     QMap<QString, QSet<QString>> handlers;
     QSet<QString> secretInputs;
+    QSet<QString> clipboardIds;
     QMap<QString, QPair<int, int>> ranges;
 };
 }

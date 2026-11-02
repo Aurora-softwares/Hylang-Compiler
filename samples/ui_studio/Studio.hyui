@@ -85,6 +85,8 @@
         <FilePicker id="openDocument" mode="open" text="Open a file" onPick="PickedDocument" onCancel="PickerCancelled" accessibleName="Open a file" visible="false" />
         <FilePicker id="saveDocument" mode="save" text="Choose a save location" onPick="PickedSaveLocation" onCancel="PickerCancelled" accessibleName="Choose a save location" visible="false" />
         <FilePicker id="chooseFolder" mode="folder" text="Choose a folder" onPick="PickedFolder" onCancel="PickerCancelled" accessibleName="Choose a folder" visible="false" />
+        <Button id="copyPreview" text="Copy preview text" onClick="CopyPreview" visible="false" />
+        <Button id="pastePreview" text="Paste preview text" onClick="PastePreview" visible="false" />
         <ScrollView id="templateDetails" height="90" gap="6" visible="false" accessibleName="Template details" tooltip="Scroll through template details">
           <Label text="Template details" role="heading" />
           <Label text="Native controls on every desktop." />
@@ -110,6 +112,7 @@
   <ContextMenu id="templateContext" target="templates">
     <MenuItem id="inspectTemplate" text="Inspect selected template" onClick="InspectTemplate" />
   </ContextMenu>
+  <Clipboard id="studioClipboard" onRead="ClipboardRead" />
   <Dialog id="confirmation" title="Create an application?" text="Your settings are ready. Continue with this template?" buttons="Continue|Cancel" open="false" value="0" onClose="Confirmed" />
   <Dialog id="about" title="Hydrogen Studio" text="Native menus, tabs, lists, tables, radio groups, images and dialogs, connected to Hydrogen." buttons="OK" open="false" value="0" />
   <Timer id="buildTimer" interval="350" running="false" onTick="Tick" />

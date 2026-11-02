@@ -21,6 +21,7 @@ public:
     bool busy() const { return active; }
     QString executablePath() const { return backend; }
     Q_INVOKABLE void store(const QString& id, const QString& property, const QVariant& value);
+    bool storeClipboardText(const QString& id, const QString& value);
     bool storeSecret(const QString& id, const QString& value);
     Q_INVOKABLE void dispatch(const QString& handler, const QString& sender);
     Q_INVOKABLE bool isApplying() const { return applying; }
@@ -32,6 +33,7 @@ signals:
     void errorChanged();
     void busyChanged();
     void idle();
+    void clipboardRequested(const QString& id, const QString& operation, const QString& text);
 private:
     void next();
     void fail(const QString& message);

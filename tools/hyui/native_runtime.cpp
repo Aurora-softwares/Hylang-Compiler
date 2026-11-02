@@ -76,8 +76,9 @@ int nativeMain(int argc, char** argv, NativeFactory factory) {
         Document document; if (!document.parse(fileText(view))) { throw std::runtime_error(document.error.toStdString()); }
         document.sourcePath = QFileInfo(view).absoluteFilePath();
         if (parser.isSet("validate")) { QTextStream(stdout) << "HYUI v1 valid\n"; return 0; }
-        Bridge bridge(document, backend, directory); if (!bridge.apply(startup)) { throw std::runtime_error(bridge.error().toStdString()); }
+        Bridge bridge(document, backend, directory);
         auto native = factory(document, bridge);
+        if (!bridge.apply(startup)) { throw std::runtime_error(bridge.error().toStdString()); }
         int width = document.window.attributes.value("width", "1100").toInt(), height = document.window.attributes.value("height", "820").toInt();
         if (parser.isSet("size")) { auto size = parser.value("size").split('x'); if (size.size() != 2 || size[0].toInt() < 1 || size[1].toInt() < 1) { throw std::runtime_error("invalid window size"); } width = size[0].toInt(); height = size[1].toInt(); }
         native->present(width, height);

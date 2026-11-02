@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Foundation;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 
@@ -129,6 +130,10 @@ public sealed partial class NativeWindow
         context.ShowAt(controls["templates"]); await Task.Delay(100); context.Hide();
         Invoke(controls["inspectTemplate"]); await Idle();
         Check(values["selectionText.text"] == "Inspect template index: 2", "Context menu command did not reach Hydrogen");
+        Invoke(controls["copyPreview"]); await Idle();
+        Check(await Clipboard.GetContent().GetTextAsync() == "Inspect template index: 2", "Native Windows clipboard write failed");
+        Invoke(controls["pastePreview"]);
+        await Until(() => values["selectionText.text"] == "Clipboard: Inspect template index: 2", "Native Windows clipboard read did not reach Hydrogen"); await Idle();
         ((ListView)controls["projects"]).SelectedIndex = 1; await Idle(); Check(values["selectionText.text"] == "Project index: 1", "Table event did not reach Hydrogen");
         Check(controls["templateSearch"] is AutoSuggestBox, "SearchInput must use a WinUI AutoSuggestBox");
         var search = (AutoSuggestBox)controls["templateSearch"];

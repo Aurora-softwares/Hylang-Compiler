@@ -56,6 +56,13 @@ namespace Hydrogen.UI {
         public static void SetOpen(string id, bool value) { Set(id, "open", "" + value); }
         public static void SetRunning(string id, bool value) { Set(id, "running", "" + value); }
 
+        public static void ClipboardWrite(string id, string value) {
+            System.Console.WriteLine("HYUI\tCLIPBOARD\tWRITE\t" + Escape(id) + "\t" + Escape(value));
+        }
+        public static void ClipboardRead(string id) {
+            System.Console.WriteLine("HYUI\tCLIPBOARD\tREAD\t" + Escape(id));
+        }
+
         private static string Escape(string value) {
             string result = "";
             int i = 0;

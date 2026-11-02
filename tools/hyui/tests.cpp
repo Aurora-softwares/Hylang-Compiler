@@ -181,6 +181,45 @@ private slots:
                  QByteArray(R"(<Window version="1"><Button id="target"/><ContextMenu target="target"><MenuItem text="Bad" shortcut="Primary+B" onClick="Bad"/></ContextMenu></Window>)")
              }) { QVERIFY2(!d.parse(xml), xml.constData()); }
     }
+    void clipboardContractAndTransport() {
+        hyui::Document d;
+        QVERIFY(d.parse(R"(<Window version="1"><Clipboard id="clipboard" onRead="Read"/><Label id="status" text="ready"/></Window>)"));
+        QCOMPARE(d.initialState["clipboard.value"].toString(), "");
+        QVERIFY(d.clipboardIds.contains("clipboard"));
+        QVERIFY(d.handlers["Read"].contains("clipboard"));
+        for (const QByteArray xml : {
+                 QByteArray(R"(<Window version="1"><Clipboard onRead="Read"/></Window>)"),
+                 QByteArray(R"(<Window version="1"><Clipboard id="clipboard"/></Window>)"),
+                 QByteArray(R"(<Window version="1"><Clipboard id="clipboard" onRead="Read" visible="true"/></Window>)"),
+                 QByteArray(R"(<Window version="1"><Panel><Clipboard id="clipboard" onRead="Read"/></Panel></Window>)")
+             }) { QVERIFY2(!d.parse(xml), xml.constData()); }
+        QVERIFY(d.parse(R"(<Window version="1"><Clipboard id="clipboard" onRead="Read"/></Window>)"));
+        hyui::Bridge bridge(d, QCoreApplication::applicationFilePath(), QDir::currentPath());
+        QSignalSpy requested(&bridge, &hyui::Bridge::clipboardRequested);
+        QVERIFY(bridge.apply(QString("HYUI\tCLIPBOARD\tWRITE\tclipboard\tcafé%09note\n").toUtf8()));
+        QCOMPARE(bridge.state()["clipboard.value"].toString(), "café\tnote");
+        QCOMPARE(requested.size(), 1);
+        QCOMPARE(requested[0][1].toString(), "WRITE");
+        QVERIFY(bridge.apply("HYUI\tCLIPBOARD\tREAD\tclipboard\n"));
+        QCOMPARE(requested.size(), 2);
+        QCOMPARE(requested[1][1].toString(), "READ");
+        QVERIFY(bridge.storeClipboardText("clipboard", "café\tline\nnext"));
+        QCOMPARE(bridge.state()["clipboard.value"].toString(), "café\tline\nnext");
+        QVERIFY(!bridge.apply("HYUI\tCLIPBOARD\tWRITE\tmissing\tx\n"));
+        QVERIFY(!bridge.apply("HYUI\tCLIPBOARD\tREAD\tclipboard\textra\n"));
+        QVERIFY(!bridge.storeClipboardText("clipboard", QString(16385, 'x')));
+        QCOMPARE(requested.size(), 2);
+        hyui::Document privacy;
+        QVERIFY(privacy.parse(R"(<Window version="1"><Clipboard id="clipboard" onRead="Read"/><Button id="probe" onClick="Probe"/><Label id="status" text="ready"/></Window>)"));
+        hyui::Bridge eventBridge(privacy, QCoreApplication::applicationFilePath(), QDir::currentPath());
+        QVERIFY(eventBridge.storeClipboardText("clipboard", "café private"));
+        eventBridge.dispatch("Probe", "probe");
+        QTRY_VERIFY_WITH_TIMEOUT(!eventBridge.busy(), 5000);
+        QCOMPARE(eventBridge.state()["status.text"].toString(), "private");
+        eventBridge.dispatch("Read", "clipboard");
+        QTRY_VERIFY_WITH_TIMEOUT(!eventBridge.busy(), 5000);
+        QCOMPARE(eventBridge.state()["status.text"].toString().normalized(QString::NormalizationForm_C), QString("café private"));
+    }
 
     void callbacksUseArgumentVectors() {
         hyui::Document d;
@@ -222,6 +261,14 @@ int main(int argc, char** argv) {
                 if (QByteArray(argv[i]) == "choose") { path = QString::fromUtf8(argv[i + 1]); }
             }
             std::cout << "HYUI\tSET\tstatus\ttext\t" << hyui::Bridge::encode(path).toStdString() << '\n';
+            return 0;
+        }
+        if (QByteArray(argv[2]) == "Probe" || QByteArray(argv[2]) == "Read") {
+            QString value = "private";
+            for (int i = 4; i + 1 < argc; i += 2) {
+                if (QByteArray(argv[i]) == "clipboard") { value = QByteArray(argv[2]) == "Read" ? QString::fromUtf8(argv[i + 1]) : "leaked"; }
+            }
+            std::cout << "HYUI\tSET\tstatus\ttext\t" << hyui::Bridge::encode(value).toStdString() << '\n';
             return 0;
         }
         QString value;
