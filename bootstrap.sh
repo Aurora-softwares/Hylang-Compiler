@@ -602,6 +602,14 @@ if [[ "${HYDROGEN_BUILD_UI:-auto}" != "OFF" && "${HYDROGEN_BUILD_UI:-auto}" != "
        cmake --build "$BOOTSTRAP_BUILD_DIR" \
         --target hyui-native hyui-launcher --parallel >>"$UI_LOG" 2>&1; then
         printf 'Native desktop UI runtime is available.\\n'
+        if [[ "$(uname -s)" == Darwin ]]; then
+            if cmake --build "$BOOTSTRAP_BUILD_DIR" --target hydrogen-ui-sdk \
+                --parallel >>"$UI_LOG" 2>&1; then
+                printf 'Native macOS x64 UI SDK exported.\\n'
+            else
+                printf 'macOS UI SDK export unavailable (x86_64 Qt and macdeployqt required); see %s\\n' "$UI_LOG"
+            fi
+        fi
     else
         cmake -S "$PROJECT_DIR" -B "$BOOTSTRAP_BUILD_DIR" \
             -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=OFF >>"$UI_LOG" 2>&1 || true
