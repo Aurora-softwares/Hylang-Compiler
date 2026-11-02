@@ -1,6 +1,3 @@
-using System;
-using System.IO;
-
 namespace Hydrogen.Compiler.UI {
     public class UIValidator {
         // Preflight only: comprehensive attributes, event and placement rules
