@@ -3,14 +3,30 @@
 set -euo pipefail
 root="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
 cd "$root"
-compiler="build/self_hosting/linux/hydrogen-stage1"
-if [[ $# -gt 0 ]]; then compiler="$1"; fi
-[[ -x "$compiler" ]] || { echo "Missing Hydrogen compiler: $compiler" >&2; exit 1; }
+# Existing CI passes no arguments and tests Stage 1. Developers can run
+# --all-stages to check native GTK4 generation by Stages 1, 2 and 3.
+if [[ "${1:-}" == "--all-stages" ]]; then
+  compilers=(
+    "build/self_hosting/linux/hydrogen-stage1"
+    "build/self_hosting/linux/hydrogen-stage2"
+    "build/self_hosting/linux/hydrogen-stage3"
+  )
+elif [[ $# -gt 0 ]]; then
+  compilers=("$1")
+else
+  compilers=("build/self_hosting/linux/hydrogen-stage1")
+fi
+for compiler in "${compilers[@]}"; do
+  [[ -x "$compiler" ]] || { echo "Missing Hydrogen compiler: $compiler" >&2; exit 1; }
+done
 command -v pkg-config >/dev/null
 pkg-config --exists gtk4 || { echo "GTK4 development package is required" >&2; exit 1; }
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
-output="$work/Studio"
+index=0
+for compiler in "${compilers[@]}"; do
+index=$((index + 1))
+output="$work/Studio-stage$index"
 "$compiler" build samples/ui_studio/Studio.hyproj -o "$output" \
   --hide-spinner --hide-log --hide-progress
 test -x "$output"
@@ -51,4 +67,6 @@ from pathlib import Path
 state=json.loads(Path(sys.argv[1]).read_text())
 assert state["pages.value"] == 0, state
 PY
-echo "Direct GTK4 application generated, launched, and dispatched Hydrogen events without hyui-native."
+echo "Direct GTK4 application generated, launched, and dispatched Hydrogen events without hyui-native: $compiler"
+done
+echo "Native GTK4 direct builds passed for ${#compilers[@]} compiler stage(s)."
