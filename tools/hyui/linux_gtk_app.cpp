@@ -154,6 +154,92 @@ struct App {
         h->app->state[key+".value"]=std::to_string(h->index);
         h->app->dispatch(h->handler,key);
     }
+    static void dialogChoice(GtkButton*,gpointer data) {
+        auto* h=static_cast<Hook*>(data);
+        const auto name=h->app->id(h->node);
+        h->app->state[name+".value"]=std::to_string(h->index);
+        h->app->state[name+".open"]="false";
+        GtkWidget* dialog=h->app->controls[name].widget;
+        if(dialog) {
+            gtk_window_destroy(GTK_WINDOW(dialog));
+            h->app->controls[name].widget=nullptr;
+        }
+        auto closeHandler=attr(h->node,"onClose");
+        if(!closeHandler.empty())h->app->dispatch(closeHandler,name);
+    }
+    void showDialog(Node* n) {
+        auto name=id(n);
+        if(controls[name].widget)return;
+        GtkWidget* dialog=gtk_window_new();
+        controls[name].widget=dialog;
+        gtk_window_set_title(GTK_WINDOW(dialog),attr(n,"title","Hydrogen").c_str());
+        gtk_window_set_transient_for(GTK_WINDOW(dialog),GTK_WINDOW(window));
+        gtk_window_set_modal(GTK_WINDOW(dialog),TRUE);
+        gtk_window_set_default_size(GTK_WINDOW(dialog),360,130);
+        GtkWidget* layout=gtk_box_new(GTK_ORIENTATION_VERTICAL,16);
+        gtk_widget_set_margin_start(layout,20);gtk_widget_set_margin_end(layout,20);
+        gtk_widget_set_margin_top(layout,20);gtk_widget_set_margin_bottom(layout,20);
+        auto* label=gtk_label_new(attr(n,"text").c_str());
+        gtk_label_set_wrap(GTK_LABEL(label),TRUE);
+        gtk_box_append(GTK_BOX(layout),label);
+        auto* buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,10);
+        auto options=parts(attr(n,"buttons","OK"),'|');
+        for(int i=0;i<int(options.size());++i) {
+            GtkWidget* button=gtk_button_new_with_label(options[i].c_str());
+            auto* h=hook(n,"onClose");
+            if(!h) {auto fallback=std::make_unique<Hook>();fallback->app=this;fallback->node=n;h=fallback.get();hooks.push_back(std::move(fallback));}
+            h->index=i;
+            g_signal_connect(button,"clicked",G_CALLBACK(dialogChoice),h);
+            gtk_box_append(GTK_BOX(buttons),button);
+        }
+        gtk_box_append(GTK_BOX(layout),buttons);
+        gtk_window_set_child(GTK_WINDOW(dialog),layout);
+        gtk_window_present(GTK_WINDOW(dialog));
+    }
+    static void pickerResponse(GtkNativeDialog* native,gint response,gpointer data) {
+        auto* h=static_cast<Hook*>(data);
+        const auto name=h->app->id(h->node);
+        if(response==GTK_RESPONSE_ACCEPT) {
+            GFile* file=gtk_file_chooser_get_file(GTK_FILE_CHOOSER(native));
+            if(file) {
+                gchar* path=g_file_get_path(file);
+                if(path) { h->app->state[name+".path"]=path;g_free(path); }
+                g_object_unref(file);
+            }
+            h->app->dispatch(h->handler,name);
+        } else {
+            h->app->dispatch(attr(h->node,"onCancel"),name);
+        }
+        g_object_unref(native);
+    }
+    static void pickerClicked(GtkWidget*,gpointer data) {
+        auto* h=static_cast<Hook*>(data);
+        const auto mode=attr(h->node,"mode","open");
+        GtkFileChooserAction action=GTK_FILE_CHOOSER_ACTION_OPEN;
+        if(mode=="save")action=GTK_FILE_CHOOSER_ACTION_SAVE;
+        else if(mode=="folder")action=GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER;
+        GtkFileChooserNative* chooser=gtk_file_chooser_native_new(
+            attr(h->node,"text","Select file").c_str(),
+            GTK_WINDOW(h->app->window),action,
+            mode=="save"?"Save":"Open","Cancel");
+        g_signal_connect(chooser,"response",G_CALLBACK(pickerResponse),h);
+        gtk_native_dialog_show(GTK_NATIVE_DIALOG(chooser));
+    }
+    static void clipboardReady(GObject* object,GAsyncResult* result,gpointer data) {
+        auto* h=static_cast<Hook*>(data);
+        GError* error=nullptr;
+        gchar* text=gdk_clipboard_read_text_finish(GDK_CLIPBOARD(object),result,&error);
+        if(text) {
+            std::string value=text;
+            if(value.size()<=16384) {
+                const auto name=h->app->id(h->node);
+                h->app->state[name+".value"]=value;
+                h->app->dispatch(h->handler,name);
+            }
+            g_free(text);
+        } else if(error) std::cerr<<"HYUI clipboard: "<<error->message<<"\n";
+        if(error)g_error_free(error);
+    }
     void bind(GtkWidget* widget,const char* signal,Node* n,const char* handler) {
         if(auto* h=hook(n,handler)) {
             std::string kind=signal;
@@ -239,12 +325,30 @@ struct App {
         for(auto& line:parts(output,'\n')) {
             if(line.compare(0,5,"HYUI\t")!=0)continue;
             auto fields=parts(line,'\t');
+            if(fields.size()>=4 && fields[1]=="CLIPBOARD") {
+                const std::string name=decode(fields[3]);
+                auto ctl=controls.find(name);
+                if(ctl==controls.end()||ctl->second.node->tag!="Clipboard")continue;
+                if(fields[2]=="WRITE"&&fields.size()==5) {
+                    const auto text=decode(fields[4]);
+                    if(text.size()<=16384) {
+                        state[name+".value"]=text;
+                        gdk_clipboard_set_text(gtk_widget_get_clipboard(window),text.c_str());
+                    }
+                } else if(fields[2]=="READ"&&fields.size()==4) {
+                    if(auto* h=hook(ctl->second.node,"onRead"))
+                        gdk_clipboard_read_text_async(gtk_widget_get_clipboard(window),
+                            nullptr,clipboardReady,h);
+                }
+                continue;
+            }
             if(fields.size()!=5 || fields[1]!="SET")continue;
             const std::string name=decode(fields[2]),prop=decode(fields[3]),v=decode(fields[4]);
             auto it=controls.find(name);
             if(it==controls.end())continue;
             Node* n=it->second.node;GtkWidget* w=it->second.widget;
             state[name+"."+prop]=v;
+            if(prop=="open" && n->tag=="Dialog" && truth(v))showDialog(n);
             if(prop=="visible" && w)gtk_widget_set_visible(w,truth(v));
             else if(prop=="enabled" && w)gtk_widget_set_sensitive(w,truth(v));
             else if(prop=="text" && w) {
@@ -287,9 +391,12 @@ struct App {
         std::size_t bytes=0;
         for(auto& [name,c]:controls) {
             const auto& tag=c.node->tag;
-            if(tag=="PasswordInput"||tag=="Clipboard")continue;
+            if(tag=="PasswordInput"||tag=="Clipboard" && name!=sender)continue;
             std::string prop;
-            if(tag=="Input"||tag=="SearchInput"||tag=="TextArea"||tag=="Label")prop="text";
+            if(tag=="Clipboard" && name==sender)prop="value";
+            else if(tag=="FilePicker")prop="path";
+            else if(tag=="Dialog")prop="value";
+            else if(tag=="Input"||tag=="SearchInput"||tag=="TextArea"||tag=="Label")prop="text";
             else if(tag=="CheckBox"||tag=="Switch")prop="checked";
             else if(tag=="Select"||tag=="ListBox"||tag=="Table"||tag=="Slider"||
                 tag=="NumberInput"||tag=="Tabs"||tag=="RadioGroup"||tag=="ProgressBar")prop="value";
@@ -299,8 +406,32 @@ struct App {
             if(bytes>24000){std::cerr<<"HYUI event snapshot is too large\n";return;}
             args.push_back(name);args.push_back(val);
         }
+        // A private 0600 temporary file transports only the sender's
+        // PasswordInput secret; other events never receive password data.
+        gchar* secretFile=nullptr;
+        auto senderControl=controls.find(sender);
+        if(senderControl!=controls.end() &&
+            senderControl->second.node->tag=="PasswordInput") {
+            const std::string password=value(senderControl->second);
+            if(password.size()>16384)return;
+            GError* err=nullptr;
+            int fd=g_file_open_tmp("hydrogen-ui-secret-XXXXXX",&secretFile,&err);
+            if(fd<0) {
+                if(err){std::cerr<<err->message<<"
+";g_error_free(err);}
+                return;
+            }
+            if(write(fd,password.data(),password.size())!=ssize_t(password.size())) {
+                close(fd);g_unlink(secretFile);g_free(secretFile);return;
+            }
+            close(fd);
+            args.push_back("--hyui-secret:"+sender);
+            args.push_back(secretFile);
+        }
         std::string response;
-        if(execute(args,response))apply(response);
+        const bool ok=execute(args,response);
+        if(secretFile){g_unlink(secretFile);g_free(secretFile);}
+        if(ok)apply(response);
     }
     static void append(GtkWidget* parent,GtkWidget* child,const Node* parentNode=nullptr,const Node* childNode=nullptr) {
         if(!child || !parent)return;
@@ -369,6 +500,10 @@ struct App {
             w=gtk_button_new_with_label(attr(n,"text").c_str());
             if(truth(attr(n,"primary")))gtk_widget_add_css_class(w,"suggested-action");
             bind(w,"clicked",n,"onClick");
+        } else if(tag=="FilePicker") {
+            w=gtk_button_new_with_label(attr(n,"text","Choose file").c_str());
+            if(auto* h=hook(n,"onPick"))
+                g_signal_connect(w,"clicked",G_CALLBACK(pickerClicked),h);
         } else if(tag=="Input"||tag=="SearchInput"||tag=="PasswordInput") {
             w=tag=="SearchInput"?gtk_search_entry_new():gtk_entry_new();
             gtk_editable_set_text(GTK_EDITABLE(w),attr(n,"text").c_str());
