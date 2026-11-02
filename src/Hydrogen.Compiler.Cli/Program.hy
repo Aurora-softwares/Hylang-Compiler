@@ -1082,11 +1082,13 @@ namespace Hydrogen.Compiler.Cli {
                     NativeCompilerResult uiResult = uiCompiler.BuildProject(projectPath, backend);
                     if (!uiResult.Success()) {
                         System.Console.Write(uiResult.DiagnosticsText());
+                        UIPackager.Abort(output);
                         return 1;
                     }
                     error = UIPackager.Finish(projectPath, output, "linux-x64", sdkRoot);
                     if (error != "") {
                         System.Console.WriteLine("error: " + error);
+                        UIPackager.Abort(output);
                         return 1;
                     }
                     System.Console.WriteLine("wrote " + output + " (linux-x64; native GTK4 UI)");
