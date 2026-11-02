@@ -1579,6 +1579,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_
     )
     set_tests_properties(hy_stage1_project_closure PROPERTIES
         FIXTURES_SETUP hydrogen_stage1 TIMEOUT 240 RUN_SERIAL TRUE)
+    # Compiles and executes the Hydrogen backend of a real HYUI sample without
+    # any external Qt UI host. Native graphical rendering is a separate gate.
+    add_test(NAME hy_stage1_ui_backend_without_native_host
+        COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/test-ui-backend-no-host.sh
+            --compiler ${stage1_test_dir}/hydrogen-stage1)
+    set_tests_properties(hy_stage1_ui_backend_without_native_host PROPERTIES
+        FIXTURES_REQUIRED hydrogen_stage1 TIMEOUT 240 RUN_SERIAL TRUE)
     add_test(NAME hy_stage1_native_packages
         COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test-native-packages.sh
             ${stage1_test_dir}/hydrogen-stage1)
