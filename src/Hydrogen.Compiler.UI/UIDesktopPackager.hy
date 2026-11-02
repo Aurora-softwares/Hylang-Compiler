@@ -65,7 +65,9 @@ namespace Hydrogen.Compiler.UI {
             string app = target == "windows-x64" ? output + ".ui-staging/app" : output + ".ui-staging/Contents/Resources/app";
             string backend = Backend(output, target);
             if (!System.IO.File.Exists(backend)) { return "native UI backend not compiled"; }
-            if (!System.Host.Process.IsWindows() && !Unix("chmod +x -- " + SQ(backend))) {
+            string executable = backend;
+            if (backend[0] != "/") { executable = "./" + backend; }
+            if (!System.Host.Process.IsWindows() && !Unix("chmod +x " + SQ(executable))) {
                 return "cannot make native UI backend executable";
             }
             string error = CopyAsset(root, app, manifest.UI());
@@ -132,7 +134,7 @@ namespace Hydrogen.Compiler.UI {
             if (!Exists(path) || IsLink(path)) { return "missing or linked UI asset: " + relative; }
             if (System.Host.Process.IsWindows() &&
                 PS("if((Get-ChildItem -LiteralPath " + PQ(path) +
-                    " -Recurse -Force -Attributes ReparsePoint -ErrorAction Stop | Measure-Object).Count -gt 0){exit 0}else{exit 1}")) {
+                    " -Recurse -Force -ErrorAction Stop | Where-Object {($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0} | Measure-Object).Count -gt 0){exit 0}else{exit 1}")) {
                 return "UI assets must not contain links";
             }
             if (!System.Host.Process.IsWindows() &&
