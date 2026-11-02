@@ -4,6 +4,7 @@
 // through a private backend executable in <app>.runtime/app.
 #include <gtk/gtk.h>
 #include <gio/gio.h>
+#include <glib/gstdio.h>
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -94,7 +95,7 @@ struct Parser {
     }
 };
 struct App;
-struct Hook { App* app; Node* node; std::string handler; };
+struct Hook { App* app; Node* node; std::string handler; int index=-1; };
 struct Control { Node* node; GtkWidget* widget; std::string kind; };
 struct App {
     fs::path folder, backend;
@@ -146,6 +147,13 @@ struct App {
     static void changedSimple(GtkWidget*,gpointer data) { clicked(nullptr,data); }
     static void listSelected(GtkListBox*,GtkListBoxRow*,gpointer data) { clicked(nullptr,data); }
     static void switchChanged(GObject*,GParamSpec*,gpointer data) { clicked(nullptr,data); }
+    static void radioToggled(GtkCheckButton* button,gpointer data) {
+        auto* h=static_cast<Hook*>(data);
+        if(!gtk_check_button_get_active(button)||h->app->applying)return;
+        auto key=h->app->id(h->node);
+        h->app->state[key+".value"]=std::to_string(h->index);
+        h->app->dispatch(h->handler,key);
+    }
     void bind(GtkWidget* widget,const char* signal,Node* n,const char* handler) {
         if(auto* h=hook(n,handler)) {
             std::string kind=signal;
@@ -251,6 +259,14 @@ struct App {
                 if(n->tag=="Slider")gtk_range_set_value(GTK_RANGE(w),number(v));
                 if(n->tag=="NumberInput")gtk_spin_button_set_value(GTK_SPIN_BUTTON(w),number(v));
                 if(n->tag=="Select")gtk_drop_down_set_selected(GTK_DROP_DOWN(w),number(v));
+                if(n->tag=="RadioGroup") {
+                    int index=0;
+                    for(GtkWidget* child=gtk_widget_get_first_child(w);child;
+                        child=gtk_widget_get_next_sibling(child)) {
+                        if(index==number(v))gtk_check_button_set_active(GTK_CHECK_BUTTON(child),TRUE);
+                        ++index;
+                    }
+                }
                 if(n->tag=="ListBox"||n->tag=="Table") {
                     gtk_list_box_select_row(GTK_LIST_BOX(w),
                         gtk_list_box_get_row_at_index(GTK_LIST_BOX(w),number(v)));
@@ -303,12 +319,12 @@ struct App {
     GtkWidget* build(Node* n) {
         const auto& tag=n->tag;
         GtkWidget *w=nullptr,*container=nullptr;
-        if(tag=="ColumnPanel"||tag=="RowPanel"||tag=="Toolbar"||tag=="MenuBar"||tag=="Tab"||tag=="GridPanel") {
+        if(tag=="ColumnPanel"||tag=="RowPanel"||tag=="Toolbar"||tag=="Tab"||tag=="GridPanel") {
             if(tag=="GridPanel") {
                 w=gtk_grid_new();gtk_grid_set_row_spacing(GTK_GRID(w),number(attr(n,"gap"),8));
                 gtk_grid_set_column_spacing(GTK_GRID(w),number(attr(n,"gap"),8));
             } else {
-                bool horizontal=tag=="RowPanel"||tag=="Toolbar"||tag=="MenuBar";
+                bool horizontal=tag=="RowPanel"||tag=="Toolbar";
                 w=gtk_box_new(horizontal?GTK_ORIENTATION_HORIZONTAL:GTK_ORIENTATION_VERTICAL,number(attr(n,"gap"),8));
             }
             container=w;
@@ -431,6 +447,10 @@ struct App {
                 if(previous)gtk_check_button_set_group(button,previous);
                 if(i==number(attr(n,"value")))gtk_check_button_set_active(button,TRUE);
                 gtk_box_append(GTK_BOX(box),GTK_WIDGET(button));
+                if(auto* h=hook(n,"onChange")) {
+                    h->index=i;
+                    g_signal_connect(button,"toggled",G_CALLBACK(radioToggled),h);
+                }
                 previous=button;++i;
             }
             w=box;
