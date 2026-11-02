@@ -45,7 +45,9 @@ def run(*command, cwd=ROOT):
 
 assert compiler.is_file(), "Stage 1 compiler is missing"
 assert (ROOT / "build-ui/hyui-native").is_file(), "native GTK4 runtime is missing"
-build = run(compiler, "build", project, "-o", output)
+# Legacy screenshot parity is tested against the existing Qt-based host.
+# The new default GTK4-direct path has its own no-Qt end-to-end CI gate.
+build = run(compiler, "build", project, "-o", output, "--ui-sdk", ROOT / "build-ui")
 assert "native GTK4 UI" in build.stdout, build.stdout
 runtime = Path(str(output) + ".runtime")
 assert output.is_file() and os.access(output, os.X_OK), "native app launcher missing"
