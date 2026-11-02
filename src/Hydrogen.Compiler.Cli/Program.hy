@@ -1068,7 +1068,7 @@ namespace Hydrogen.Compiler.Cli {
                         System.Console.WriteLine("error: " + error);
                         return 1;
                     }
-                    string backend = output + ".runtime/app/__hyui_backend";
+                    string backend = output + ".ui-staging/app/__hyui_backend";
                     NativeCompiler uiCompiler = new NativeCompiler();
                     NativeCompilerResult uiResult = uiCompiler.BuildProject(projectPath, backend);
                     if (!uiResult.Success()) {
