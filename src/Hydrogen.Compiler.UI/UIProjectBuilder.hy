@@ -4,7 +4,7 @@ namespace Hydrogen.Compiler.UI {
     public class UIProjectBuilder {
         // This provides a safe pure-Hydrogen entry point for future packaging.
         // It does not replace the production build path before runtime parity.
-        public static string Preflight(string projectPath) {
+        public static string Preflight(string projectPath, string sdkRoot) {
             if (!System.IO.File.Exists(projectPath)) { return "project not found: " + projectPath; }
             HyprojManifest manifest = HyprojManifest.Load(projectPath);
             if (manifest.Format() != 2 || !manifest.HasUI()) {
@@ -27,7 +27,7 @@ namespace Hydrogen.Compiler.UI {
             // The native host is already required by the packaged application.
             // Reuse its authoritative .hyui schema parser during compilation,
             // instead of accepting a subset of the existing UI format.
-            string host = "build/bootstrap/hyui-native";
+            string host = UIRuntimeManager.NativeHost(sdkRoot);
             if (!System.IO.File.Exists(host)) { return "native UI runtime is not built: " + host; }
             if (System.Host.Process.Run(Quote(host) + " --validate --document " + Quote(resolved)) != 0) {
                 return "native .hyui validation failed: " + resolved;
