@@ -30,6 +30,9 @@ namespace Hydrogen.Compiler.UI {
             string root = PathUtils.DirName(projectPath);
             string runtime = output + ".ui-staging";
             string app = runtime + "/app";
+            if (Run("chmod +x -- " + Quote(app + "/__hyui_backend")) != 0) {
+                return "compiled Hydrogen backend is missing or cannot be made executable";
+            }
             string[] files = manifest.UIAssets();
             string error = CopyResource(root, app, manifest.UI());
             if (error != "") { return error; }
