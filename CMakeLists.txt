@@ -55,6 +55,33 @@ if(HYDROGEN_BUILD_UI)
     add_subdirectory(tools/hyui)
 endif()
 
+if(WIN32 AND NOT HYDROGEN_BUILD_UI)
+    # WinUI 3 doesn't require Qt. Keep the native launcher and runtime exporter
+    # available for clean Windows builds without compiling a hyui packager.
+    find_program(HYDROGEN_WINUI_DOTNET dotnet)
+    if(HYDROGEN_WINUI_DOTNET)
+        add_executable(hydrogen-ui-launcher WIN32 tools/hyui/launcher.cpp)
+        target_link_libraries(hydrogen-ui-launcher PRIVATE shell32 user32)
+        set_target_properties(hydrogen-ui-launcher PROPERTIES
+            OUTPUT_NAME "hyui-launcher"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}")
+        add_custom_target(hydrogen-ui-sdk
+            COMMAND "${HYDROGEN_WINUI_DOTNET}" publish
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/hyui/windows/Hyui.WinUI.csproj"
+                -c Release -r win-x64 -p:Platform=x64
+                -p:WindowsAppSDKSelfContained=true
+                -o "${CMAKE_BINARY_DIR}/native-winui"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DHYDROGEN_UI_PLATFORM=Windows"
+                "-DHYDROGEN_UI_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                "-DHYDROGEN_UI_SDK_DIR=${CMAKE_BINARY_DIR}/native-sdk"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/hyui/ExportNativeRuntime.cmake"
+            DEPENDS hydrogen-ui-launcher
+            VERBATIM)
+    endif()
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_program(HYDROGEN_BASH_EXECUTABLE bash)
     if(HYDROGEN_BASH_EXECUTABLE)
