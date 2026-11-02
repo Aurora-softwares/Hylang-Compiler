@@ -31,7 +31,27 @@ namespace Hydrogen.Compiler.Cli {
                 return StageCompare(args);
             }
             if (command == "ui") {
+                // This command needs no native rendering helper. It checks UI
+                // documents using the self-hosted compiler's own validator.
+                if (args.Length == 3 && args[1] == "validate") {
+                    string validation = "";
+                    if (EndsWith(args[2], ".hyproj")) {
+                        validation = UIProjectBuilder.Preflight(args[2], UIRuntimeManager.SdkRoot(""));
+                    } else if (EndsWith(args[2], ".hyui")) {
+                        validation = UIValidator.Preflight(args[2]);
+                    } else {
+                        System.Console.WriteLine("error: expected a .hyui document or a UI .hyproj project");
+                        return 1;
+                    }
+                    if (validation != "") {
+                        System.Console.WriteLine("error: " + validation);
+                        return 1;
+                    }
+                    System.Console.WriteLine("HYUI preflight ok");
+                    return 0;
+                }
                 if (args.Length != 2) {
+                    System.Console.WriteLine("usage: hy ui validate <file.hyui|project.hyproj>");
                     System.Console.WriteLine("usage: hy ui <file.hy|project.hyproj>");
                     return 1;
                 }
@@ -1391,7 +1411,8 @@ namespace Hydrogen.Compiler.Cli {
         }
 
         private static void PrintUsage() {
-            System.Console.WriteLine("usage: hy ui <file.hy|project.hyproj> (requires hyui on PATH)");
+            System.Console.WriteLine("usage: hy ui validate <file.hyui|project.hyproj>");
+            System.Console.WriteLine("usage: hy ui <file.hy|project.hyproj> (.hy preview requires hyui on PATH)");
             System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|collection|os|efi|kernel|driver|exec|windows|macos <name>");
             System.Console.WriteLine("usage: hy <tokens|parse|check|build> <file.hy|project.hyproj>");
             System.Console.WriteLine("usage: hy check <file.hy> --emit-ir");
