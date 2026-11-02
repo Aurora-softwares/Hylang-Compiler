@@ -1,0 +1,15 @@
+using System;
+using System.IO;
+
+namespace Hydrogen.Compiler.UI {
+    public class UIValidator {
+        // Preflight only: comprehensive attributes, event and placement rules
+        // remain enforced by the existing native document parser.
+        public static string Preflight(string documentPath) {
+            if (!File.Exists(documentPath)) { return "UI document not found: " + documentPath; }
+            UIDocumentParser parser = new UIDocumentParser(File.ReadAllText(documentPath));
+            if (!parser.Scan()) { return parser.Error(); }
+            return "";
+        }
+    }
+}
