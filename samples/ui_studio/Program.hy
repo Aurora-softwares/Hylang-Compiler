@@ -23,6 +23,7 @@ namespace HydrogenStudio {
                 Application.SetVisible("chooseFolder", true);
                 Application.SetVisible("copyPreview", true);
                 Application.SetVisible("pastePreview", true);
+                Application.SetVisible("showPopover", true);
                 Application.SetVisible("templateDetails", true);
             }
             if (handler == "PickedDocument") { Application.SetText("selectionText", "Open: " + Application.Value(args, "openDocument")); }
@@ -33,6 +34,8 @@ namespace HydrogenStudio {
             if (handler == "CopyPreview") { Application.ClipboardWrite("studioClipboard", Application.Value(args, "selectionText")); }
             if (handler == "PastePreview") { Application.ClipboardRead("studioClipboard"); }
             if (handler == "ClipboardRead") { Application.SetText("selectionText", "Clipboard: " + Application.Value(args, "studioClipboard")); }
+            if (handler == "ShowTemplateTip") { Application.SetOpen("templateTip", true); }
+            if (handler == "TemplateTipClosed") { Application.SetText("selectionText", "Template tip dismissed."); }
             if (handler == "CheckPassword") {
                 string secret = Application.SecretValue(args, "templatePassword");
                 Application.SetText("selectionText", secret == "gallery-pass" ? "Private code accepted." : "Private code rejected.");

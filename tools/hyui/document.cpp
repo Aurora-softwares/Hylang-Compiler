@@ -15,6 +15,7 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"Panel", {"title", "padding", "gap"}},
     {"MenuBar", {}}, {"Menu", {"text"}}, {"MenuItem", {"text", "onClick", "checked", "shortcut"}},
     {"ContextMenu", {"target"}},
+    {"Popover", {"target", "text", "open", "onClose"}},
     {"Toolbar", {}}, {"ToolButton", {"text", "onClick"}},
     {"Clipboard", {"onRead"}},
     {"Tabs", {"value", "onChange"}}, {"Tab", {"title", "gap"}},
@@ -75,7 +76,7 @@ bool Document::parse(const QByteArray& xml) {
         if ((depth == 0) != (node.tag == "Window")) { return invalid("exactly one root Window is required"); }
         for (const auto& attr : reader.attributes()) {
             QString key = attr.qualifiedName().toString(), value = attr.value().toString();
-            const bool visual = node.tag != "Window" && node.tag != "Timer" && node.tag != "State" && node.tag != "ContextMenu" && node.tag != "Clipboard";
+            const bool visual = node.tag != "Window" && node.tag != "Timer" && node.tag != "State" && node.tag != "ContextMenu" && node.tag != "Popover" && node.tag != "Clipboard";
             const bool tooltipTarget = node.tag != "MenuBar" && node.tag != "Menu" && node.tag != "MenuItem" && node.tag != "Dialog";
             const bool supportedCommon = node.tag == "Toolbar" ? (key == "visible" || key == "enabled") :
                 node.tag == "ToolButton" ? (key == "visible" || key == "enabled" || key == "accessibleName" || key == "tooltip") :
@@ -134,11 +135,12 @@ bool Document::parse(const QByteArray& xml) {
         ids.insert(node.id);
         tagsById.insert(node.id, node.tag);
         if (node.tag == "ContextMenu" && node.attributes.value("target").isEmpty()) { return invalid("ContextMenu requires target"); }
+        if (node.tag == "Popover" && (!node.attributes.contains("id") || node.attributes.value("target").isEmpty() || node.attributes.value("text").isEmpty())) { return invalid("Popover requires id, target, and text"); }
         if (node.tag == "Clipboard" && (!node.attributes.contains("id") || !node.attributes.contains("onRead"))) { return invalid("Clipboard requires id and onRead"); }
         if (node.tag == "PasswordInput") { secretInputs.insert(node.id); }
         if (node.tag == "Clipboard") { clipboardIds.insert(node.id); }
         QSet<QString> props;
-        if (node.tag != "Window" && node.tag != "Timer" && node.tag != "State" && node.tag != "ContextMenu" && node.tag != "Clipboard") { props = {"visible", "enabled"}; }
+        if (node.tag != "Window" && node.tag != "Timer" && node.tag != "State" && node.tag != "ContextMenu" && node.tag != "Popover" && node.tag != "Clipboard") { props = {"visible", "enabled"}; }
         for (const QString& prop : {"text", "value", "checked", "running", "indeterminate", "open"}) {
             if (attributes[node.tag].contains(prop)) { props.insert(prop); }
         }
@@ -182,7 +184,7 @@ bool Document::parse(const QByteArray& xml) {
                     (childTag == "Tab" && node.tag != "Tabs") || (childTag == "Menu" && node.tag != "MenuBar") ||
                     (childTag == "MenuItem" && node.tag != "Menu" && node.tag != "ContextMenu") || (childTag == "MenuBar" && node.tag != "Window") ||
                     (childTag == "Dialog" && node.tag != "Window") || (childTag == "ContextMenu" && node.tag != "Window") ||
-                    (childTag == "Clipboard" && node.tag != "Window") ||
+                    (childTag == "Clipboard" && node.tag != "Window") || (childTag == "Popover" && node.tag != "Window") ||
                     (childTag == "Toolbar" && node.tag != "Window") || (childTag == "ToolButton" && node.tag != "Toolbar") ||
                     (node.tag == "ContextMenu" && childTag != "MenuItem") || (node.tag == "Toolbar" && childTag != "ToolButton")) { return invalid("invalid placement of " + childTag); }
                 Node child;
@@ -195,15 +197,19 @@ bool Document::parse(const QByteArray& xml) {
                     if (menus > 1 || toolbars > 1) { return invalid("Window permits one MenuBar and one Toolbar"); }
                     QSet<QString> contextTargets;
                     for (const Node& child : node.children) {
-                        if (child.tag != "ContextMenu") { continue; }
+                        if (child.tag != "ContextMenu" && child.tag != "Popover") { continue; }
                         QString target = child.attributes.value("target");
                         QString tag = tagsById.value(target);
-                        if (contextTargets.contains(target) || tag.isEmpty() ||
+                        if (tag.isEmpty() ||
                             tag == "Window" || tag == "ContextMenu" || tag == "MenuBar" || tag == "Menu" || tag == "MenuItem" ||
-                            tag == "Dialog" || tag == "State" || tag == "Timer" || tag == "Clipboard") {
-                            return invalid("ContextMenu target must name one visual control");
+                            tag == "Dialog" || tag == "Popover" || tag == "Toolbar" || tag == "ToolButton" ||
+                            tag == "State" || tag == "Timer" || tag == "Clipboard") {
+                            return invalid("menu or popover target must name one visual control");
                         }
-                        contextTargets.insert(target);
+                        if (child.tag == "ContextMenu") {
+                            if (contextTargets.contains(target)) { return invalid("duplicate ContextMenu target"); }
+                            contextTargets.insert(target);
+                        }
                     }
                 }
                 if (node.tag == "ContextMenu" && node.children.empty()) { return invalid("ContextMenu requires MenuItem children"); }

@@ -77,6 +77,8 @@ struct Control {
     std::function<int(unsigned, unsigned)> keyAction;
     QVector<W> choices;
     W dialog = nullptr;
+    W anchor = nullptr;
+    bool popped = false;
 };
 void factoryThunk(W, W item, W data) { static_cast<Control*>(data)->itemAction(item); }
 void responseThunk(W, int response, W data) { static_cast<Control*>(data)->responseAction(response); }
@@ -142,6 +144,7 @@ public:
         api.call("adw_toolbar_view_set_content", toolbar, scroll);
         api.call("adw_application_window_set_content", window, toolbar);
         attachContextMenus();
+        attachPopovers();
         QObject::connect(&bridge, &Bridge::changed, &bridge, [this] { update(); });
         QObject::connect(&bridge, &Bridge::errorChanged, &bridge, [this] { api.text(error, "gtk_label_set_text", bridge.error()); });
         QObject::connect(&bridge, &Bridge::clipboardRequested, &bridge, [this](const QString& id, const QString& operation, const QString& text) {
@@ -194,6 +197,28 @@ public:
             api.call("gtk_widget_add_controller", anchor, keys);
         }
     }
+    void attachPopovers() {
+        for (const Node& node : document.window.children) {
+            if (node.tag != "Popover") { continue; }
+            Control* control = controls.value(node.id);
+            Control* target = controls.value(node.attributes.value("target"));
+            W anchor = target->container ? target->container : target->widget;
+            W popover = api.call<W>("gtk_popover_new");
+            W label = api.call<W>("gtk_label_new", node.attributes.value("text").toUtf8().constData());
+            api.call("gtk_label_set_wrap", label, 1);
+            api.margin(label, 12);
+            api.call("gtk_popover_set_child", popover, label);
+            api.call("gtk_widget_set_parent", popover, anchor);
+            control->dialog = popover; control->label = label; control->buffer = popover; control->anchor = anchor;
+            connect(control, "closed", [this, control] {
+                control->popped = false;
+                if (applying || !bridge.state().value(control->node->id + ".open").toBool()) { return; }
+                bridge.store(control->node->id, "open", false);
+                const QString handler = control->node->attributes.value("onClose");
+                if (!handler.isEmpty()) { bridge.dispatch(handler, control->node->id); }
+            });
+        }
+    }
     W build(const Node& node) {
         const auto& a = node.attributes;
         auto control = std::make_unique<Control>();
@@ -208,7 +233,7 @@ public:
         };
         int minimum = a.value("minimum", "0").toInt(), maximum = a.value("maximum", "100").toInt();
         const QString tag = node.tag;
-        if (tag == "State" || tag == "Dialog" || tag == "ContextMenu" || tag == "Clipboard") { return nullptr; }
+        if (tag == "State" || tag == "Dialog" || tag == "ContextMenu" || tag == "Popover" || tag == "Clipboard") { return nullptr; }
         if (tag == "Toolbar") {
             toolbarId = node.id;
             for (const Node& child : node.children) { api.call("adw_header_bar_pack_start", header, build(child)); }
@@ -514,6 +539,13 @@ public:
         QVariantMap state = bridge.state();
         for (auto it = controls.cbegin(); it != controls.cend(); ++it) {
             Control* c = it.value();
+            if (c->node->tag == "Popover") {
+                api.text(c->label, "gtk_label_set_text", state.value(it.key() + ".text").toString());
+                bool open = state.value(it.key() + ".open").toBool();
+                if (open && !c->popped && api.call<int>("gtk_widget_get_mapped", c->anchor)) { api.call("gtk_popover_popup", c->dialog); c->popped = true; }
+                if (!open && c->popped) { api.call("gtk_popover_popdown", c->dialog); c->popped = false; }
+                continue;
+            }
             if (c->node->tag == "Dialog") {
                 bool open = state.value(it.key() + ".open").toBool();
                 if (!open && c->dialog) { api.call("gtk_window_destroy", c->dialog); c->dialog = nullptr; }
@@ -581,6 +613,11 @@ public:
     }
     void pump() override {
         for (int i = 0; i < 32; ++i) { if (!api.call<int>("g_main_context_iteration", nullptr, 0)) { break; } }
+        for (Control* control : controls) {
+            if (control->node->tag == "Popover" && !control->popped &&
+                bridge.state().value(control->node->id + ".open").toBool() &&
+                api.call<int>("gtk_widget_get_mapped", control->anchor)) { update(); break; }
+        }
         api.call("gdk_display_flush", api.call<W>("gdk_display_get_default"));
         for (auto& row : rows) {
             int width = api.call<int>("gtk_widget_get_width", row.viewport);

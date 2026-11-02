@@ -140,6 +140,13 @@ int main(int argc, char** argv) {
             require(bridge.state()["pages.value"].toInt() == 0, "toolbar workspace command did not reach Hydrogen");
             [galleryCommand performClick:nil]; finish();
             require(bridge.state()["pages.value"].toInt() == 1, "toolbar gallery command did not reach Hydrogen");
+            [(NSButton*)find(gallery, @"showPopover") performClick:nil]; finish(); view->pump();
+            NSView* nativeTip = nil;
+            for (NSWindow* candidate in NSApp.windows) { nativeTip = find(candidate.contentView, @"templateTip"); if (nativeTip) { break; } }
+            require(nativeTip != nil && bridge.state()["templateTip.open"].toBool(), "native AppKit popover did not open");
+            require(bridge.apply("HYUI\tSET\ttemplateTip\ttext\tUpdated template tip\n"), "cannot update native popover text");
+            require([((NSTextField*)nativeTip.subviews.firstObject).stringValue isEqualToString:@"Updated template tip"], "native popover text did not update");
+            require(bridge.apply("HYUI\tSET\ttemplateTip\topen\tfalse\n"), "cannot dismiss native popover from Hydrogen");
             NSMenu* contextMenu = table.menu;
             require([contextMenu isKindOfClass:NSMenu.class] && contextMenu.numberOfItems == 1, "native context menu was not attached to the list");
             NSMenuItem* inspect = [contextMenu itemAtIndex:0];

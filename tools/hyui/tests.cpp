@@ -131,6 +131,28 @@ private slots:
         for (const auto& xml : invalid) { QVERIFY2(!d.parse(xml), xml.constData()); }
     }
 
+    void anchoredPopoverContract() {
+        hyui::Document d;
+        QVERIFY(d.parse(R"(<Window version="1"><Button id="anchor" text="Tip" onClick="Tip"/><Popover id="tip" target="anchor" text="Help text" open="false" onClose="Closed"/></Window>)"));
+        QCOMPARE(d.initialState["tip.open"].toBool(), false);
+        QCOMPARE(d.initialState["tip.text"].toString(), "Help text");
+        QVERIFY(d.handlers["Closed"].contains("tip"));
+        hyui::Bridge bridge(d, {}, {});
+        QVERIFY(bridge.apply("HYUI\tSET\ttip\ttext\tUpdated tip\nHYUI\tSET\ttip\topen\ttrue\n"));
+        QCOMPARE(bridge.state()["tip.text"].toString(), "Updated tip");
+        QCOMPARE(bridge.state()["tip.open"].toBool(), true);
+        QVERIFY(!bridge.apply("HYUI\tSET\ttip\tvisible\tfalse\n"));
+        const QList<QByteArray> invalid = {
+            "<Window version=\"1\"><Popover id=\"tip\" target=\"missing\" text=\"Help\"/></Window>",
+            "<Window version=\"1\"><Button id=\"anchor\"/><Popover target=\"anchor\" text=\"Help\"/></Window>",
+            "<Window version=\"1\"><Button id=\"anchor\"/><Popover id=\"tip\" target=\"anchor\"/></Window>",
+            "<Window version=\"1\"><Button id=\"anchor\"/><Popover id=\"tip\" target=\"anchor\" text=\"Help\" visible=\"true\"/></Window>",
+            "<Window version=\"1\"><Panel><Popover id=\"tip\" target=\"anchor\" text=\"Help\"/></Panel></Window>",
+            "<Window version=\"1\"><Button id=\"anchor\"/><Popover id=\"tip\" target=\"anchor\" text=\"Help\"><Label/></Popover></Window>"
+        };
+        for (const auto& xml : invalid) { QVERIFY2(!d.parse(xml), xml.constData()); }
+    }
+
     void scrollViewContract() {
         hyui::Document d;
         QVERIFY(d.parse(R"(<Window version="1"><ScrollView id="details" height="90" gap="6" enabled="false" tooltip="Scroll details"><Label text="First"/><Button id="action" text="Run" onClick="Run"/></ScrollView></Window>)"));

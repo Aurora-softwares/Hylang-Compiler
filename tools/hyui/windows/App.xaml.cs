@@ -51,6 +51,7 @@ public sealed partial class NativeWindow : Window
     readonly Queue<(string Handler, string Sender)> pending = new();
     readonly TextBlock errors = new() { TextWrapping = TextWrapping.Wrap };
     readonly Dictionary<string, ContentDialog> dialogs = new();
+    readonly Dictionary<string, (Flyout Flyout, TextBlock Label, FrameworkElement Target)> popovers = new();
     readonly HashSet<string> activePickers = new();
     string backend = "", directory = "", documentDirectory = "";
     bool applying, busy;
@@ -67,12 +68,12 @@ public sealed partial class NativeWindow : Window
     static int Number(XElement n, string key, int fallback) => int.TryParse(Attr(n, key), out int result) ? result : fallback;
     static bool Allowed(XElement node, string property) => property switch {
         "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer" or "ContextMenu" or "Clipboard"),
-        "text" => node.Name.LocalName is "Label" or "Input" or "SearchInput" or "TextArea" or "Button" or "ToolButton" or "FilePicker" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog",
+        "text" => node.Name.LocalName is "Label" or "Input" or "SearchInput" or "TextArea" or "Button" or "ToolButton" or "FilePicker" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog" or "Popover",
         "path" => node.Name.LocalName == "FilePicker",
         "value" => node.Name.LocalName is "State" or "Clipboard" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog",
         "checked" => node.Name.LocalName is "CheckBox" or "Switch" or "MenuItem",
         "running" => node.Name.LocalName is "Spinner" or "Timer",
-        "open" => node.Name.LocalName == "Dialog",
+        "open" => node.Name.LocalName is "Dialog" or "Popover",
         "indeterminate" => node.Name.LocalName == "ProgressBar",
         _ => false
     };
@@ -108,9 +109,10 @@ public sealed partial class NativeWindow : Window
         var body = new StackPanel { Spacing = 20, Padding = new Thickness(Number(document, "padding", 24)) };
         foreach (var child in document.Elements()) { var widget = app.Build(child); if (widget != null) body.Children.Add(widget); }
         app.AttachContextMenus(document);
+        app.AttachPopovers(document);
         body.Children.Add(app.errors);
         var scroll = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        app.Content = scroll; scroll.Loaded += (_, _) => app.ShowDialogs();
+        app.Content = scroll; scroll.Loaded += (_, _) => { app.ShowDialogs(); app.ShowPopovers(); };
         body.SizeChanged += (_, _) => { foreach (var layout in app.layouts) layout(); };
         // Preserve the platform's complete caption bar and native system menu.
         app.ExtendsContentIntoTitleBar = false;
@@ -138,6 +140,29 @@ public sealed partial class NativeWindow : Window
             target.ContextFlyout = flyout;
         }
     }
+    void AttachPopovers(XElement document) {
+        foreach (var node in document.Elements("Popover")) {
+            string id = Attr(node, "id"), targetId = Attr(node, "target");
+            if (!controls.TryGetValue(targetId, out var target)) throw new InvalidDataException("Popover target is not a visual control");
+            var label = new TextBlock { TextWrapping = TextWrapping.Wrap, MaxWidth = 300, Margin = new Thickness(12) };
+            var flyout = new Flyout { Content = label };
+            flyout.Closed += (_, _) => {
+                if (values.GetValueOrDefault(id + ".open") != "true") return;
+                values[id + ".open"] = "false";
+                if (node.Attribute("onClose") != null) Dispatch(Attr(node, "onClose"), id);
+            };
+            popovers[id] = (flyout, label, target);
+        }
+    }
+    void ShowPopovers() {
+        if (Content is not FrameworkElement root || root.XamlRoot == null) return;
+        foreach (var pair in popovers) {
+            pair.Value.Label.Text = values.GetValueOrDefault(pair.Key + ".text", "");
+            bool open = values.GetValueOrDefault(pair.Key + ".open") == "true";
+            if (open && !pair.Value.Flyout.IsOpen) pair.Value.Flyout.ShowAt(pair.Value.Target);
+            if (!open && pair.Value.Flyout.IsOpen) pair.Value.Flyout.Hide();
+        }
+    }
     FrameworkElement? Build(XElement node)
     {
         string tag = node.Name.LocalName, id = Attr(node, "id", "_hyui" + nodes.Count);
@@ -151,7 +176,7 @@ public sealed partial class NativeWindow : Window
         if (tag == "Clipboard") values[id + ".value"] = "";
         FrameworkElement? element;
         void Changed(string property, string value, string action = "onChange") { if (applying || (property == "value" && value == "-1") || values.GetValueOrDefault(id + "." + property) == value) return; values[id + "." + property] = value; if (node.Attribute(action) != null) Dispatch(Attr(node, action), id); }
-        if (tag is "State" or "Dialog" or "ContextMenu" or "Clipboard") return null;
+        if (tag is "State" or "Dialog" or "ContextMenu" or "Popover" or "Clipboard") return null;
         if (tag == "Timer") {
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(Math.Max(100, Number(node, "interval", 1000))) };
             timer.Tick += (_, _) => Dispatch(Attr(node, "onTick"), id); timers[id] = timer; return null;
@@ -423,7 +448,7 @@ public sealed partial class NativeWindow : Window
             }
         }
         foreach (var timer in timers) { if (values[timer.Key + ".running"] == "true") timer.Value.Start(); else timer.Value.Stop(); }
-        applying = false; errors.Text = ""; ShowDialogs();
+        applying = false; errors.Text = ""; ShowDialogs(); ShowPopovers();
         foreach (var request in clipboard) {
             if (request.Operation == "READ") { ReadClipboard(request.Id); continue; }
             var content = new DataPackage(); content.SetText(request.Text); Clipboard.SetContent(content);

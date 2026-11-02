@@ -121,6 +121,14 @@ public:
         check(bridge.state()["pages.value"].toInt() == 0, "Toolbar workspace command did not reach Hydrogen");
         click("toolbarControls");
         check(bridge.state()["pages.value"].toInt() == 1, "Toolbar gallery command did not reach Hydrogen");
+        click("showPopover");
+        W tip = view.controls["templateTip"]->dialog;
+        check(tip && view.api.call<int>("g_type_check_instance_is_a", tip, view.api.call<unsigned long>("gtk_popover_get_type")) &&
+              view.api.call<int>("gtk_widget_get_visible", tip), "Native GTK popover did not open");
+        check(bridge.apply("HYUI\tSET\ttemplateTip\ttext\tUpdated template tip\n"), "Cannot update popover text");
+        check(QString::fromUtf8(view.api.call<const char*>("gtk_label_get_text", view.controls["templateTip"]->label)) == "Updated template tip", "Popover text did not update");
+        view.api.call("gtk_popover_popdown", tip); idle();
+        check(!bridge.state()["templateTip.open"].toBool() && bridge.state()["selectionText.text"] == "Template tip dismissed.", "Popover dismissal did not reach Hydrogen");
         W context = view.controls["templateContext"]->dialog;
         check(context && view.api.call<int>("g_type_check_instance_is_a", context, view.api.call<unsigned long>("gtk_popover_get_type")), "ContextMenu must use a native GtkPopover");
         view.api.call("g_signal_emit_by_name", view.controls["templateContext"]->buffer, "pressed", 1, 12.0, 12.0); settle();

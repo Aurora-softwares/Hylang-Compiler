@@ -13,7 +13,7 @@
 - (BOOL)isFlipped { return YES; }
 @end
 
-@interface HYAction : NSObject<NSTextFieldDelegate, NSTextViewDelegate, NSWindowDelegate, NSTableViewDelegate, NSTableViewDataSource, NSToolbarDelegate> {
+@interface HYAction : NSObject<NSTextFieldDelegate, NSTextViewDelegate, NSWindowDelegate, NSTableViewDelegate, NSTableViewDataSource, NSToolbarDelegate, NSPopoverDelegate> {
 @public
     std::function<void(id)> callback;
     NSArray* tableRows;
@@ -32,6 +32,7 @@
 }
 - (void)tableViewSelectionDidChange:(NSNotification*)note { [self fire:note.object]; }
 - (BOOL)windowShouldClose:(NSWindow*)window { QCoreApplication::quit(); return YES; }
+- (void)popoverDidClose:(NSNotification*)note { [self fire:note.object]; }
 - (NSArray<NSString*>*)toolbarAllowedItemIdentifiers:(NSToolbar*)toolbar { return toolbarIdentifiers; }
 - (NSArray<NSString*>*)toolbarDefaultItemIdentifiers:(NSToolbar*)toolbar { return toolbarIdentifiers; }
 - (NSToolbarItem*)toolbar:(NSToolbar*)toolbar itemForItemIdentifier:(NSToolbarItemIdentifier)identifier willBeInsertedIntoToolbar:(BOOL)flag {
@@ -72,6 +73,8 @@ class AppKitView : public NativeView {
     QMap<QString, NSMenuItem*> menuItems;
     QVector<const Node*> dialogs;
     QMap<QString, NSAlert*> alerts;
+    QMap<QString, NSPopover*> popovers;
+    QMap<QString, NSTextField*> popoverLabels;
     bool applying = false;
     bool layoutDirty = true;
     NSSize viewportSize = NSZeroSize;
@@ -220,6 +223,25 @@ class AppKitView : public NativeView {
             if ([target.control isKindOfClass:NSView.class]) { [(NSView*)target.control setMenu:menu]; }
         }
     }
+    void attachPopovers() {
+        for (const Node& node : doc.window.children) {
+            if (node.tag != "Popover") { continue; }
+            NSPopover* popover = [[[NSPopover alloc] init] autorelease];
+            popover.behavior = NSPopoverBehaviorTransient;
+            NSViewController* controller = [[[NSViewController alloc] init] autorelease];
+            NSView* contents = [[[HYLayoutView alloc] initWithFrame:NSMakeRect(0, 0, 300, 72)] autorelease];
+            contents.identifier = text(node.id);
+            NSTextField* label = [NSTextField wrappingLabelWithString:text(node.attributes.value("text"))];
+            label.frame = NSMakeRect(12, 12, 276, 48); [contents addSubview:label];
+            controller.view = contents; popover.contentViewController = controller;
+            popover.delegate = action([this, &node](id) {
+                if (!bridge.state().value(node.id + ".open").toBool()) { return; }
+                bridge.store(node.id, "open", false);
+                if (node.attributes.contains("onClose")) { bridge.dispatch(node.attributes["onClose"], node.id); }
+            });
+            [retained addObject:popover]; popovers.insert(node.id, popover); popoverLabels.insert(node.id, label);
+        }
+    }
     void updateDialogs() {
         for (const Node* node : dialogs) {
             const bool open = bridge.state().value(node->id + ".open").toBool();
@@ -262,6 +284,7 @@ class AppKitView : public NativeView {
             return nil;
         }
         if (tag == "ContextMenu") { return nil; }
+        if (tag == "Popover") { return nil; }
         if (tag == "Clipboard") { return nil; }
         if (tag == "Dialog") { dialogs.append(&node); return nil; }
         if (tag == "Timer") {
@@ -457,6 +480,25 @@ class AppKitView : public NativeView {
             }
         }
         for (QTimer* timer : timers) { bool running = state.value(timer->objectName() + ".running").toBool(); if (running && !timer->isActive()) { timer->start(); } if (!running) { timer->stop(); } }
+        for (auto it = popovers.cbegin(); it != popovers.cend(); ++it) {
+            NSPopover* popover = it.value();
+            NSString* labelText = text(state.value(it.key() + ".text").toString());
+            NSTextField* label = popoverLabels[it.key()]; label.stringValue = labelText;
+            NSRect measured = [labelText boundingRectWithSize:NSMakeSize(276, CGFLOAT_MAX)
+                options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
+                attributes:@{NSFontAttributeName:label.font}];
+            CGFloat height = qMax<CGFloat>(72, std::ceil(measured.size.height) + 24);
+            popover.contentSize = NSMakeSize(300, height);
+            label.frame = NSMakeRect(12, 12, 276, height - 24);
+            bool open = state.value(it.key() + ".open").toBool();
+            if (!open && popover.shown) { [popover close]; }
+            if (open && !popover.shown && window.isVisible) {
+                const Node* node = nullptr;
+                for (const Node& child : doc.window.children) { if (child.id == it.key()) { node = &child; break; } }
+                NSView* target = items.value(node->attributes.value("target")).view;
+                [popover showRelativeToRect:target.bounds ofView:target preferredEdge:NSMaxYEdge];
+            }
+        }
         for (const Node& node : doc.window.children) {
             if (node.tag == "Toolbar") {
                 window.toolbar.visible = state.value(node.id + ".visible").toBool();
@@ -478,6 +520,7 @@ public:
         body = stack();
         for (const auto& node : doc.window.children) { add(body, build(node)); }
         attachContextMenus();
+        attachPopovers();
         error = [NSTextField wrappingLabelWithString:@""]; add(body, error);
         scroll = [[[NSScrollView alloc] init] autorelease]; scroll.hasVerticalScroller = YES; scroll.autohidesScrollers = YES;
         NSView* documentView = [[[HYLayoutView alloc] init] autorelease]; [documentView addSubview:body]; scroll.documentView = documentView;
@@ -505,6 +548,7 @@ public:
         NSRect area = NSScreen.mainScreen.visibleFrame; [window setContentSize:NSMakeSize(qMin(width, int(area.size.width - 32)), qMin(height, int(area.size.height - 64)))];
         layoutDocument(); [scroll.contentView scrollToPoint:NSZeroPoint];
         [window center]; [window makeKeyAndOrderFront:nil]; [NSApp finishLaunching]; [NSApp activateIgnoringOtherApps:YES];
+        update();
     }
     void pump() override {
         NSEvent* event;

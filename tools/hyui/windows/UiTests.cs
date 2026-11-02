@@ -134,6 +134,12 @@ public sealed partial class NativeWindow
         Apply("HYUI\tSET\tstudioToolbar\tenabled\ttrue\n");
         Invoke(controls["toolbarWorkspace"]); await Idle(); Check(values["pages.value"] == "0", "Toolbar workspace command did not reach Hydrogen");
         Invoke(controls["toolbarControls"]); await Idle(); Check(values["pages.value"] == "1", "Toolbar gallery command did not reach Hydrogen");
+        Invoke(controls["showPopover"]); await Idle();
+        var tip = popovers["templateTip"].Flyout;
+        Check(tip.IsOpen && tip.Content is TextBlock, "Native WinUI flyout did not open");
+        Apply("HYUI\tSET\ttemplateTip\ttext\tUpdated template tip\n");
+        Check(((TextBlock)tip.Content).Text == "Updated template tip", "Native flyout text did not update");
+        tip.Hide(); await Until(() => values["selectionText.text"] == "Template tip dismissed.", "Flyout dismissal did not reach Hydrogen"); await Idle();
         var context = controls["templates"].ContextFlyout as MenuFlyout;
         Check(context != null && context.Items.Count == 1 && ReferenceEquals(context.Items[0], controls["inspectTemplate"]), "Native WinUI context menu is missing");
         context.ShowAt(controls["templates"]); await Task.Delay(100); context.Hide();
