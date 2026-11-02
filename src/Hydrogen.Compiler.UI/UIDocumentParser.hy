@@ -31,9 +31,19 @@ namespace Hydrogen.Compiler.UI {
                 if (source[pos] != "<") { pos = pos + 1; continue; }
                 int start = pos + 1;
                 if (start >= source.Length) { error = "unterminated markup"; return false; }
+                if (source[start] == "?" && !rootSeen) {
+                    int declarationEnd = start;
+                    while (declarationEnd + 1 < source.Length &&
+                           !(source[declarationEnd] == "?" && source[declarationEnd + 1] == ">")) {
+                        declarationEnd = declarationEnd + 1;
+                    }
+                    if (declarationEnd + 1 >= source.Length) { error = "unterminated XML declaration"; return false; }
+                    pos = declarationEnd + 2;
+                    continue;
+                }
                 if (source[start] == "!" || source[start] == "?") {
-                    // Reject DTDs and processing instructions: no external entities.
-                    error = "XML declarations, DTDs and markup directives are not supported";
+                    // Never resolve external entities, DTDs or arbitrary instructions.
+                    error = "DTD, comments and processing instructions are not supported in preflight";
                     return false;
                 }
                 bool closing = source[start] == "/";
@@ -50,7 +60,11 @@ namespace Hydrogen.Compiler.UI {
                     cursor = cursor + 1;
                 }
                 if (cursor >= source.Length || quoted) { error = "unterminated element"; return false; }
-                bool selfClosing = cursor > end && source[cursor - 1] == "/";
+                int beforeEnd = cursor - 1;
+                while (beforeEnd > end && (source[beforeEnd] == " " || source[beforeEnd] == "\\t" || source[beforeEnd] == "\\n")) {
+                    beforeEnd = beforeEnd - 1;
+                }
+                bool selfClosing = beforeEnd >= end && source[beforeEnd] == "/";
                 if (closing) {
                     if (depth == 0 || stack[depth - 1] != name) {
                         error = "mismatched closing element " + name;
@@ -83,8 +97,13 @@ namespace Hydrogen.Compiler.UI {
         }
 
         private static bool NameCharacter(string c) {
-            return (c >= "A" && c <= "Z") || (c >= "a" && c <= "z") ||
-                (c >= "0" && c <= "9") || c == "_" || c == "-";
+            string valid = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+            int i = 0;
+            while (i < valid.Length) {
+                if (valid[i] == c) { return true; }
+                i = i + 1;
+            }
+            return false;
         }
         private static string Slice(string text, int start, int length) {
             string value = "";
