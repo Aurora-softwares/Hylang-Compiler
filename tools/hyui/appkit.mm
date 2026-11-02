@@ -454,7 +454,7 @@ class AppKitView : public NativeView {
         for (QTimer* timer : timers) { bool running = state.value(timer->objectName() + ".running").toBool(); if (running && !timer->isActive()) { timer->start(); } if (!running) { timer->stop(); } }
         for (const Node& node : doc.window.children) {
             if (node.tag == "Toolbar") {
-                window.toolbarVisible = state.value(node.id + ".visible").toBool();
+                window.toolbar.visible = state.value(node.id + ".visible").toBool();
                 for (NSToolbarItem* item in window.toolbar.items) {
                     item.label = text(state.value(string(item.itemIdentifier) + ".text").toString());
                 }

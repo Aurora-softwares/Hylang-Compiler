@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
             [table selectRowIndexes:[NSIndexSet indexSetWithIndex:2] byExtendingSelection:NO]; finish();
             require(bridge.state()["selectionText.text"].toString() == "Template index: 2", "list event failed");
             NSToolbar* nativeToolbar = NSApp.windows.firstObject.toolbar;
-            require([nativeToolbar isKindOfClass:NSToolbar.class] && NSApp.windows.firstObject.toolbarVisible && nativeToolbar.items.count == 2,
+            require([nativeToolbar isKindOfClass:NSToolbar.class] && nativeToolbar.visible && nativeToolbar.items.count == 2,
                     "native AppKit toolbar is missing");
             NSButton* workspaceCommand = (NSButton*)nativeToolbar.items[0].view;
             NSButton* galleryCommand = (NSButton*)nativeToolbar.items[1].view;
