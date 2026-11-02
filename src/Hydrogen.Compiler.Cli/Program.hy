@@ -1098,7 +1098,7 @@ namespace Hydrogen.Compiler.Cli {
                 // the Hydrogen SDK. No separate hyui packaging executable.
                 string desktopTarget = projectType == "exe" && System.Host.Process.IsWindows()
                     ? "windows-x64" : UIRuntimeManager.Target(projectType);
-                string sdk = UIRuntimeManager.SdkRoot(uiSdk);
+                string sdk = UIRuntimeManager.PackageSdk(uiSdk, desktopTarget);
                 string destination = UIDesktopPackager.Output(output, desktopTarget);
                 string preflightSdk = UIRuntimeManager.SdkRoot("");
                 string issue = UIProjectBuilder.Preflight(projectPath, preflightSdk);
