@@ -974,6 +974,17 @@ namespace Hydrogen.Compiler.Cli {
             }
         }
 
+        // Portable 'exe' projects and untargeted source compilation default
+        // to the OS running this compiler. Explicit project/CLI targets stay
+        // authoritative, including on cross-compilation hosts.
+        private static string HostDesktopTarget() {
+            if (System.Host.Process.IsWindows()) { return "windows"; }
+            if (System.Host.Process.Run("test \"$(uname -s)\" = Darwin") == 0) {
+                return "macos";
+            }
+            return "exe";
+        }
+
         private static int Compile(string[] args) {
             bool uefi = false;
             bool windows = false;
@@ -981,17 +992,28 @@ namespace Hydrogen.Compiler.Cli {
             string output = "";
             if (args.Length == 4 && args[2] == "-o") {
                 output = args[3];
+                string host = HostDesktopTarget();
+                windows = host == "windows";
+                macos = host == "macos";
             } else if (args.Length == 6 && args[2] == "--target" && args[3] == "uefi-x64" && args[4] == "-o") {
                 uefi = true;
                 output = args[5];
-            } else if (args.Length == 6 && args[2] == "--target" && args[3] == "windows-x64" && args[4] == "-o") {
+            } else if (args.Length == 6 && args[2] == "--target" &&
+                (args[3] == "linux" || args[3] == "linux-x64" || args[3] == "exe") &&
+                args[4] == "-o") {
+                output = args[5];
+            } else if (args.Length == 6 && args[2] == "--target" &&
+                (args[3] == "windows" || args[3] == "windows-x64") && args[4] == "-o") {
                 windows = true;
                 output = args[5];
-            } else if (args.Length == 6 && args[2] == "--target" && args[3] == "macos-x64" && args[4] == "-o") {
+            } else if (args.Length == 6 && args[2] == "--target" &&
+                (args[3] == "mac" || args[3] == "macos" || args[3] == "macos-x64") &&
+                args[4] == "-o") {
                 macos = true;
                 output = args[5];
             } else {
-                System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");
+                System.Console.WriteLine("usage: hy compile <file.hy> -o <output> (current OS)");
+                System.Console.WriteLine("   or: hy compile <file.hy> --target linux-x64 -o <output>");
                 System.Console.WriteLine("   or: hy compile <file.hy> --target uefi-x64 -o <output>");
                 System.Console.WriteLine("   or: hy compile <file.hy> --target windows-x64 -o <output.exe>");
                 System.Console.WriteLine("   or: hy compile <file.hy> --target macos-x64 -o <output.exe>");
@@ -1070,7 +1092,8 @@ namespace Hydrogen.Compiler.Cli {
                 }
             }
             if (output == "") {
-                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output-file|output-directory> [--ui-sdk <directory>] [--hide-progress] [--hide-spinner] [--hide-log]");
+                System.Console.WriteLine("usage: hy build <project.hyproj> -o <output> [--target linux|windows|macos] [--ui-sdk <directory>] [--hide-progress] [--hide-spinner] [--hide-log]");
+            System.Console.WriteLine("       type=exe defaults to the current OS; --target overrides it.");
                 return 1;
             }
 
@@ -1091,6 +1114,7 @@ namespace Hydrogen.Compiler.Cli {
                 return 1;
             }
             if (target != "") { projectType = target; }
+            else if (projectType == "exe") { projectType = HostDesktopTarget(); }
             // --ui-backend is the compiler-only portion of an HYUI build.
             // It must validate the document even when no native UI renderer
             // is installed, otherwise it can silently compile broken views.
@@ -1416,8 +1440,14 @@ namespace Hydrogen.Compiler.Cli {
                     else if (child.Type() == "driver") { result = compiler.BuildProjectDriver(paths[index], outputPath); }
                     else if (child.Type() == "efi") { result = compiler.BuildProjectUefi(paths[index], outputPath); }
                     else if (child.Type() == "native") { result = compiler.BuildProjectNativeUser(paths[index], outputPath); }
-                    else if (child.Type() == "windows") { result = compiler.BuildProjectWindows(paths[index], outputPath); }
-                    else if (child.Type() == "macos") { result = compiler.BuildProjectMacOS(paths[index], outputPath); }
+                    else if (child.Type() == "windows" ||
+                        (child.Type() == "exe" && HostDesktopTarget() == "windows")) {
+                        result = compiler.BuildProjectWindows(paths[index], outputPath);
+                    }
+                    else if (child.Type() == "macos" ||
+                        (child.Type() == "exe" && HostDesktopTarget() == "macos")) {
+                        result = compiler.BuildProjectMacOS(paths[index], outputPath);
+                    }
                     else if (child.Type() == "exec" || child.Type() == "australis") { result = compiler.BuildProjectAustralis(paths[index], outputPath); }
                     else { result = compiler.BuildProject(paths[index], outputPath); }
                 }
@@ -1516,7 +1546,8 @@ namespace Hydrogen.Compiler.Cli {
             System.Console.WriteLine("usage: hy new app|lib|tool|test|workspace|collection|os|efi|kernel|driver|exec|windows|macos <name>");
             System.Console.WriteLine("usage: hy <tokens|parse|check|build> <file.hy|project.hyproj>");
             System.Console.WriteLine("usage: hy check <file.hy> --emit-ir");
-            System.Console.WriteLine("usage: hy compile <file.hy> -o <output>");
+            System.Console.WriteLine("usage: hy compile <file.hy> -o <output> (defaults to current OS)");
+            System.Console.WriteLine("usage: hy compile <file.hy> --target linux-x64 -o <output>");
             System.Console.WriteLine("usage: hy compile <file.hy> --target uefi-x64 -o <output>");
             System.Console.WriteLine("usage: hy compile <file.hy> --target windows-x64 -o <output.exe>");
             System.Console.WriteLine("usage: hy compile <file.hy> --target macos-x64 -o <output>");
