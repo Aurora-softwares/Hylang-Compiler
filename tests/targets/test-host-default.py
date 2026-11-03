@@ -46,9 +46,12 @@ def main() -> None:
         root = pathlib.Path(directory)
         source = root / "Program.hy"
         source.write_text(
-            'public class Program {\n'
-            '    public static void Main(string[] args) {\n'
-            '        System.Console.WriteLine("Host target works");\n'
+            'namespace HostTargetSmoke {\n'
+            '    public class Program {\n'
+            '        public static int Main() {\n'
+            '            System.Console.WriteLine("Host target works");\n'
+            '            return 0;\n'
+            '        }\n'
             '    }\n'
             '}\n',
             encoding="utf-8",
