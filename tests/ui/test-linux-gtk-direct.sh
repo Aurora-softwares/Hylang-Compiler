@@ -67,6 +67,17 @@ assert state["__hyui.visible_popovers"] == "0", state
 assert state["projectName.text"] == "Aurora Notes", state
 assert "Ready when you are" in state["status.text"], state
 PY
+# Exercise the same window-manager close request as the title-bar button.
+# GTK's teardown emits change notifications; these must never dispatch an
+# event that reads disposed text views, switches, or an empty GtkStack.
+# G_DEBUG=fatal-criticals above turns invalid GTK object access into a failure.
+timeout --signal=TERM 8s "$output" --self-test-close >"$work/close.stdout" 2>"$work/close.stderr" || {
+  echo "Closing the native GTK window failed:" >&2
+  # Limit diagnostics: a GTK teardown loop can generate very large logs.
+  tail -n 50 "$work/close.stdout" >&2 || true
+  tail -n 100 "$work/close.stderr" >&2 || true
+  exit 1
+}
 "$output" --event ShowWorkspace:showWorkspace --state-output "$work/state.json"
 python3 - "$work/state.json" <<'PY'
 import json
