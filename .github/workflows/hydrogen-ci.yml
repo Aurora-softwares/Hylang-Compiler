@@ -44,6 +44,10 @@ jobs:
           test ! -e build/bootstrap/hyui-launcher
       - name: Validate UI backend compilation with no native host
         run: bash tests/ui/test-ui-backend-no-host.sh --compiler "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1"
+      - name: Build and execute GTK4 window written in Hydrogen only
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' \
+            bash tests/ui/test-hydrogen-native-gtk.sh "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1"
       - name: Build, relocate, and launch single-file native GTK4 UI
         run: |
           dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' \

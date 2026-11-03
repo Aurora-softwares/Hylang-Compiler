@@ -899,6 +899,44 @@ namespace Hydrogen.Compiler.Binding {
             if (qualified == "System.IO.File.ReadAllBytes") { return Intrinsic(e, qualified, "string", "", "byte[]"); }
             if (qualified == "System.IO.File.WriteAllText") { return Intrinsic(e, qualified, "string", "string", "void"); }
             if (qualified == "System.IO.File.WriteAllBytes") { return Intrinsic(e, qualified, "string", "byte[]", "void"); }
+
+            // Native GTK ABI calls are type-checked in Hydrogen itself.
+            // There is no foreign source file or C++ UI shim in this path.
+            if (qualified == "System.Native.Gtk.Init" ||
+                qualified == "System.Native.Gtk.WindowNew" ||
+                qualified == "System.Native.Gtk.MainIteration") {
+                string result = "void";
+                if (qualified == "System.Native.Gtk.WindowNew") { result = "long"; }
+                return Intrinsic(e, qualified, "", "", result);
+            }
+            if (qualified == "System.Native.Gtk.WindowPresent" ||
+                qualified == "System.Native.Gtk.WindowDestroy" ||
+                qualified == "System.Native.Gtk.Unref") {
+                return Intrinsic(e, qualified, "long", "", "void");
+            }
+            if (qualified == "System.Native.Gtk.WindowVisible") {
+                return Intrinsic(e, qualified, "long", "", "bool");
+            }
+            if (qualified == "System.Native.Gtk.Ref") {
+                return Intrinsic(e, qualified, "long", "", "long");
+            }
+            if (qualified == "System.Native.Gtk.LabelNew" ||
+                qualified == "System.Native.Gtk.ButtonNew") {
+                return Intrinsic(e, qualified, "string", "", "long");
+            }
+            if (qualified == "System.Native.Gtk.WindowSetTitle") {
+                return Intrinsic(e, qualified, "long", "string", "void");
+            }
+            if (qualified == "System.Native.Gtk.WindowSetChild" ||
+                qualified == "System.Native.Gtk.BoxAppend") {
+                return Intrinsic(e, qualified, "long", "long", "void");
+            }
+            if (qualified == "System.Native.Gtk.BoxNew") {
+                return Intrinsic(e, qualified, "int", "int", "long");
+            }
+            if (qualified == "System.Native.Gtk.WindowSetDefaultSize") {
+                return Intrinsic3(e, qualified, "long", "int", "int", "void");
+            }
             if (qualified == "System.Host.Process.Run") { return Intrinsic(e, qualified, "string", "", "int"); }
             if (qualified == "System.Host.Process.IsWindows") { return Intrinsic(e, qualified, "", "", "bool"); }
             if (qualified == "System.Convert.ToInt32") { return Intrinsic(e, qualified, "string", "", "int"); }

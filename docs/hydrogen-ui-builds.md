@@ -4,6 +4,32 @@ Hydrogen Stage 1 handles UI application validation, backend compilation, and
 native package assembly through the normal `build` command. The separate
 `hyui --package` tool is **not required** for these builds.
 
+## Hydrogen-written native GTK4 (experimental)
+
+Hydrogen now has an initial *Hydrogen-only* Linux GTK4 window-building
+path that does not compile or embed a C++ renderer. The self-hosted compiler
+generates an ELF with a direct dynamic symbol table, imports GTK4 through the
+standard Linux x86-64 ABI, and invokes the native functions from Hydrogen
+source. It invokes no external linker, C/C++ compiler, or `hyui-native`
+during the application build.
+
+```sh
+./build/self_hosting/linux/hydrogen-stage1 build \
+  samples/native_gtk/NativeGtk.hyproj -o build/NativeGtk
+./build/NativeGtk
+```
+
+`libraries/Hydrogen.UI/Window.hy` provides a real GTK window and initial
+label/button layout written in Hydrogen. Only system GTK4 runtime libraries
+are required to run the compiled application (Ubuntu:
+`sudo apt install libgtk-4-1`). Builds are independent of the caller's
+working directory. This path is currently an **experimental ABI foundation**,
+not yet a full replacement for the established `.hyui` schema. Signal
+callbacks, complete widget coverage, renderer and asset embedding, and
+Windows/macOS backends still require implementation and parity testing.
+The legacy `.hyui` route below remains in place until those features are
+available; its C++ GTK host is **not yet removed**.
+
 ## Linux (GTK4): one distributable ELF
 
 The default Linux build produces **one ELF file** containing the HYUI
