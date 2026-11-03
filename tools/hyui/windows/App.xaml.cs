@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Compression;
+using System.Reflection;
 using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
@@ -55,6 +57,7 @@ public sealed partial class NativeWindow : Window
     readonly HashSet<string> activePickers = new();
     readonly CancellationTokenSource lifetime = new();
     string backend = "", directory = "", documentDirectory = "";
+    string? extractedResources;
     bool applying, busy, disposing;
     void DisposeNative() {
         if (disposing) return;
@@ -64,6 +67,31 @@ public sealed partial class NativeWindow : Window
         foreach (var popover in popovers.Values) popover.Flyout.Hide();
         foreach (var dialog in dialogs.Values.ToArray()) dialog.Hide();
         pending.Clear();
+        // The Hydrogen UI resources came from the signed/published WinUI EXE,
+        // not a user-supplied directory. Never remove arbitrary bundle paths.
+        if (extractedResources != null) {
+            try { Directory.Delete(extractedResources, recursive: true); }
+            catch (IOException) { /* The OS may still hold a runtime handle. */ }
+            catch (UnauthorizedAccessException) { /* Never abort window teardown. */ }
+            extractedResources = null;
+        }
+    }
+    private static string? ExtractEmbeddedUi() {
+        using Stream? archive = Assembly.GetExecutingAssembly()
+            .GetManifestResourceStream("Hydrogen.Native.EmbeddedUi.zip");
+        if (archive == null) return null; // Legacy SDK hosts use --bundle.
+        string root = Path.Combine(Path.GetTempPath(), "Hydrogen.UI", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try {
+            ZipFile.ExtractToDirectory(archive, root);
+            if (!File.Exists(Path.Combine(root, "__hyui_app.json")) ||
+                !File.Exists(Path.Combine(root, "__hyui_backend.exe")))
+                throw new InvalidDataException("Embedded Hydrogen application is incomplete");
+            return root;
+        } catch {
+            Directory.Delete(root, recursive: true);
+            throw;
+        }
     }
     static string Attr(XElement n, string key, string fallback = "") => (string?)n.Attribute(key) ?? fallback;
     static void AddShortcut(MenuFlyoutItemBase item, XElement node) {
@@ -100,6 +128,13 @@ public sealed partial class NativeWindow : Window
         for (int i = 0; i + 1 < args.Length; i += 2) options[args[i]] = args[i + 1];
         var app = new NativeWindow(); string view;
         app.Closed += (_, _) => app.DisposeNative();
+        if (!options.ContainsKey("--bundle") && !options.ContainsKey("--backend")) {
+            string? embedded = ExtractEmbeddedUi();
+            if (embedded != null) {
+                app.extractedResources = embedded;
+                options["--bundle"] = embedded;
+            }
+        }
         if (options.TryGetValue("--bundle", out string? root)) {
             app.directory = Path.GetFullPath(root);
             using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "__hyui_app.json")));
