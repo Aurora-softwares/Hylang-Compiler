@@ -94,7 +94,1143 @@ jobs:
           cmake --build build-sdk --target hydrogen-ui-sdk --parallel 3
           test -f build-sdk/native-sdk/macos-x64.app/Contents/hyui-runtime.json
           test -x build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui
-          test -x build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui-launcher
+          test ! -e build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui-launcher
+          plutil -extract CFBundleExecutable raw build-sdk/native-sdk/macos-x64.app/Contents/Info.plist | grep -q '^hyui
+          lipo -archs build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui | grep -q x86_64
+          plutil -lint build-sdk/native-sdk/macos-x64.app/Contents/Info.plist
+          tar -czf build-sdk/hydrogen-ui-sdk-macos-x64.tar.gz -C build-sdk/native-sdk macos-x64.app
+      - name: Build and launch a packaged Hydrogen AppKit application
+        run: |
+          cmake --build build-sdk --target hy --parallel 3
+          build-sdk/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-sdk/hydrogen-stage1
+          mkdir -p build/bootstrap
+          cp build-sdk/hyui-native build/bootstrap/hyui-native
+          ./build-sdk/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target macos --ui-sdk build-sdk/native-sdk -o build-sdk/Studio
+          test -x build-sdk/Studio.app/Contents/Resources/app/__hyui_backend
+          test ! -e build-sdk/Studio.app/Contents/MacOS/hyui-launcher
+          plutil -extract CFBundleExecutable raw build-sdk/Studio.app/Contents/Info.plist | grep -q '^hyui
+          test -s build-sdk/appkit-screenshot.png
+      - name: Upload exported macOS runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-sdk-macos-${{ github.run_id }}
+          path: build-sdk/hydrogen-ui-sdk-macos-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-ui-sdk:
+    name: Export native WinUI 3 runtime SDK without Qt
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build WinUI host and launcher without standalone hyui packager
+        shell: pwsh
+        run: |
+          cmake -S . -B build-sdk -DHYDROGEN_BUILD_UI=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-sdk --target hydrogen-ui-sdk --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $runtime = 'build-sdk/native-sdk/windows-x64'
+          if (!(Test-Path "$runtime/hyui-runtime.json") -or !(Test-Path "$runtime/hyui.exe") -or !(Test-Path "$runtime/hyui-launcher.exe")) {
+            throw 'Windows native runtime export is incomplete'
+          }
+          $manifest = Get-Content "$runtime/hyui-runtime.json" -Raw | ConvertFrom-Json
+          if ($manifest.target -ne 'windows-x64' -or $manifest.renderer -ne 'winui3') {
+            throw 'Native WinUI runtime manifest is incorrect'
+          }
+      - name: Build packaged WinUI application with the Hydrogen Stage 1 compiler
+        shell: pwsh
+        run: |
+          cmake --build build-sdk --target hy --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $seed = Get-ChildItem -Path build-sdk -Filter hy.exe -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          if (!$seed) { throw 'C++ bootstrap seed was not generated' }
+          & $seed build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-sdk/hydrogen-stage1.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & build-sdk/hydrogen-stage1.exe build samples/ui_studio/Studio.hyproj --target windows --ui-sdk build-sdk/native-sdk -o build-sdk/Studio
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path build-sdk/Studio.exe) -or !(Test-Path build-sdk/Studio.exe.runtime/app/__hyui_backend.exe)) {
+            throw 'Self-hosted WinUI application was not packaged'
+          }
+          $backend = [IO.File]::ReadAllBytes('build-sdk/Studio.exe.runtime/app/__hyui_backend.exe')
+          if ($backend.Length -lt 64 -or $backend[0] -ne 0x4d -or $backend[1] -ne 0x5a) {
+            throw 'Windows UI backend is not a PE executable'
+          }
+          $junction = Join-Path (Resolve-Path samples/ui_studio/assets) 'linked-asset'
+          $target = Join-Path $env:RUNNER_TEMP 'hyui-linked-asset'
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          New-Item -ItemType Junction -Path $junction -Target $target | Out-Null
+          try {
+            $linkedStdout = Join-Path $env:RUNNER_TEMP 'hyui-linked-stdout.txt'
+            $linkedStderr = Join-Path $env:RUNNER_TEMP 'hyui-linked-stderr.txt'
+            $linkedBuild = Start-Process -FilePath (Resolve-Path build-sdk/hydrogen-stage1.exe).Path -ArgumentList @('build', 'samples/ui_studio/Studio.hyproj', '--target', 'windows', '--ui-sdk', 'build-sdk/native-sdk', '-o', 'build-sdk/StudioLinked', '--hide-progress', '--hide-spinner', '--hide-log') -NoNewWindow -Wait -PassThru -RedirectStandardOutput $linkedStdout -RedirectStandardError $linkedStderr
+            $details = (Get-Content $linkedStdout -Raw) + (Get-Content $linkedStderr -Raw)
+            if ($linkedBuild.ExitCode -eq 0 -or $details -notmatch 'UI assets must not contain links') {
+              throw "Linked UI asset was not rejected (exit $($linkedBuild.ExitCode)): $details"
+            }
+            if (Test-Path build-sdk/StudioLinked.exe) { throw 'Rejected UI package left a launcher' }
+          } finally {
+            Remove-Item -LiteralPath $junction -Force
+          }
+      - name: Generate single-file WinUI application using Hydrogen Stage 1
+        shell: pwsh
+        run: |
+          & build-sdk/hydrogen-stage1.exe build samples/ui_studio/Studio.hyproj --target windows -o build-sdk/StudioSingle
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path build-sdk/StudioSingle.exe)) { throw 'Self-contained WinUI EXE not generated' }
+          if (Test-Path build-sdk/StudioSingle.exe.runtime) { throw 'WinUI packaging created a runtime folder' }
+          if (Test-Path build-sdk/StudioSingle.exe.ui-staging) { throw 'WinUI staging files were not cleaned' }
+          $single = [IO.File]::ReadAllBytes('build-sdk/StudioSingle.exe')
+          if ($single.Length -lt 1024*1024 -or $single[0] -ne 0x4d -or $single[1] -ne 0x5a) {
+            throw 'Generated standalone WinUI file is not a valid PE EXE'
+          }
+          $singlePath = (Resolve-Path 'build-sdk/StudioSingle.exe').Path
+          $relocated = Join-Path $env:RUNNER_TEMP 'HydrogenStudioStandalone.exe'
+          Copy-Item -LiteralPath $singlePath -Destination $relocated
+          if (!(Test-Path $relocated)) { throw 'Standalone WinUI app is not relocatable' }
+      - name: Upload exported Windows runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-sdk-windows-${{ github.run_id }}
+          path: build-sdk/native-sdk/windows-x64
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-ui:
+    name: GTK UI interactions and appearance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install system GTK and virtual desktop
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libgtk-4-1 libadwaita-1-0 xvfb dbus-x11 fonts-dejavu-core libgl1 libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0
+          python -m pip install aqtinstall==3.3.0 Pillow==12.0.0
+          python -m aqt install-qt linux desktop 6.8.3 linux_gcc_64 -O "$RUNNER_TEMP/qt" --archives qtbase icu
+      - name: Build real GTK test application
+        run: |
+          cmake -S . -B build-ui -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/qt/6.8.3/gcc_64"
+          cmake --build build-ui --target hy hyui hyui_tests hyui_gtk_tests --parallel 3
+      - name: Build self-hosted Stage 1 with integrated native UI packaging
+        run: |
+          mkdir -p build/self_hosting/linux build/bootstrap
+          build-ui/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build/self_hosting/linux/hydrogen-stage1
+          cp build-ui/hyui-native build/bootstrap/hyui-native
+          cp build-ui/hyui-launcher build/bootstrap/hyui-launcher
+          test ! -e build/bootstrap/hyui
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/Studio
+          file build/Studio
+          test -x build/Studio
+          test -x build/Studio.runtime/hyui
+          test -x build/Studio.runtime/app/__hyui_backend
+      - name: Validate native-host-free UI backend code generation
+        run: |
+          bash tests/ui/test-ui-backend-no-host.sh --compiler "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1"
+      - name: Cross-package Windows and macOS native UI backends with SDK fixtures
+        run: |
+          mkdir -p build/native-sdk/windows-x64 build/native-sdk/macos-x64.app/Contents/MacOS
+          printf '{"format":1,"target":"windows-x64","renderer":"winui3"}' > build/native-sdk/windows-x64/hyui-runtime.json
+          printf 'MZstub' > build/native-sdk/windows-x64/hyui.exe
+          printf 'MZstub' > build/native-sdk/windows-x64/hyui-launcher.exe
+          printf '{"format":1,"target":"macos-x64","renderer":"appkit"}' > build/native-sdk/macos-x64.app/Contents/hyui-runtime.json
+          printf 'native-host' > build/native-sdk/macos-x64.app/Contents/MacOS/hyui
+          printf 'native-launcher' > build/native-sdk/macos-x64.app/Contents/MacOS/hyui-launcher
+          printf '<plist version="1.0"></plist>' > build/native-sdk/macos-x64.app/Contents/Info.plist
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target windows --ui-sdk build/native-sdk -o build/StudioWin
+          test -f build/StudioWin.exe.runtime/app/__hyui_backend.exe
+          test -f build/StudioWin.exe
+          file build/StudioWin.exe.runtime/app/__hyui_backend.exe
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target macos --ui-sdk build/native-sdk -o build/StudioMac
+          test -f build/StudioMac.app/Contents/Resources/app/__hyui_backend
+          test ! -e build/StudioMac.app/Contents/MacOS/hyui-launcher
+          test -f build/StudioMac.app/Contents/MacOS/hyui
+          file build/StudioMac.app/Contents/Resources/app/__hyui_backend
+      - name: Rebuild owned UI package without replacing unowned files
+        run: |
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/Studio
+          test -x build/Studio
+          test -x build/Studio.runtime/app/__hyui_backend
+          printf 'sentinel' > build/unowned-file
+          if ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/unowned-file; then
+            echo "ERROR: Hydrogen overwrote an unowned executable"
+            exit 1
+          fi
+          test "$(cat build/unowned-file)" = sentinel
+          test ! -e build/Studio.ui-backup
+          test ! -e build/Studio.ui-backup.runtime
+      - name: Enforce self-hosted compiler source formatting
+        run: build-ui/hy fmt --check src
+      - name: Build application from outside the repository with an explicit native SDK
+        run: |
+          mkdir -p "$RUNNER_TEMP/hydrogen-ui-relocation"
+          cd "$RUNNER_TEMP/hydrogen-ui-relocation"
+          "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1" build \
+            "$GITHUB_WORKSPACE/samples/ui_studio/Studio.hyproj" \
+            --ui-sdk "$GITHUB_WORKSPACE/build/bootstrap" \
+            -o "$RUNNER_TEMP/hydrogen-ui-relocation/Studio"
+          test -x "$RUNNER_TEMP/hydrogen-ui-relocation/Studio"
+          test -x "$RUNNER_TEMP/hydrogen-ui-relocation/Studio.runtime/hyui"
+      - name: Test integrated GTK application without hyui packaging tool
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' ./build/Studio --state-output build/integrated-studio-state.json --screenshot build/integrated-studio.png
+          test -s build/integrated-studio.png
+          grep -q 'Ready when you are' build/integrated-studio-state.json
+      - name: Validate element contracts and visual comparator
+        run: |
+          build-ui/tools/hyui/hyui_tests
+          python -m unittest discover -s tests/ui -p 'test_*.py'
+      - name: Run GTK sample and packaged-app integration
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' ctest --test-dir build-ui -R '^hyui_sdk_(integration|package)$' --output-on-failure
+      # This is the user-facing workflow: build a .hyproj with the self-hosted
+      # Stage 1 compiler, then run the packaged executable. No HYUI_* exports,
+      # PATH additions or manual UI launcher are allowed.
+      - name: Build self-hosted Stage 1 for automatic UI packaging
+        run: build-ui/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-ui/hydrogen-stage1
+      - name: Verify two-command Hydrogen UI packaging and launch
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' python tools/hyui/auto_package_integration.py build-ui/hydrogen-stage1 build-ui/auto-ui-ci
+
+      - name: Launch GTK on Xvfb and check native interactions and reviewed screenshots
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' python tools/hyui/ui_ci.py --platform linux --driver build-ui/tools/hyui/hyui_gtk_tests --compiler build-ui/hy --artifacts build-ui/ui-artifacts
+      - name: Upload GTK screenshots, geometry, diffs and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-linux-${{ github.run_id }}
+          path: |
+            build-ui/ui-artifacts
+            build-ui/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  macos-integration:
+    name: macOS x64 compiler and runtime
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Bootstrap and exercise native macOS compiler
+        run: bash tests/macos/integration.sh
+
+  windows-ui:
+    name: WinUI interactions and appearance
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build SDK and self-contained native WinUI application
+        run: |
+          cmake -S . -B build-ui -DHYDROGEN_BUILD_UI=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-ui --target hy --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish tools/hyui/windows/Hyui.WinUI.csproj -c Release -r win-x64 -p:Platform=x64 -p:WindowsAppSDKSelfContained=true -p:HydrogenUiTests=true -o build-ui/native-winui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install Pillow==12.0.0
+      - name: Check visual comparator
+        run: python -m unittest discover -s tests/ui -p 'test_*.py'
+      - name: Configure virtual desktop for wide WinUI screenshots
+        run: .\tests\ui\set_windows_display.ps1
+      - name: Launch real WinUI app and check native interactions and reviewed screenshots
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+          set "PATH=C:\Program Files\LLVM\bin;%PATH%"
+          set "CC=clang"
+          where clang
+          python tools/hyui/ui_ci.py --platform windows --driver build-ui/native-winui/Hyui.WinUI.exe --compiler build-ui/Release/hy.exe --artifacts build-ui/ui-artifacts
+      - name: Upload WinUI screenshots, geometry, diffs and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-windows-${{ github.run_id }}
+          path: build-ui/ui-artifacts
+          if-no-files-found: warn
+          retention-days: 14
+
+  windows-lifecycle:
+    name: Windows release lifecycle
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Exercise Windows release lifecycle on Windows
+        shell: powershell
+        run: .\tests\windows-release-lifecycle.ps1 -SourceDir $PWD.Path
+
+      - name: Check live release smoke test syntax
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile('tests/windows-live-release.ps1', [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+
+  windows-live-release:
+    name: Public Windows release smoke test
+    if: github.event_name == 'workflow_dispatch' && inputs.live_windows_release != ''
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Install and test published release on Windows
+        shell: powershell
+        env:
+          EXPECTED_VERSION: ${{ inputs.live_windows_release }}
+        run: .\tests\windows-live-release.ps1 -ExpectedVersion $env:EXPECTED_VERSION
+
+  compiler:
+    name: Bootstrap and cross-target tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake util-linux
+
+      - name: Configure compiler
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      # Builds the Stage 0 C++ seed, the updated Hydrogen Stage 1,
+      # then Stage 2 and Stage 3 using Hydrogen itself.
+      # The existing proof checks the native corpus and requires
+      # byte-identical Stage 2 / Stage 3 compiler output.
+      - name: Verify native self-hosting
+        run: cmake --build build --target hydrogen_bootstrap_proof --parallel 2
+
+      # Includes the Stage 1 CTest fixture and target tests for
+      # Linux native code, Windows PE generation, UEFI and OS images.
+      - name: Run Stage 1 regression tests
+        run: ctest --test-dir build --output-on-failure --parallel 2 -R '^hy_stage1_'
+
+      # Also exercise the C++ SDK, interpreter, and host C backend.
+      # The native Stage 1 tests ran above; the Stage 6 proof was
+      # already executed directly as hydrogen_bootstrap_proof.
+      - name: Build SDK test tools
+        run: cmake --build build --parallel 2
+
+      - name: Run SDK and integration regression tests
+        run: ctest --test-dir build --output-on-failure --parallel 2 -E '^(hy_stage1_|hy_stage6_)'
+
+      - name: Record provenance and package compilers
+        run: |
+          cd build/self_hosting
+          sha256sum hydrogen-stage1 hydrogen-stage2 hydrogen-stage3 > SHA256SUMS
+          printf 'tested_commit=%s\ntested_ref=%s\n' "$GITHUB_SHA" "$GITHUB_REF" > BUILD-INFO.txt
+          tar -czf hydrogen-linux-x86_64-verified.tar.gz \
+            hydrogen-stage1 hydrogen-stage2 hydrogen-stage3 \
+            bootstrap-proof.txt SHA256SUMS BUILD-INFO.txt
+
+      # Artifacts are uploaded only after all of the above checks pass.
+      # This does not publish a release or replace the trusted seed.
+      - name: Upload verified Hydrogen compilers
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-verified-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/self_hosting/hydrogen-stage1
+            build/self_hosting/hydrogen-stage2
+            build/self_hosting/hydrogen-stage3
+            build/self_hosting/bootstrap-proof.txt
+            build/self_hosting/SHA256SUMS
+            build/self_hosting/BUILD-INFO.txt
+            build/self_hosting/hydrogen-linux-x86_64-verified.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload CTest failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-test-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+          lipo -archs build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui | grep -q x86_64
+          plutil -lint build-sdk/native-sdk/macos-x64.app/Contents/Info.plist
+          tar -czf build-sdk/hydrogen-ui-sdk-macos-x64.tar.gz -C build-sdk/native-sdk macos-x64.app
+      - name: Build and launch a packaged Hydrogen AppKit application
+        run: |
+          cmake --build build-sdk --target hy --parallel 3
+          build-sdk/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-sdk/hydrogen-stage1
+          mkdir -p build/bootstrap
+          cp build-sdk/hyui-native build/bootstrap/hyui-native
+          ./build-sdk/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target macos --ui-sdk build-sdk/native-sdk -o build-sdk/Studio
+          test -x build-sdk/Studio.app/Contents/Resources/app/__hyui_backend
+          build-sdk/Studio.app/Contents/MacOS/hyui-launcher --state-output build-sdk/appkit-state.json --screenshot build-sdk/appkit-screenshot.png
+          test -s build-sdk/appkit-screenshot.png
+      - name: Upload exported macOS runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-sdk-macos-${{ github.run_id }}
+          path: build-sdk/hydrogen-ui-sdk-macos-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-ui-sdk:
+    name: Export native WinUI 3 runtime SDK without Qt
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build WinUI host and launcher without standalone hyui packager
+        shell: pwsh
+        run: |
+          cmake -S . -B build-sdk -DHYDROGEN_BUILD_UI=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-sdk --target hydrogen-ui-sdk --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $runtime = 'build-sdk/native-sdk/windows-x64'
+          if (!(Test-Path "$runtime/hyui-runtime.json") -or !(Test-Path "$runtime/hyui.exe") -or !(Test-Path "$runtime/hyui-launcher.exe")) {
+            throw 'Windows native runtime export is incomplete'
+          }
+          $manifest = Get-Content "$runtime/hyui-runtime.json" -Raw | ConvertFrom-Json
+          if ($manifest.target -ne 'windows-x64' -or $manifest.renderer -ne 'winui3') {
+            throw 'Native WinUI runtime manifest is incorrect'
+          }
+      - name: Build packaged WinUI application with the Hydrogen Stage 1 compiler
+        shell: pwsh
+        run: |
+          cmake --build build-sdk --target hy --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $seed = Get-ChildItem -Path build-sdk -Filter hy.exe -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          if (!$seed) { throw 'C++ bootstrap seed was not generated' }
+          & $seed build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-sdk/hydrogen-stage1.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & build-sdk/hydrogen-stage1.exe build samples/ui_studio/Studio.hyproj --target windows --ui-sdk build-sdk/native-sdk -o build-sdk/Studio
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path build-sdk/Studio.exe) -or !(Test-Path build-sdk/Studio.exe.runtime/app/__hyui_backend.exe)) {
+            throw 'Self-hosted WinUI application was not packaged'
+          }
+          $backend = [IO.File]::ReadAllBytes('build-sdk/Studio.exe.runtime/app/__hyui_backend.exe')
+          if ($backend.Length -lt 64 -or $backend[0] -ne 0x4d -or $backend[1] -ne 0x5a) {
+            throw 'Windows UI backend is not a PE executable'
+          }
+          $junction = Join-Path (Resolve-Path samples/ui_studio/assets) 'linked-asset'
+          $target = Join-Path $env:RUNNER_TEMP 'hyui-linked-asset'
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          New-Item -ItemType Junction -Path $junction -Target $target | Out-Null
+          try {
+            $linkedStdout = Join-Path $env:RUNNER_TEMP 'hyui-linked-stdout.txt'
+            $linkedStderr = Join-Path $env:RUNNER_TEMP 'hyui-linked-stderr.txt'
+            $linkedBuild = Start-Process -FilePath (Resolve-Path build-sdk/hydrogen-stage1.exe).Path -ArgumentList @('build', 'samples/ui_studio/Studio.hyproj', '--target', 'windows', '--ui-sdk', 'build-sdk/native-sdk', '-o', 'build-sdk/StudioLinked', '--hide-progress', '--hide-spinner', '--hide-log') -NoNewWindow -Wait -PassThru -RedirectStandardOutput $linkedStdout -RedirectStandardError $linkedStderr
+            $details = (Get-Content $linkedStdout -Raw) + (Get-Content $linkedStderr -Raw)
+            if ($linkedBuild.ExitCode -eq 0 -or $details -notmatch 'UI assets must not contain links') {
+              throw "Linked UI asset was not rejected (exit $($linkedBuild.ExitCode)): $details"
+            }
+            if (Test-Path build-sdk/StudioLinked.exe) { throw 'Rejected UI package left a launcher' }
+          } finally {
+            Remove-Item -LiteralPath $junction -Force
+          }
+      - name: Upload exported Windows runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-sdk-windows-${{ github.run_id }}
+          path: build-sdk/native-sdk/windows-x64
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-ui:
+    name: GTK UI interactions and appearance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install system GTK and virtual desktop
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libgtk-4-1 libadwaita-1-0 xvfb dbus-x11 fonts-dejavu-core libgl1 libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0
+          python -m pip install aqtinstall==3.3.0 Pillow==12.0.0
+          python -m aqt install-qt linux desktop 6.8.3 linux_gcc_64 -O "$RUNNER_TEMP/qt" --archives qtbase icu
+      - name: Build real GTK test application
+        run: |
+          cmake -S . -B build-ui -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/qt/6.8.3/gcc_64"
+          cmake --build build-ui --target hy hyui hyui_tests hyui_gtk_tests --parallel 3
+      - name: Build self-hosted Stage 1 with integrated native UI packaging
+        run: |
+          mkdir -p build/self_hosting/linux build/bootstrap
+          build-ui/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build/self_hosting/linux/hydrogen-stage1
+          cp build-ui/hyui-native build/bootstrap/hyui-native
+          cp build-ui/hyui-launcher build/bootstrap/hyui-launcher
+          test ! -e build/bootstrap/hyui
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/Studio
+          file build/Studio
+          test -x build/Studio
+          test -x build/Studio.runtime/hyui
+          test -x build/Studio.runtime/app/__hyui_backend
+      - name: Validate native-host-free UI backend code generation
+        run: |
+          bash tests/ui/test-ui-backend-no-host.sh --compiler "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1"
+      - name: Cross-package Windows and macOS native UI backends with SDK fixtures
+        run: |
+          mkdir -p build/native-sdk/windows-x64 build/native-sdk/macos-x64.app/Contents/MacOS
+          printf '{"format":1,"target":"windows-x64","renderer":"winui3"}' > build/native-sdk/windows-x64/hyui-runtime.json
+          printf 'MZstub' > build/native-sdk/windows-x64/hyui.exe
+          printf 'MZstub' > build/native-sdk/windows-x64/hyui-launcher.exe
+          printf '{"format":1,"target":"macos-x64","renderer":"appkit"}' > build/native-sdk/macos-x64.app/Contents/hyui-runtime.json
+          printf 'native-host' > build/native-sdk/macos-x64.app/Contents/MacOS/hyui
+          printf 'native-launcher' > build/native-sdk/macos-x64.app/Contents/MacOS/hyui-launcher
+          printf '<plist version="1.0"></plist>' > build/native-sdk/macos-x64.app/Contents/Info.plist
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target windows --ui-sdk build/native-sdk -o build/StudioWin
+          test -f build/StudioWin.exe.runtime/app/__hyui_backend.exe
+          test -f build/StudioWin.exe
+          file build/StudioWin.exe.runtime/app/__hyui_backend.exe
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target macos --ui-sdk build/native-sdk -o build/StudioMac
+          test -f build/StudioMac.app/Contents/Resources/app/__hyui_backend
+          test -f build/StudioMac.app/Contents/MacOS/hyui-launcher
+          file build/StudioMac.app/Contents/Resources/app/__hyui_backend
+      - name: Rebuild owned UI package without replacing unowned files
+        run: |
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/Studio
+          test -x build/Studio
+          test -x build/Studio.runtime/app/__hyui_backend
+          printf 'sentinel' > build/unowned-file
+          if ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/unowned-file; then
+            echo "ERROR: Hydrogen overwrote an unowned executable"
+            exit 1
+          fi
+          test "$(cat build/unowned-file)" = sentinel
+          test ! -e build/Studio.ui-backup
+          test ! -e build/Studio.ui-backup.runtime
+      - name: Enforce self-hosted compiler source formatting
+        run: build-ui/hy fmt --check src
+      - name: Build application from outside the repository with an explicit native SDK
+        run: |
+          mkdir -p "$RUNNER_TEMP/hydrogen-ui-relocation"
+          cd "$RUNNER_TEMP/hydrogen-ui-relocation"
+          "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1" build \
+            "$GITHUB_WORKSPACE/samples/ui_studio/Studio.hyproj" \
+            --ui-sdk "$GITHUB_WORKSPACE/build/bootstrap" \
+            -o "$RUNNER_TEMP/hydrogen-ui-relocation/Studio"
+          test -x "$RUNNER_TEMP/hydrogen-ui-relocation/Studio"
+          test -x "$RUNNER_TEMP/hydrogen-ui-relocation/Studio.runtime/hyui"
+      - name: Test integrated GTK application without hyui packaging tool
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' ./build/Studio --state-output build/integrated-studio-state.json --screenshot build/integrated-studio.png
+          test -s build/integrated-studio.png
+          grep -q 'Ready when you are' build/integrated-studio-state.json
+      - name: Validate element contracts and visual comparator
+        run: |
+          build-ui/tools/hyui/hyui_tests
+          python -m unittest discover -s tests/ui -p 'test_*.py'
+      - name: Run GTK sample and packaged-app integration
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' ctest --test-dir build-ui -R '^hyui_sdk_(integration|package)$' --output-on-failure
+      # This is the user-facing workflow: build a .hyproj with the self-hosted
+      # Stage 1 compiler, then run the packaged executable. No HYUI_* exports,
+      # PATH additions or manual UI launcher are allowed.
+      - name: Build self-hosted Stage 1 for automatic UI packaging
+        run: build-ui/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-ui/hydrogen-stage1
+      - name: Verify two-command Hydrogen UI packaging and launch
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' python tools/hyui/auto_package_integration.py build-ui/hydrogen-stage1 build-ui/auto-ui-ci
+
+      - name: Launch GTK on Xvfb and check native interactions and reviewed screenshots
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' python tools/hyui/ui_ci.py --platform linux --driver build-ui/tools/hyui/hyui_gtk_tests --compiler build-ui/hy --artifacts build-ui/ui-artifacts
+      - name: Upload GTK screenshots, geometry, diffs and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-linux-${{ github.run_id }}
+          path: |
+            build-ui/ui-artifacts
+            build-ui/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  macos-integration:
+    name: macOS x64 compiler and runtime
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Bootstrap and exercise native macOS compiler
+        run: bash tests/macos/integration.sh
+
+  windows-ui:
+    name: WinUI interactions and appearance
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build SDK and self-contained native WinUI application
+        run: |
+          cmake -S . -B build-ui -DHYDROGEN_BUILD_UI=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-ui --target hy --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish tools/hyui/windows/Hyui.WinUI.csproj -c Release -r win-x64 -p:Platform=x64 -p:WindowsAppSDKSelfContained=true -p:HydrogenUiTests=true -o build-ui/native-winui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install Pillow==12.0.0
+      - name: Check visual comparator
+        run: python -m unittest discover -s tests/ui -p 'test_*.py'
+      - name: Configure virtual desktop for wide WinUI screenshots
+        run: .\tests\ui\set_windows_display.ps1
+      - name: Launch real WinUI app and check native interactions and reviewed screenshots
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+          set "PATH=C:\Program Files\LLVM\bin;%PATH%"
+          set "CC=clang"
+          where clang
+          python tools/hyui/ui_ci.py --platform windows --driver build-ui/native-winui/Hyui.WinUI.exe --compiler build-ui/Release/hy.exe --artifacts build-ui/ui-artifacts
+      - name: Upload WinUI screenshots, geometry, diffs and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-windows-${{ github.run_id }}
+          path: build-ui/ui-artifacts
+          if-no-files-found: warn
+          retention-days: 14
+
+  windows-lifecycle:
+    name: Windows release lifecycle
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Exercise Windows release lifecycle on Windows
+        shell: powershell
+        run: .\tests\windows-release-lifecycle.ps1 -SourceDir $PWD.Path
+
+      - name: Check live release smoke test syntax
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile('tests/windows-live-release.ps1', [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+
+  windows-live-release:
+    name: Public Windows release smoke test
+    if: github.event_name == 'workflow_dispatch' && inputs.live_windows_release != ''
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Install and test published release on Windows
+        shell: powershell
+        env:
+          EXPECTED_VERSION: ${{ inputs.live_windows_release }}
+        run: .\tests\windows-live-release.ps1 -ExpectedVersion $env:EXPECTED_VERSION
+
+  compiler:
+    name: Bootstrap and cross-target tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake util-linux
+
+      - name: Configure compiler
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      # Builds the Stage 0 C++ seed, the updated Hydrogen Stage 1,
+      # then Stage 2 and Stage 3 using Hydrogen itself.
+      # The existing proof checks the native corpus and requires
+      # byte-identical Stage 2 / Stage 3 compiler output.
+      - name: Verify native self-hosting
+        run: cmake --build build --target hydrogen_bootstrap_proof --parallel 2
+
+      # Includes the Stage 1 CTest fixture and target tests for
+      # Linux native code, Windows PE generation, UEFI and OS images.
+      - name: Run Stage 1 regression tests
+        run: ctest --test-dir build --output-on-failure --parallel 2 -R '^hy_stage1_'
+
+      # Also exercise the C++ SDK, interpreter, and host C backend.
+      # The native Stage 1 tests ran above; the Stage 6 proof was
+      # already executed directly as hydrogen_bootstrap_proof.
+      - name: Build SDK test tools
+        run: cmake --build build --parallel 2
+
+      - name: Run SDK and integration regression tests
+        run: ctest --test-dir build --output-on-failure --parallel 2 -E '^(hy_stage1_|hy_stage6_)'
+
+      - name: Record provenance and package compilers
+        run: |
+          cd build/self_hosting
+          sha256sum hydrogen-stage1 hydrogen-stage2 hydrogen-stage3 > SHA256SUMS
+          printf 'tested_commit=%s\ntested_ref=%s\n' "$GITHUB_SHA" "$GITHUB_REF" > BUILD-INFO.txt
+          tar -czf hydrogen-linux-x86_64-verified.tar.gz \
+            hydrogen-stage1 hydrogen-stage2 hydrogen-stage3 \
+            bootstrap-proof.txt SHA256SUMS BUILD-INFO.txt
+
+      # Artifacts are uploaded only after all of the above checks pass.
+      # This does not publish a release or replace the trusted seed.
+      - name: Upload verified Hydrogen compilers
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-verified-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/self_hosting/hydrogen-stage1
+            build/self_hosting/hydrogen-stage2
+            build/self_hosting/hydrogen-stage3
+            build/self_hosting/bootstrap-proof.txt
+            build/self_hosting/SHA256SUMS
+            build/self_hosting/BUILD-INFO.txt
+            build/self_hosting/hydrogen-linux-x86_64-verified.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload CTest failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-test-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+          build-sdk/Studio.app/Contents/MacOS/hyui --state-output build-sdk/appkit-state.json --screenshot build-sdk/appkit-screenshot.png
+          test -s build-sdk/appkit-screenshot.png
+      - name: Upload exported macOS runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-sdk-macos-${{ github.run_id }}
+          path: build-sdk/hydrogen-ui-sdk-macos-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-ui-sdk:
+    name: Export native WinUI 3 runtime SDK without Qt
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build WinUI host and launcher without standalone hyui packager
+        shell: pwsh
+        run: |
+          cmake -S . -B build-sdk -DHYDROGEN_BUILD_UI=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-sdk --target hydrogen-ui-sdk --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $runtime = 'build-sdk/native-sdk/windows-x64'
+          if (!(Test-Path "$runtime/hyui-runtime.json") -or !(Test-Path "$runtime/hyui.exe") -or !(Test-Path "$runtime/hyui-launcher.exe")) {
+            throw 'Windows native runtime export is incomplete'
+          }
+          $manifest = Get-Content "$runtime/hyui-runtime.json" -Raw | ConvertFrom-Json
+          if ($manifest.target -ne 'windows-x64' -or $manifest.renderer -ne 'winui3') {
+            throw 'Native WinUI runtime manifest is incorrect'
+          }
+      - name: Build packaged WinUI application with the Hydrogen Stage 1 compiler
+        shell: pwsh
+        run: |
+          cmake --build build-sdk --target hy --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $seed = Get-ChildItem -Path build-sdk -Filter hy.exe -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          if (!$seed) { throw 'C++ bootstrap seed was not generated' }
+          & $seed build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-sdk/hydrogen-stage1.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & build-sdk/hydrogen-stage1.exe build samples/ui_studio/Studio.hyproj --target windows --ui-sdk build-sdk/native-sdk -o build-sdk/Studio
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path build-sdk/Studio.exe) -or !(Test-Path build-sdk/Studio.exe.runtime/app/__hyui_backend.exe)) {
+            throw 'Self-hosted WinUI application was not packaged'
+          }
+          $backend = [IO.File]::ReadAllBytes('build-sdk/Studio.exe.runtime/app/__hyui_backend.exe')
+          if ($backend.Length -lt 64 -or $backend[0] -ne 0x4d -or $backend[1] -ne 0x5a) {
+            throw 'Windows UI backend is not a PE executable'
+          }
+          $junction = Join-Path (Resolve-Path samples/ui_studio/assets) 'linked-asset'
+          $target = Join-Path $env:RUNNER_TEMP 'hyui-linked-asset'
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          New-Item -ItemType Junction -Path $junction -Target $target | Out-Null
+          try {
+            $linkedStdout = Join-Path $env:RUNNER_TEMP 'hyui-linked-stdout.txt'
+            $linkedStderr = Join-Path $env:RUNNER_TEMP 'hyui-linked-stderr.txt'
+            $linkedBuild = Start-Process -FilePath (Resolve-Path build-sdk/hydrogen-stage1.exe).Path -ArgumentList @('build', 'samples/ui_studio/Studio.hyproj', '--target', 'windows', '--ui-sdk', 'build-sdk/native-sdk', '-o', 'build-sdk/StudioLinked', '--hide-progress', '--hide-spinner', '--hide-log') -NoNewWindow -Wait -PassThru -RedirectStandardOutput $linkedStdout -RedirectStandardError $linkedStderr
+            $details = (Get-Content $linkedStdout -Raw) + (Get-Content $linkedStderr -Raw)
+            if ($linkedBuild.ExitCode -eq 0 -or $details -notmatch 'UI assets must not contain links') {
+              throw "Linked UI asset was not rejected (exit $($linkedBuild.ExitCode)): $details"
+            }
+            if (Test-Path build-sdk/StudioLinked.exe) { throw 'Rejected UI package left a launcher' }
+          } finally {
+            Remove-Item -LiteralPath $junction -Force
+          }
+      - name: Upload exported Windows runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-sdk-windows-${{ github.run_id }}
+          path: build-sdk/native-sdk/windows-x64
+          if-no-files-found: error
+          retention-days: 14
+
+  linux-ui:
+    name: GTK UI interactions and appearance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install system GTK and virtual desktop
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libgtk-4-1 libadwaita-1-0 xvfb dbus-x11 fonts-dejavu-core libgl1 libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0
+          python -m pip install aqtinstall==3.3.0 Pillow==12.0.0
+          python -m aqt install-qt linux desktop 6.8.3 linux_gcc_64 -O "$RUNNER_TEMP/qt" --archives qtbase icu
+      - name: Build real GTK test application
+        run: |
+          cmake -S . -B build-ui -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/qt/6.8.3/gcc_64"
+          cmake --build build-ui --target hy hyui hyui_tests hyui_gtk_tests --parallel 3
+      - name: Build self-hosted Stage 1 with integrated native UI packaging
+        run: |
+          mkdir -p build/self_hosting/linux build/bootstrap
+          build-ui/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build/self_hosting/linux/hydrogen-stage1
+          cp build-ui/hyui-native build/bootstrap/hyui-native
+          cp build-ui/hyui-launcher build/bootstrap/hyui-launcher
+          test ! -e build/bootstrap/hyui
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/Studio
+          file build/Studio
+          test -x build/Studio
+          test -x build/Studio.runtime/hyui
+          test -x build/Studio.runtime/app/__hyui_backend
+      - name: Validate native-host-free UI backend code generation
+        run: |
+          bash tests/ui/test-ui-backend-no-host.sh --compiler "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1"
+      - name: Cross-package Windows and macOS native UI backends with SDK fixtures
+        run: |
+          mkdir -p build/native-sdk/windows-x64 build/native-sdk/macos-x64.app/Contents/MacOS
+          printf '{"format":1,"target":"windows-x64","renderer":"winui3"}' > build/native-sdk/windows-x64/hyui-runtime.json
+          printf 'MZstub' > build/native-sdk/windows-x64/hyui.exe
+          printf 'MZstub' > build/native-sdk/windows-x64/hyui-launcher.exe
+          printf '{"format":1,"target":"macos-x64","renderer":"appkit"}' > build/native-sdk/macos-x64.app/Contents/hyui-runtime.json
+          printf 'native-host' > build/native-sdk/macos-x64.app/Contents/MacOS/hyui
+          printf 'native-launcher' > build/native-sdk/macos-x64.app/Contents/MacOS/hyui-launcher
+          printf '<plist version="1.0"></plist>' > build/native-sdk/macos-x64.app/Contents/Info.plist
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target windows --ui-sdk build/native-sdk -o build/StudioWin
+          test -f build/StudioWin.exe.runtime/app/__hyui_backend.exe
+          test -f build/StudioWin.exe
+          file build/StudioWin.exe.runtime/app/__hyui_backend.exe
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target macos --ui-sdk build/native-sdk -o build/StudioMac
+          test -f build/StudioMac.app/Contents/Resources/app/__hyui_backend
+          test -f build/StudioMac.app/Contents/MacOS/hyui-launcher
+          file build/StudioMac.app/Contents/Resources/app/__hyui_backend
+      - name: Rebuild owned UI package without replacing unowned files
+        run: |
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/Studio
+          test -x build/Studio
+          test -x build/Studio.runtime/app/__hyui_backend
+          printf 'sentinel' > build/unowned-file
+          if ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/unowned-file; then
+            echo "ERROR: Hydrogen overwrote an unowned executable"
+            exit 1
+          fi
+          test "$(cat build/unowned-file)" = sentinel
+          test ! -e build/Studio.ui-backup
+          test ! -e build/Studio.ui-backup.runtime
+      - name: Enforce self-hosted compiler source formatting
+        run: build-ui/hy fmt --check src
+      - name: Build application from outside the repository with an explicit native SDK
+        run: |
+          mkdir -p "$RUNNER_TEMP/hydrogen-ui-relocation"
+          cd "$RUNNER_TEMP/hydrogen-ui-relocation"
+          "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1" build \
+            "$GITHUB_WORKSPACE/samples/ui_studio/Studio.hyproj" \
+            --ui-sdk "$GITHUB_WORKSPACE/build/bootstrap" \
+            -o "$RUNNER_TEMP/hydrogen-ui-relocation/Studio"
+          test -x "$RUNNER_TEMP/hydrogen-ui-relocation/Studio"
+          test -x "$RUNNER_TEMP/hydrogen-ui-relocation/Studio.runtime/hyui"
+      - name: Test integrated GTK application without hyui packaging tool
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' ./build/Studio --state-output build/integrated-studio-state.json --screenshot build/integrated-studio.png
+          test -s build/integrated-studio.png
+          grep -q 'Ready when you are' build/integrated-studio-state.json
+      - name: Validate element contracts and visual comparator
+        run: |
+          build-ui/tools/hyui/hyui_tests
+          python -m unittest discover -s tests/ui -p 'test_*.py'
+      - name: Run GTK sample and packaged-app integration
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' ctest --test-dir build-ui -R '^hyui_sdk_(integration|package)$' --output-on-failure
+      # This is the user-facing workflow: build a .hyproj with the self-hosted
+      # Stage 1 compiler, then run the packaged executable. No HYUI_* exports,
+      # PATH additions or manual UI launcher are allowed.
+      - name: Build self-hosted Stage 1 for automatic UI packaging
+        run: build-ui/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-ui/hydrogen-stage1
+      - name: Verify two-command Hydrogen UI packaging and launch
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' python tools/hyui/auto_package_integration.py build-ui/hydrogen-stage1 build-ui/auto-ui-ci
+
+      - name: Launch GTK on Xvfb and check native interactions and reviewed screenshots
+        env:
+          GSK_RENDERER: cairo
+          GDK_BACKEND: x11
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' python tools/hyui/ui_ci.py --platform linux --driver build-ui/tools/hyui/hyui_gtk_tests --compiler build-ui/hy --artifacts build-ui/ui-artifacts
+      - name: Upload GTK screenshots, geometry, diffs and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-linux-${{ github.run_id }}
+          path: |
+            build-ui/ui-artifacts
+            build-ui/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  macos-integration:
+    name: macOS x64 compiler and runtime
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Bootstrap and exercise native macOS compiler
+        run: bash tests/macos/integration.sh
+
+  windows-ui:
+    name: WinUI interactions and appearance
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build SDK and self-contained native WinUI application
+        run: |
+          cmake -S . -B build-ui -DHYDROGEN_BUILD_UI=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-ui --target hy --config Release --parallel 3
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish tools/hyui/windows/Hyui.WinUI.csproj -c Release -r win-x64 -p:Platform=x64 -p:WindowsAppSDKSelfContained=true -p:HydrogenUiTests=true -o build-ui/native-winui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install Pillow==12.0.0
+      - name: Check visual comparator
+        run: python -m unittest discover -s tests/ui -p 'test_*.py'
+      - name: Configure virtual desktop for wide WinUI screenshots
+        run: .\tests\ui\set_windows_display.ps1
+      - name: Launch real WinUI app and check native interactions and reviewed screenshots
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+          set "PATH=C:\Program Files\LLVM\bin;%PATH%"
+          set "CC=clang"
+          where clang
+          python tools/hyui/ui_ci.py --platform windows --driver build-ui/native-winui/Hyui.WinUI.exe --compiler build-ui/Release/hy.exe --artifacts build-ui/ui-artifacts
+      - name: Upload WinUI screenshots, geometry, diffs and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-ui-windows-${{ github.run_id }}
+          path: build-ui/ui-artifacts
+          if-no-files-found: warn
+          retention-days: 14
+
+  windows-lifecycle:
+    name: Windows release lifecycle
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Exercise Windows release lifecycle on Windows
+        shell: powershell
+        run: .\tests\windows-release-lifecycle.ps1 -SourceDir $PWD.Path
+
+      - name: Check live release smoke test syntax
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile('tests/windows-live-release.ps1', [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+
+  windows-live-release:
+    name: Public Windows release smoke test
+    if: github.event_name == 'workflow_dispatch' && inputs.live_windows_release != ''
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Install and test published release on Windows
+        shell: powershell
+        env:
+          EXPECTED_VERSION: ${{ inputs.live_windows_release }}
+        run: .\tests\windows-live-release.ps1 -ExpectedVersion $env:EXPECTED_VERSION
+
+  compiler:
+    name: Bootstrap and cross-target tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+
+    steps:
+      - name: Check out Hydrogen source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake util-linux
+
+      - name: Configure compiler
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      # Builds the Stage 0 C++ seed, the updated Hydrogen Stage 1,
+      # then Stage 2 and Stage 3 using Hydrogen itself.
+      # The existing proof checks the native corpus and requires
+      # byte-identical Stage 2 / Stage 3 compiler output.
+      - name: Verify native self-hosting
+        run: cmake --build build --target hydrogen_bootstrap_proof --parallel 2
+
+      # Includes the Stage 1 CTest fixture and target tests for
+      # Linux native code, Windows PE generation, UEFI and OS images.
+      - name: Run Stage 1 regression tests
+        run: ctest --test-dir build --output-on-failure --parallel 2 -R '^hy_stage1_'
+
+      # Also exercise the C++ SDK, interpreter, and host C backend.
+      # The native Stage 1 tests ran above; the Stage 6 proof was
+      # already executed directly as hydrogen_bootstrap_proof.
+      - name: Build SDK test tools
+        run: cmake --build build --parallel 2
+
+      - name: Run SDK and integration regression tests
+        run: ctest --test-dir build --output-on-failure --parallel 2 -E '^(hy_stage1_|hy_stage6_)'
+
+      - name: Record provenance and package compilers
+        run: |
+          cd build/self_hosting
+          sha256sum hydrogen-stage1 hydrogen-stage2 hydrogen-stage3 > SHA256SUMS
+          printf 'tested_commit=%s\ntested_ref=%s\n' "$GITHUB_SHA" "$GITHUB_REF" > BUILD-INFO.txt
+          tar -czf hydrogen-linux-x86_64-verified.tar.gz \
+            hydrogen-stage1 hydrogen-stage2 hydrogen-stage3 \
+            bootstrap-proof.txt SHA256SUMS BUILD-INFO.txt
+
+      # Artifacts are uploaded only after all of the above checks pass.
+      # This does not publish a release or replace the trusted seed.
+      - name: Upload verified Hydrogen compilers
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-verified-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/self_hosting/hydrogen-stage1
+            build/self_hosting/hydrogen-stage2
+            build/self_hosting/hydrogen-stage3
+            build/self_hosting/bootstrap-proof.txt
+            build/self_hosting/SHA256SUMS
+            build/self_hosting/BUILD-INFO.txt
+            build/self_hosting/hydrogen-linux-x86_64-verified.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload CTest failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hydrogen-test-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
+
           lipo -archs build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui | grep -q x86_64
           plutil -lint build-sdk/native-sdk/macos-x64.app/Contents/Info.plist
           tar -czf build-sdk/hydrogen-ui-sdk-macos-x64.tar.gz -C build-sdk/native-sdk macos-x64.app
