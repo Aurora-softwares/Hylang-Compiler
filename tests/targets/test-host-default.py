@@ -6,6 +6,7 @@ No third-party Python packages or native UI SDK required.
 """
 from __future__ import annotations
 
+import os
 import pathlib
 import subprocess
 import sys
@@ -69,6 +70,8 @@ def main() -> None:
                          "-o", str(destination)]
             run(compiler, [action, *arguments])
             check_magic(destination, host)
+            if host != "windows" and not os.access(destination, os.X_OK):
+                raise AssertionError(f"{action} did not mark the {host} output executable")
             print(f"{action}: host {host} selected correctly")
 
         # Cross-compilation remains available explicitly, even if the host
