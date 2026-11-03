@@ -37,9 +37,23 @@ int nativeMain(int argc, char** argv, NativeFactory factory) {
         QTemporaryDir temporary;
         QString backend, view = parser.value("document"), directory = QDir::currentPath();
         QByteArray startup;
-        if (parser.isSet("bundle")) {
+        // In a packaged macOS application, the AppKit renderer itself is
+        // CFBundleExecutable. There is no separate launcher process.
+        QString packagedRoot = parser.value("bundle");
+#ifdef Q_OS_MACOS
+        if (packagedRoot.isEmpty() && !parser.isSet("source") &&
+            !parser.isSet("backend") && !parser.isSet("compiler") &&
+            !parser.isSet("document")) {
+            QString candidate = QDir(QCoreApplication::applicationDirPath())
+                .absoluteFilePath("../Resources/app");
+            if (QFileInfo::exists(candidate + "/__hyui_app.json")) {
+                packagedRoot = candidate;
+            }
+        }
+#endif
+        if (!packagedRoot.isEmpty()) {
             if (parser.isSet("source") || parser.isSet("backend") || parser.isSet("document") || parser.isSet("compiler")) { throw std::runtime_error("packaged apps cannot replace their backend or view"); }
-            directory = QFileInfo(parser.value("bundle")).absoluteFilePath();
+            directory = QFileInfo(packagedRoot).absoluteFilePath();
             auto config = QJsonDocument::fromJson(fileText(directory + "/__hyui_app.json")).object();
             if (config["format"].toInt() != 1) { throw std::runtime_error("unsupported application bundle"); }
             auto resource = [&](const QString& key) {
