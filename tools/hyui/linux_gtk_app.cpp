@@ -752,6 +752,9 @@ struct App {
             auto target=controls.find(attr(n,"target"));
             if(target==controls.end() || !target->second.widget)continue;
             GtkWidget* pop=gtk_popover_new();
+            // Hide before parenting: GTK may map visible children as soon
+            // as they are attached, which would grab input prematurely.
+            gtk_widget_set_visible(pop,FALSE);
             if(n->tag=="ContextMenu") {
                 GtkWidget* contents=gtk_box_new(GTK_ORIENTATION_VERTICAL,2);
                 for(auto& item:n->children)
