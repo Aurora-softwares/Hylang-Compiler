@@ -508,6 +508,10 @@ struct App {
             else if(prop=="text" && w) {
                 if(n->tag=="Label")gtk_label_set_text(GTK_LABEL(w),v.c_str());
                 else if(n->tag=="Input"||n->tag=="SearchInput")gtk_editable_set_text(GTK_EDITABLE(w),v.c_str());
+                else if(n->tag=="TextArea" && GTK_IS_TEXT_VIEW(w)) {
+                    GtkTextBuffer* buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(w));
+                    gtk_text_buffer_set_text(buffer,v.c_str(),-1);
+                }
             } else if(prop=="checked" && w) {
                 if(n->tag=="CheckBox")gtk_check_button_set_active(GTK_CHECK_BUTTON(w),truth(v));
                 if(n->tag=="Switch")gtk_switch_set_active(GTK_SWITCH(w),truth(v));
