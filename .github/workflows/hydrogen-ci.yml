@@ -40,6 +40,8 @@ jobs:
           cmake --build build/bootstrap --target hy --parallel 3
           mkdir -p build/self_hosting/linux
           ./build/bootstrap/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build/self_hosting/linux/hydrogen-stage1
+      - name: Verify the default Linux host target and explicit cross-targets
+        run: python3 tests/targets/test-host-default.py build/self_hosting/linux/hydrogen-stage1
       - name: Build and run direct native GTK4 Studio
         run: |
           dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' \
@@ -103,9 +105,10 @@ jobs:
         run: |
           cmake --build build-sdk --target hy --parallel 3
           build-sdk/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-sdk/hydrogen-stage1
+          python3 tests/targets/test-host-default.py build-sdk/hydrogen-stage1
           mkdir -p build/bootstrap
           cp build-sdk/hyui-native build/bootstrap/hyui-native
-          ./build-sdk/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target macos --ui-sdk build-sdk/native-sdk -o build-sdk/Studio
+          ./build-sdk/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build-sdk/native-sdk -o build-sdk/Studio
           test -x build-sdk/Studio.app/Contents/Resources/app/__hyui_backend
           test ! -e build-sdk/Studio.app/Contents/MacOS/hyui-launcher
           plutil -extract CFBundleExecutable raw build-sdk/Studio.app/Contents/Info.plist | grep -qx hyui
@@ -152,7 +155,9 @@ jobs:
           if (!$seed) { throw 'C++ bootstrap seed was not generated' }
           & $seed build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build-sdk/hydrogen-stage1.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & build-sdk/hydrogen-stage1.exe build samples/ui_studio/Studio.hyproj --target windows --ui-sdk build-sdk/native-sdk -o build-sdk/Studio
+          python tests/targets/test-host-default.py build-sdk/hydrogen-stage1.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & build-sdk/hydrogen-stage1.exe build samples/ui_studio/Studio.hyproj --ui-sdk build-sdk/native-sdk -o build-sdk/Studio
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (!(Test-Path build-sdk/Studio.exe) -or !(Test-Path build-sdk/Studio.exe.runtime/app/__hyui_backend.exe)) {
             throw 'Self-hosted WinUI application was not packaged'
