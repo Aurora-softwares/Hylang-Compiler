@@ -19,6 +19,9 @@ sudo apt install build-essential binutils pkg-config libgtk-4-dev
 
 The native frontend is compiled from `tools/hyui/linux_gtk_app.cpp` in
 the Hydrogen source checkout: run the UI build from the repository root.
+The normal Linux `bootstrap.sh` no longer attempts to build the optional
+Qt UI host. Set `HYDROGEN_BUILD_UI=ON` or `HYDROGEN_BOOTSTRAP_UI=on`
+to explicitly build the legacy SDK tooling if needed.
 GTK4 remains a system runtime dependency. The compiled Hydrogen event backend
 is embedded in the ELF and executed through a Linux anonymous `memfd` child
 process until in-process Hydrogen native linking is available. This is one
