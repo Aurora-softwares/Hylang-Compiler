@@ -821,22 +821,18 @@ struct App {
         static_cast<App*>(data)->activate(GTK_APPLICATION(app));
     }
     int run(int argc,char** argv) {
-        std::string content;
-        std::ifstream view(folder/"__hyui_document");
-        std::string doc;
-        if(!std::getline(view,doc)||doc.empty()||doc[0]=='/'||
-           doc.find("..")!=std::string::npos||doc.find('\\')!=std::string::npos)
-            throw std::runtime_error("invalid packaged HYUI document path");
-        std::ifstream in(folder/doc,std::ios::binary);
-        if(!in)throw std::runtime_error("cannot read packaged HYUI document");
-        content.assign(std::istreambuf_iterator<char>(in),{});
-        document.parse(content);
+        std::string doc(resource("__hyui_document"));
+        while (!doc.empty() && (doc.back() == '\n' || doc.back() == '\r')) doc.pop_back();
+        const auto xml = resource(doc);
+        document.parse(std::string(xml));
+        prepareBackend();
         for(int i=1;i<argc;++i) {
             std::string arg=argv[i];
             if(arg=="--state-output"&&i+1<argc)statePath=argv[++i];
             else if(arg=="--event"&&i+1<argc)eventRequest=argv[++i];
             else if(arg=="--help") {
-                std::cout<<"Hydrogen native GTK4 application (--event handler:sender --state-output path)\n";
+                std::cout<<"Hydrogen native GTK4 application (--event handler:sender --state-output path)\n"
+                         << SINGLE_FILE_MAGIC << "\n";
                 return 0;
             } else throw std::runtime_error("unsupported direct GTK4 argument: "+arg);
         }
@@ -853,13 +849,7 @@ struct App {
 };
 int main(int argc,char** argv) {
     try {
-        std::string executable(8192,'\0');
-        ssize_t len=readlink("/proc/self/exe",executable.data(),executable.size()-1);
-        if(len<=0)throw std::runtime_error("cannot resolve GTK4 application executable");
-        executable.resize(len);
-        fs::path folder=executable+".runtime";
-        folder/="app";
-        App app(folder);
+        App app;
         return app.run(argc,argv);
     } catch(const std::exception& e) {
         std::cerr<<"Hydrogen GTK4: "<<e.what()<<"\n";
