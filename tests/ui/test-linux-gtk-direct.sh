@@ -30,15 +30,15 @@ output="$work/Studio-stage$index"
 "$compiler" build samples/ui_studio/Studio.hyproj -o "$output" \
   --hide-spinner --hide-log --hide-progress
 test -x "$output"
-test -x "$output.runtime/app/__hyui_backend"
-test -f "$output.runtime/app/Studio.hyui"
-test -f "$output.runtime/app/assets/hydrogen.png"
-test -f "$output.runtime/app/__hyui_document"
-test ! -e "$output.runtime/hyui"
-test ! -e "$output.runtime/hyui-native"
-test ! -e "$output.runtime/hyui-launcher"
-grep -q '"renderer":"gtk4-direct"' "$output.runtime/hyui-runtime.json"
+# One ELF is delivered. No backend, launcher, runtime folder, document or
+# asset file may remain on the filesystem beside the output.
+test ! -e "$output.runtime"
+test ! -e "$output.ui-staging"
+test ! -e "$output.ui-launcher"
+test ! -e "$output.ui-backup"
+test ! -e "$output.ui-backup.runtime"
 file "$output" | grep -q 'ELF 64-bit'
+"$output" --help | grep -q 'HYDROGEN_UI_SINGLE_FILE_V1'
 if ldd "$output" | grep -q 'Qt6'; then
   echo "Direct GTK4 frontend unexpectedly links to Qt" >&2
   exit 1
@@ -49,7 +49,11 @@ export GDK_BACKEND=x11
 export GTK_A11Y=none
 # GTK warnings about invalid widget types must be caught as regressions.
 export G_DEBUG=fatal-criticals
-"$output" --event ShowControls:showControls --state-output "$work/state.json"
+# A copied ELF must run without a build tree, SDK, HYUI document, or
+# companion folder. The working directory is intentionally unrelated.
+relocated="$work/Relocated-Stage$index"
+cp -- "$output" "$relocated"
+(cd /tmp && "$relocated" --event ShowControls:showControls --state-output "$work/state.json")
 python3 - "$work/state.json" <<'PY'
 import json
 import sys
@@ -67,6 +71,11 @@ from pathlib import Path
 state=json.loads(Path(sys.argv[1]).read_text())
 assert state["pages.value"] == 0, state
 PY
-echo "Direct GTK4 application generated, launched, and dispatched Hydrogen events without hyui-native: $compiler"
+# Rebuilding a generated file is supported without a stale runtime directory.
+"$compiler" build samples/ui_studio/Studio.hyproj -o "$output" \
+  --hide-spinner --hide-log --hide-progress
+test -x "$output"
+test ! -e "$output.runtime"
+echo "Single-file GTK4 application generated, relocated, rebuilt, and dispatched Hydrogen events: $compiler"
 done
-echo "Native GTK4 direct builds passed for ${#compilers[@]} compiler stage(s)."
+echo "Native GTK4 single-executable builds passed for ${#compilers[@]} compiler stage(s)."
