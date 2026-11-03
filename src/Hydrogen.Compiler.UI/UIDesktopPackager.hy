@@ -126,7 +126,7 @@ namespace Hydrogen.Compiler.UI {
             Del(output + ".ui-launcher", false);
         }
 
-        private static string CopyAsset(string root, string app, string relative) {
+        public static string CopyAsset(string root, string app, string relative) {
             if (relative == "" || relative[0] == "/" || relative == "." ||
                 Has(relative, "..") || Has(relative, "\\") || Has(relative, ":") ||
                 Has(relative, "__hyui")) { return "unsafe desktop UI asset path"; }
