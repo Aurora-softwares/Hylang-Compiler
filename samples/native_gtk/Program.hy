@@ -14,8 +14,11 @@ namespace HydrogenNativeGtk {
                 if (!window.PollClick()) { return 4; }
                 window.SetLabelText("Clicked directly inside Hydrogen");
                 System.Console.WriteLine("HYDROGEN_NATIVE_GTK_CLICKED");
+                System.Console.WriteLine("HYDROGEN_NATIVE_GTK_BEFORE_CLOSE");
                 window.Close();
+                System.Console.WriteLine("HYDROGEN_NATIVE_GTK_AFTER_CLOSE");
                 window.Release();
+                System.Console.WriteLine("HYDROGEN_NATIVE_GTK_AFTER_RELEASE");
                 return 0;
             }
 
