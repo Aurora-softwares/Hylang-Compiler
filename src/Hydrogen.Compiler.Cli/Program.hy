@@ -1035,6 +1035,13 @@ namespace Hydrogen.Compiler.Cli {
                 System.Console.Write(result.DiagnosticsText());
                 return 1;
             }
+            // Native ELF and Mach-O files are written byte-for-byte by the
+            // self-hosted emitter. Make them executable on Unix hosts.
+            if (!uefi && !windows && !System.Host.Process.IsWindows() &&
+                System.Host.Process.Run("chmod +x -- " + QuoteCommandPath(output)) != 0) {
+                System.Console.WriteLine("error: cannot make compiled output executable");
+                return 1;
+            }
             System.Console.WriteLine("wrote " + output);
             return 0;
         }
@@ -1334,11 +1341,12 @@ namespace Hydrogen.Compiler.Cli {
                 System.Console.Write(result.DiagnosticsText());
                 return 1;
             }
-            // A standalone HYUI backend is an ordinary executable. It must
-            // be runnable even when built without its native window wrapper.
-            if (uiBackend && projectType == "exe" && !System.Host.Process.IsWindows() &&
+            // ELF and Mach-O outputs are emitted directly to disk. On Unix,
+            // they need executable permission, whether or not a UI is present.
+            if ((projectType == "exe" || projectType == "macos") &&
+                !System.Host.Process.IsWindows() &&
                 System.Host.Process.Run("chmod +x -- " + QuoteCommandPath(output)) != 0) {
-                System.Console.WriteLine("error: cannot make Hydrogen UI backend executable");
+                System.Console.WriteLine("error: cannot make generated executable runnable");
                 return 1;
             }
             if (!progress.ReportsResult()) { System.Console.WriteLine("wrote " + output); }
@@ -1454,6 +1462,12 @@ namespace Hydrogen.Compiler.Cli {
                 if (progress != null) { progress.Stop(); }
                 if (!result.Success()) {
                     System.Console.Write(result.DiagnosticsText());
+                    return 1;
+                }
+                if (!check && !System.Host.Process.IsWindows() &&
+                    (childProject.Type() == "exe" || childProject.Type() == "macos") &&
+                    System.Host.Process.Run("chmod +x -- " + QuoteCommandPath(outputPath)) != 0) {
+                    System.Console.WriteLine("error: cannot make collection output executable");
                     return 1;
                 }
                 if (check) {
