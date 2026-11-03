@@ -21,9 +21,8 @@ elseif(HYDROGEN_UI_PLATFORM STREQUAL "Darwin")
     set(_app "${HYDROGEN_UI_SDK_DIR}/macos-x64.app")
     set(_contents "${_app}/Contents")
     set(_host "${HYDROGEN_UI_BUILD_DIR}/hyui-native")
-    set(_launcher "${HYDROGEN_UI_BUILD_DIR}/hyui-launcher")
-    if(NOT EXISTS "${_host}" OR NOT EXISTS "${_launcher}")
-        message(FATAL_ERROR "Native AppKit runtime or launcher was not built")
+    if(NOT EXISTS "${_host}")
+        message(FATAL_ERROR "Native AppKit runtime was not built")
     endif()
     execute_process(COMMAND lipo -archs "${_host}"
         OUTPUT_VARIABLE _architectures RESULT_VARIABLE _arch_status
@@ -33,10 +32,10 @@ elseif(HYDROGEN_UI_PLATFORM STREQUAL "Darwin")
     endif()
     file(MAKE_DIRECTORY "${_contents}/MacOS" "${_contents}/Resources/app")
     configure_file("${_host}" "${_contents}/MacOS/hyui" COPYONLY)
-    configure_file("${_launcher}" "${_contents}/MacOS/hyui-launcher" COPYONLY)
+    file(REMOVE "${_contents}/MacOS/hyui-launcher")
     file(WRITE "${_contents}/Info.plist"
         "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict>"
-        "<key>CFBundleExecutable</key><string>hyui-launcher</string>"
+        "<key>CFBundleExecutable</key><string>hyui</string>"
         "<key>CFBundleIdentifier</key><string>software.aurora.hydrogen.app</string>"
         "<key>CFBundlePackageType</key><string>APPL</string>"
         "<key>NSHighResolutionCapable</key><true/></dict></plist>")
