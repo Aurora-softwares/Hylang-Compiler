@@ -25,6 +25,9 @@ This is an architectural migration, **not completed by the initial preflight com
 - 🟢 On Linux, default `hy build <ui.hyproj>` generates and launches an application-specific native GTK4 executable with no Qt or `hyui-native` dependency. GTK4 development headers and a C++ compiler are presently required at build time.
 - 🟢 Linux `hy build <ui.hyproj>` now produces **one relocatable GTK4 ELF** containing the compiled Hydrogen backend, HYUI document and assets. No `.runtime` directory is shipped.
 - 🟡 The embedded Hydrogen backend executes from a Linux `memfd` child process for each event. This is **one file, not yet one process**. In-process calls require a Hydrogen native object/linker ABI.
+- 🟡 Windows native builds on Windows now use `UIWindowsSinglePackager` to invoke the supported WinUI 3 self-contained `PublishSingleFile` path. The compiler embeds its compiled PE backend and HYUI resources into the published .NET assembly; the app extracts its private data at startup. **CI validation is pending.**
+- 🟡 macOS AppKit builds now launch `Contents/MacOS/hyui` as the app's actual `CFBundleExecutable` without `hyui-launcher`. The standard `.app` bundle contains the Qt Core support libraries, UI assets and compiled Hydrogen backend. **This is a single native .app bundle, not a single Mach-O file; CI validation is pending.**
+- 🔴 True in-process Hydrogen callbacks remain a separate ABI/linker milestone across Linux, Windows and macOS.
 - 🔴 Implement the full native `.hyui` schema in Hydrogen so compilation validates exactly what runtime accepts.
 - 🔴 Replace process-based `Bridge` event delivery with **in-process** calls into the compiled Hydrogen application.
 - 🔴 Define target-specific UI runtime ABI for Linux GTK4/libadwaita, Windows WinUI 3, and macOS AppKit. Preserve OS theme and controls.
@@ -57,4 +60,4 @@ bash tests/ui/test-ui-backend-no-host.sh
 # dbus-run-session -- xvfb-run -a bash tests/ui/test-linux-gtk-direct.sh --all-stages
 ```
 
-**Current status:** The Linux default path creates one ELF file with GTK4 widgets, an embedded UI document/assets and Hydrogen backend. `tar` and `objcopy` are used only **at build time** to link resources; execution still needs GTK4 system libraries. The Hydrogen backend runs from an in-memory file descriptor in a child process (no extracted disk files), so **single-process UI events remain unfinished**. Windows and macOS are also pending. CI must pass on this implementation before considering it verified.
+**Current status:** Linux produces one GTK4 ELF and its single-file CI has passed. Windows has a new unpackaged self-contained WinUI 3 single-EXE publishing path; Windows may extract .NET/Windows App SDK runtime dependencies and the Hydrogen backend into temporary folders at launch. macOS produces the standard `.app` bundle with AppKit as the direct entry executable (no launcher), but it currently carries separate runtime libraries and a compiled Hydrogen backend. Windows and macOS changes need CI verification. **Single-process event dispatch is not yet implemented on any platform.**
