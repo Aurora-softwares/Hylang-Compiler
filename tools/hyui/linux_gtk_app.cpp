@@ -168,9 +168,23 @@ struct App {
     std::vector<std::unique_ptr<Hook>> hooks;
     std::string statePath,eventRequest;
     bool applying=false;
+    bool closing=false;
+    bool selfTestClose=false;
     int generatedId=0;
     App():resources(embeddedResources()) {}
-    ~App() { if (backendFd >= 0) close(backendFd); }
+    ~App() {
+        // Weak pointer slots reside in this map; unregister any that survive
+        // the GTK window so no later GObject finalizer writes into freed memory.
+        for(auto& entry:controls)replaceControlWidget(entry.second,nullptr);
+        if (backendFd >= 0) close(backendFd);
+    }
+    static void replaceControlWidget(Control& control,GtkWidget* next) {
+        if(control.widget)g_object_remove_weak_pointer(G_OBJECT(control.widget),
+            reinterpret_cast<gpointer*>(&control.widget));
+        control.widget=next;
+        if(next)g_object_add_weak_pointer(G_OBJECT(next),
+            reinterpret_cast<gpointer*>(&control.widget));
+    }
     std::string_view resource(const std::string& path) const {
         if (path.empty() || path[0] == '/' || path.find("..") != std::string::npos ||
             path.find('\\') != std::string::npos)
@@ -202,7 +216,12 @@ struct App {
     }
     void registerControl(Node* n,GtkWidget* widget,const char* kind) {
         auto name=id(n);
-        controls[name]={n,widget,kind};
+        // A GTK widget may be finalized while its node/state remains stored.
+        // Keep this non-owning reference null once its GObject is gone.
+        Control& control=controls[name];
+        replaceControlWidget(control,widget);
+        control.node=n;
+        control.kind=kind;
         for(auto key:{"text","value","checked","enabled","visible","running","open","path"}) {
             if(n->attrs.count(key)) state[name+"."+key]=attr(n,key);
         }
@@ -253,8 +272,8 @@ struct App {
         h->app->state[name+".open"]="false";
         GtkWidget* dialog=h->app->controls[name].widget;
         if(dialog) {
+            h->app->replaceControlWidget(h->app->controls[name],nullptr);
             gtk_window_destroy(GTK_WINDOW(dialog));
-            h->app->controls[name].widget=nullptr;
         }
         auto closeHandler=attr(h->node,"onClose");
         if(!closeHandler.empty())h->app->dispatch(closeHandler,name);
@@ -263,7 +282,7 @@ struct App {
         auto name=id(n);
         if(controls[name].widget)return;
         GtkWidget* dialog=gtk_window_new();
-        controls[name].widget=dialog;
+        replaceControlWidget(controls[name],dialog);
         gtk_window_set_title(GTK_WINDOW(dialog),attr(n,"title","Hydrogen").c_str());
         gtk_window_set_transient_for(GTK_WINDOW(dialog),GTK_WINDOW(window));
         gtk_window_set_modal(GTK_WINDOW(dialog),TRUE);
@@ -344,11 +363,23 @@ struct App {
     }
     std::string value(const Control& c) {
         auto* w=c.widget;
-        if(!w)return state[id(c.node)+".value"];
-        auto tag=c.node->tag;
+        const auto& tag=c.node->tag;
+        // GTK tears down children before the application's control map.
+        // Never query an already finalized or wrong-type widget.
+        const auto cached=[&](const char* property) {
+            return state[id(c.node)+"."+property];
+        };
+        if(!w) {
+            if(tag=="Input"||tag=="SearchInput"||tag=="TextArea"||tag=="PasswordInput")return cached("text");
+            if(tag=="CheckBox"||tag=="Switch")return cached("checked");
+            return cached("value");
+        }
         if(tag=="Input"||tag=="SearchInput"||tag=="PasswordInput")return gtk_editable_get_text(GTK_EDITABLE(w));
         if(tag=="TextArea") {
-            GtkTextIter a,b;auto* buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(w));
+            if(!GTK_IS_TEXT_VIEW(w))return cached("text");
+            auto* buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(w));
+            if(!buffer)return cached("text");
+            GtkTextIter a,b;
             gtk_text_buffer_get_bounds(buffer,&a,&b);
             gchar* str=gtk_text_buffer_get_text(buffer,&a,&b,FALSE);
             std::string result=str?str:"";g_free(str);return result;
@@ -356,14 +387,20 @@ struct App {
         if(tag=="Slider")return std::to_string(int(gtk_range_get_value(GTK_RANGE(w))));
         if(tag=="NumberInput")return std::to_string(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(w)));
         if(tag=="CheckBox")return gtk_check_button_get_active(GTK_CHECK_BUTTON(w))?"true":"false";
-        if(tag=="Switch")return gtk_switch_get_active(GTK_SWITCH(w))?"true":"false";
+        if(tag=="Switch")return GTK_IS_SWITCH(w)?
+            (gtk_switch_get_active(GTK_SWITCH(w))?"true":"false"):cached("checked");
         if(tag=="Select")return std::to_string(gtk_drop_down_get_selected(GTK_DROP_DOWN(w)));
         if(tag=="ListBox"||tag=="Table") {
             auto* row=gtk_list_box_get_selected_row(GTK_LIST_BOX(w));
             return std::to_string(row?gtk_list_box_row_get_index(row):0);
         }
         if(tag=="Tabs") {
-            std::string visible=gtk_stack_get_visible_child_name(GTK_STACK(w));
+            if(!GTK_IS_STACK(w))return cached("value");
+            // GTK legitimately returns NULL if the current page is removed
+            // during window destruction / a stack transition.
+            const char* name=gtk_stack_get_visible_child_name(GTK_STACK(w));
+            if(!name)return cached("value");
+            std::string visible(name);
             int count=0;
             for(auto& child:c.node->children) {
                 if(id(child.get())==visible)return std::to_string(count);
@@ -375,6 +412,7 @@ struct App {
         return state[id(c.node)+".value"];
     }
     void snapshot() {
+        if(closing)return;
         for(auto& [name,c]:controls) {
             std::string prop;
             const auto& tag=c.node->tag;
@@ -493,7 +531,9 @@ struct App {
         applying=false;
     }
     void dispatch(const std::string& handler,const std::string& sender) {
-        if(handler.empty()||handler.size()>128)return;
+        // Widget teardown emits notify/change signals. Running Hydrogen from
+        // those callbacks would inspect controls GTK has already destroyed.
+        if(closing||handler.empty()||handler.size()>128)return;
         snapshot();
         std::vector<std::string> args={"--hyui-event",handler,sender};
         std::size_t bytes=0;
@@ -838,8 +878,19 @@ struct App {
         }
         return G_SOURCE_REMOVE;
     }
+    static gboolean closeRequested(GtkWindow*,gpointer data) {
+        static_cast<App*>(data)->closing=true;
+        return FALSE; // Allow GTK to perform the normal close and destroy.
+    }
+    static gboolean closeForTest(gpointer data) {
+        auto* self=static_cast<App*>(data);
+        gtk_window_close(GTK_WINDOW(self->window));
+        return G_SOURCE_REMOVE;
+    }
     void activate(GtkApplication* gtkApp) {
+        closing=false;
         window=gtk_application_window_new(gtkApp);
+        g_signal_connect(window,"close-request",G_CALLBACK(closeRequested),this);
         const auto* n=document.root.get();
         gtk_window_set_title(GTK_WINDOW(window),attr(n,"title","Hydrogen").c_str());
         gtk_window_set_default_size(GTK_WINDOW(window),number(attr(n,"width"),1100),number(attr(n,"height"),820));
@@ -861,6 +912,7 @@ struct App {
         }
         if(!attr(n,"onLoad").empty())dispatch(attr(n,"onLoad"),id(document.root.get()));
         if(!statePath.empty()||!eventRequest.empty())g_timeout_add(300,scripted,this);
+        if(selfTestClose)g_timeout_add(300,closeForTest,this);
     }
     static void activated(GApplication* app,gpointer data) {
         static_cast<App*>(data)->activate(GTK_APPLICATION(app));
@@ -875,6 +927,7 @@ struct App {
             std::string arg=argv[i];
             if(arg=="--state-output"&&i+1<argc)statePath=argv[++i];
             else if(arg=="--event"&&i+1<argc)eventRequest=argv[++i];
+            else if(arg=="--self-test-close")selfTestClose=true;
             else if(arg=="--help") {
                 std::cout<<"Hydrogen native GTK4 application (--event handler:sender --state-output path)\n"
                          << SINGLE_FILE_MAGIC << "\n";
