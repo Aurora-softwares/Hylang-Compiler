@@ -30,6 +30,20 @@ output="$work/Studio-stage$index"
 "$compiler" build samples/ui_studio/Studio.hyproj -o "$output" \
   --hide-spinner --hide-log --hide-progress
 test -x "$output"
+# Projects must build from their own checkout, not only from Hydrogen's
+# source root. This reproduces: cd Quark-IDE && /path/to/hydrogen-stage1
+# build Quark.hyproj, where the GTK4 frontend source is not in the CWD.
+case "$compiler" in
+  /*) absoluteCompiler="$compiler" ;;
+  *) absoluteCompiler="$root/$compiler" ;;
+esac
+outOfTree="$work/External-stage$index"
+(cd "$work" &&
+  "$absoluteCompiler" build "$root/samples/ui_studio/Studio.hyproj" -o "$outOfTree" \
+    --hide-spinner --hide-log --hide-progress)
+test -x "$outOfTree"
+test ! -e "$outOfTree.runtime"
+"$outOfTree" --help | grep -q 'HYDROGEN_UI_SINGLE_FILE_V1'
 # One ELF is delivered. No backend, launcher, runtime folder, document or
 # asset file may remain on the filesystem beside the output.
 test ! -e "$output.runtime"

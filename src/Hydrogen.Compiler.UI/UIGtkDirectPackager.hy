@@ -25,6 +25,24 @@ namespace Hydrogen.Compiler.UI {
             return Run("test -e " + Quote(file)) == 0;
         }
 
+        // The UI compiler may be called from an unrelated project directory.
+        // Resolve the native frontend relative to the running compiler ELF,
+        // not to the shell's current working directory. The spawned /bin/sh
+        // is a child of Hydrogen: /proc/$PPID/exe points to that compiler.
+        // Walk parents to accommodate both build/self_hosting/linux/hydrogen-
+        // stage1 and build/bootstrap/hy without a hard-coded build layout.
+        // The substitution is quoted as one shell argument, so spaces in
+        // checkout paths cannot split or alter the source pathname.
+        private static string NativeSourceArgument() {
+            return "\"$(exe=$(readlink -f /proc/$PPID/exe); " +
+                "dir=${exe%/*}; " +
+                "for step in 1 2 3 4 5 6 7 8; do " +
+                "source=$dir/tools/hyui/linux_gtk_app.cpp; " +
+                "if test -f \"$source\"; then printf '%s' \"$source\"; exit 0; fi; " +
+                "parent=${dir%/*}; if test \"$parent\" = \"$dir\"; then break; fi; " +
+                "dir=$parent; done; exit 1)\"";
+        }
+
         public static string Backend(string output) {
             return output + ".ui-staging/app/__hyui_backend";
         }
@@ -37,8 +55,8 @@ namespace Hydrogen.Compiler.UI {
                 Run("pkg-config --exists gtk4") != 0) {
                 return "single-file GTK4 builds need c++, tar, objcopy and GTK4 headers (Ubuntu: sudo apt install build-essential binutils pkg-config libgtk-4-dev)";
             }
-            if (!System.IO.File.Exists("tools/hyui/linux_gtk_app.cpp")) {
-                return "native GTK4 source not found: tools/hyui/linux_gtk_app.cpp (build from Hydrogen source root)";
+            if (Run("test -f " + NativeSourceArgument()) != 0) {
+                return "native GTK4 source not found beside the Hydrogen compiler; install the GTK4 frontend with Hydrogen";
             }
             string stage = output + ".ui-staging";
             if (Exists(stage) || Exists(output + ".ui-launcher") || Exists(output + ".ui-backup") ||
@@ -107,7 +125,7 @@ namespace Hydrogen.Compiler.UI {
             }
 
             string command = "c++ -std=c++20 -O2 -Wall -Wextra -Wl,-z,noexecstack " +
-                Quote("tools/hyui/linux_gtk_app.cpp") + " " +
+                NativeSourceArgument() + " " +
                 Quote(stage + "/bundle.o") + " -o " +
                 Quote(output + ".ui-launcher") +
                 " $(pkg-config --cflags --libs gtk4)";
