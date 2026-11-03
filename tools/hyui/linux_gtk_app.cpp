@@ -714,6 +714,8 @@ struct App {
                 auto* button=gtk_menu_button_new();
                 gtk_menu_button_set_label(GTK_MENU_BUTTON(button),attr(child.get(),"text").c_str());
                 auto* pop=gtk_popover_new();
+                // Menu buttons control when their popovers become visible.
+                gtk_widget_set_visible(pop,FALSE);
                 auto* items=gtk_box_new(GTK_ORIENTATION_VERTICAL,3);
                 for(auto& item:child->children)
                     append(items,build(item.get()),child.get(),item.get());
@@ -798,6 +800,14 @@ struct App {
             h->app->dispatch(h->handler,h->app->id(h->node));
         return G_SOURCE_CONTINUE;
     }
+    static int countVisiblePopovers(GtkWidget* parent) {
+        if(!parent)return 0;
+        int count=GTK_IS_POPOVER(parent) && gtk_widget_get_visible(parent)?1:0;
+        for(GtkWidget* child=gtk_widget_get_first_child(parent);child;
+            child=gtk_widget_get_next_sibling(child))
+            count+=countVisiblePopovers(child);
+        return count;
+    }
     static gboolean scripted(gpointer data) {
         auto* self=static_cast<App*>(data);
         if(!self->eventRequest.empty()) {
@@ -809,13 +819,8 @@ struct App {
             // The scripted UI regression test inspects actual GTK widget
             // visibility. A mistakenly mapped GtkPopover steals focus and
             // makes the Studio window unusable despite working backend events.
-            int visiblePopovers=0;
-            for(const auto& entry:self->controls) {
-                auto* widget=entry.second.widget;
-                if(widget && GTK_IS_POPOVER(widget) && gtk_widget_get_visible(widget))
-                    ++visiblePopovers;
-            }
-            self->state["__hyui.visible_popovers"]=std::to_string(visiblePopovers);
+            self->state["__hyui.visible_popovers"]=
+                std::to_string(countVisiblePopovers(self->window));
             std::ofstream out(self->statePath);
             out<<"{";
             bool first=true;
