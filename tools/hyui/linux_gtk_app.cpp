@@ -464,6 +464,11 @@ struct App {
         for(auto& line:parts(output,'\n')) {
             if(line.compare(0,5,"HYUI\t")!=0)continue;
             auto fields=parts(line,'\t');
+            if(fields.size()==2 && fields[1]=="EXIT") {
+                closing=true;
+                if(application)g_application_quit(G_APPLICATION(application));
+                return;
+            }
             if(fields.size()>=4 && fields[1]=="CLIPBOARD") {
                 const std::string name=decode(fields[3]);
                 auto ctl=controls.find(name);

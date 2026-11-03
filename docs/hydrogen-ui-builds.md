@@ -142,3 +142,14 @@ cross-target use `--target windows` or `--target macos`.
 - The compiler's Stage 0 bootstrap still uses its C++ seed. The
   developer-facing Stage 1 compiler and UI build orchestration are
   self-hosted Hydrogen.
+
+## Launcher-to-workspace transitions
+
+`Hydrogen.UI.Application.Exit()` prints a host control message in response to
+an event. Linux's embedded GTK4 host, Windows WinUI3, and the legacy Qt-backed
+native hosts interpret `HYUI\\tEXIT` as a request to quit the current window's
+application event loop. This is **not** a process kill and does not open the
+next window itself; a launcher can spawn a second independently packaged
+Hydrogen UI executable first and then call `Application.Exit()`. Never
+assume `Application.Open(...)` invoked inside an event will replace the
+current native document; `Open` only selects the initial view.

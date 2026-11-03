@@ -419,6 +419,10 @@ public sealed partial class NativeWindow : Window
         foreach (string line in output.Split('\n')) {
             string[] parts = line.TrimEnd('\r').Split('\t'); if (parts.Length == 0 || parts[0] != "HYUI") continue;
             if (parts.Length == 3 && parts[1] == "OPEN") continue;
+            if (parts.Length == 2 && parts[1] == "EXIT") {
+                Microsoft.UI.Xaml.Application.Current.Exit();
+                return;
+            }
             if (parts.Length >= 4 && parts[1] == "CLIPBOARD") {
                 string clipboardId = Decode(parts[3]), operation = parts[2];
                 if (!nodes.TryGetValue(clipboardId, out var clipboardNode) || clipboardNode.Name.LocalName != "Clipboard" ||

@@ -33,6 +33,7 @@ signals:
     void errorChanged();
     void busyChanged();
     void idle();
+    void exitRequested();
     void clipboardRequested(const QString& id, const QString& operation, const QString& text);
 private:
     void next();

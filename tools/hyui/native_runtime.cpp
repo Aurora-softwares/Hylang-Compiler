@@ -77,6 +77,8 @@ int nativeMain(int argc, char** argv, NativeFactory factory) {
         document.sourcePath = QFileInfo(view).absoluteFilePath();
         if (parser.isSet("validate")) { QTextStream(stdout) << "HYUI v1 valid\n"; return 0; }
         Bridge bridge(document, backend, directory);
+        QObject::connect(&bridge, &Bridge::exitRequested, &app, &QCoreApplication::quit,
+                         Qt::QueuedConnection);
         auto native = factory(document, bridge);
         if (!bridge.apply(startup)) { throw std::runtime_error(bridge.error().toStdString()); }
         int width = document.window.attributes.value("width", "1100").toInt(), height = document.window.attributes.value("height", "820").toInt();

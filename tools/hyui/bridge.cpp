@@ -75,6 +75,10 @@ bool Bridge::apply(const QByteArray& response) {
         if (!raw.startsWith("HYUI\t")) { continue; }
         const auto parts = QString::fromUtf8(raw).split('\t');
         if (parts.size() == 3 && parts[1] == "OPEN") { continue; }
+        if (parts.size() == 2 && parts[1] == "EXIT") {
+            emit exitRequested();
+            return true;
+        }
         if (parts.size() >= 4 && parts[1] == "CLIPBOARD") {
             const QString operation = parts[2], id = decode(parts[3]);
             if (!document.clipboardIds.contains(id) ||
