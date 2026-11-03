@@ -92,61 +92,60 @@ namespace Hydrogen.Compiler.UI {
                 i = i + 1;
             }
             System.IO.File.WriteAllText(app + "/__hyui_document", document + "\n");
-            System.IO.File.WriteAllText(stage + "/hyui-runtime.json",
-                "{\"format\":1,\"target\":\"linux-x64\",\"renderer\":\"gtk4-direct\"}");
 
-            // The application-specific GTK4 executable is built here rather
-            // than shipped as another host program. The backend and data are
-            // private resources beside the executable during this milestone.
-            string command = "c++ -std=c++20 -O2 -Wall -Wextra " +
-                Quote("tools/hyui/linux_gtk_app.cpp") + " -o " +
+            // All application files are embedded into the final ELF. The
+            // archive and object exist only inside staging during compilation.
+            // ustar rejects unsafe links/unsupported overlong paths at build
+            // time rather than leaving the deployed app to guess at them.
+            if (Run("tar --format=ustar -C " + Quote(app) +
+                    " -cf " + Quote(stage + "/bundle.tar") + " .") != 0) {
+                return "cannot archive Hydrogen application and HYUI resources";
+            }
+            if (Run("cd " + Quote(stage) +
+                    " && objcopy -I binary -O elf64-x86-64 -B i386:x86-64 bundle.tar bundle.o") != 0) {
+                return "cannot embed Hydrogen code and resources into ELF object";
+            }
+
+            string command = "c++ -std=c++20 -O2 -Wall -Wextra -Wl,-z,noexecstack " +
+                Quote("tools/hyui/linux_gtk_app.cpp") + " " +
+                Quote(stage + "/bundle.o") + " -o " +
                 Quote(output + ".ui-launcher") +
                 " $(pkg-config --cflags --libs gtk4)";
             if (Run(command) != 0) {
-                return "GTK4 application compilation failed (check C++ diagnostics and installed GTK4 development libraries)";
+                return "single-file GTK4 compilation failed; check the C++ diagnostics and GTK4 development libraries";
             }
             if (Run("chmod +x -- " + Quote(output + ".ui-launcher")) != 0) {
-                return "cannot make the native GTK4 application executable";
+                return "cannot make the generated single-file GTK4 application executable";
             }
 
             bool old = Exists(output);
-            if (old) {
-                if (Run("mv -- " + Quote(output) + " " + Quote(output + ".ui-backup")) != 0) {
-                    return "cannot back up the previous GTK4 executable";
-                }
-                if (Run("mv -- " + Quote(output + ".runtime") + " " +
-                        Quote(output + ".ui-backup.runtime")) != 0) {
-                    Run("mv -- " + Quote(output + ".ui-backup") + " " + Quote(output));
-                    return "cannot back up the previous GTK4 resources";
-                }
+            bool oldRuntime = Exists(output + ".runtime");
+            if (old && Run("mv -- " + Quote(output) + " " + Quote(output + ".ui-backup")) != 0) {
+                return "cannot back up the previous GTK4 executable";
             }
-            if (Run("mv -- " + Quote(stage) + " " + Quote(output + ".runtime")) != 0) {
-                Restore(output, old, false);
-                return "cannot publish GTK4 application resources";
+            if (oldRuntime &&
+                Run("mv -- " + Quote(output + ".runtime") + " " +
+                    Quote(output + ".ui-backup.runtime")) != 0) {
+                if (old) { Run("mv -- " + Quote(output + ".ui-backup") + " " + Quote(output)); }
+                return "cannot back up the previous GTK4 resources";
             }
             if (Run("mv -- " + Quote(output + ".ui-launcher") + " " + Quote(output)) != 0) {
-                Restore(output, old, true);
-                return "cannot publish GTK4 executable";
+                if (oldRuntime) {
+                    Run("mv -- " + Quote(output + ".ui-backup.runtime") + " " +
+                        Quote(output + ".runtime"));
+                }
+                if (old) { Run("mv -- " + Quote(output + ".ui-backup") + " " + Quote(output)); }
+                return "cannot publish the single-file GTK4 executable";
             }
-            if (old) {
-                Run("rm -f -- " + Quote(output + ".ui-backup"));
-                Run("rm -rf -- " + Quote(output + ".ui-backup.runtime"));
-            }
+            Run("rm -rf -- " + Quote(stage));
+            if (old) { Run("rm -f -- " + Quote(output + ".ui-backup")); }
+            if (oldRuntime) { Run("rm -rf -- " + Quote(output + ".ui-backup.runtime")); }
             return "";
         }
 
         public static void Abort(string output) {
             Run("rm -rf -- " + Quote(output + ".ui-staging"));
             Run("rm -f -- " + Quote(output + ".ui-launcher"));
-        }
-
-        private static void Restore(string output, bool old, bool newRuntime) {
-            if (newRuntime) { Run("rm -rf -- " + Quote(output + ".runtime")); }
-            if (old) {
-                Run("mv -- " + Quote(output + ".ui-backup.runtime") + " " +
-                    Quote(output + ".runtime"));
-                Run("mv -- " + Quote(output + ".ui-backup") + " " + Quote(output));
-            }
         }
 
         private static string CopyResource(string root, string destination, string relative) {
