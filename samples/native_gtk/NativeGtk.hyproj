@@ -3,4 +3,4 @@ name = "HydrogenNativeGtk"
 version = "0.1.0"
 type = "exe"
 sources = ["Program.hy"]
-project_references = ["../../libraries/Hydrogen.UI/Hydrogen.UI.hyproj"]
+project_references = ["../../libraries/Hydrogen.UI.NativeGtk/Hydrogen.UI.NativeGtk.hyproj"]

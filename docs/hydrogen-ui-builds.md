@@ -19,7 +19,7 @@ during the application build.
 ./build/NativeGtk
 ```
 
-`libraries/Hydrogen.UI/Window.hy` provides a real GTK window and initial
+`libraries/Hydrogen.UI.NativeGtk/Window.hy` provides a real GTK window and initial
 label/button layout written in Hydrogen. Only system GTK4 runtime libraries
 are required to run the compiled application (Ubuntu:
 `sudo apt install libgtk-4-1`). Builds are independent of the caller's
