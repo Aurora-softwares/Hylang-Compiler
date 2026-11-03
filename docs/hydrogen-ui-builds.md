@@ -4,23 +4,33 @@ Hydrogen Stage 1 handles UI application validation, backend compilation, and
 native package assembly through the normal `build` command. The separate
 `hyui --package` tool is **not required** for these builds.
 
-## Linux (GTK4)
+## Linux (GTK4): one distributable ELF
 
-From a bootstrapped compiler checkout with the native UI SDK installed:
+The default Linux build produces **one ELF file** containing the HYUI
+document, resources and Hydrogen-compiled application backend. It needs no
+`hyui-native`, `hyui-launcher`, Qt or neighboring `.runtime` folder.
+Build the frontend directly with GTK4 development headers and C++ tools:
 
 ```sh
+sudo apt install build-essential binutils pkg-config libgtk-4-dev
 ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/Studio
 ./build/Studio
 ```
 
-The resulting `build/Studio` launcher needs the adjacent
-`build/Studio.runtime/` directory. GTK4 is a native system dependency.
-The UI SDK build requires Qt Core 6.8+ for the *nonvisual* native host;
-the displayed controls are GTK4, not Qt-styled replacements.
+The native frontend is compiled from `tools/hyui/linux_gtk_app.cpp` in
+the Hydrogen source checkout: run the UI build from the repository root.
+The normal Linux `bootstrap.sh` no longer attempts to build the optional
+Qt UI host. Set `HYDROGEN_BUILD_UI=ON` or `HYDROGEN_BOOTSTRAP_UI=on`
+to explicitly build the legacy SDK tooling if needed.
+GTK4 remains a system runtime dependency. The compiled Hydrogen event backend
+is embedded in the ELF and executed through a Linux anonymous `memfd` child
+process until in-process Hydrogen native linking is available. This is one
+physical file, **not** one process or a fully statically linked GTK program.
 
-The clean bootstrap attempts to build `hyui-native` and
-`hyui-launcher` as UI **runtime** components if the required Qt version is
-available. They are not separate application-packaging commands.
+For the old host-and-runtime-folder layout, explicitly use an existing Qt
+Core 6.8+ SDK via `--ui-sdk build/bootstrap`. The self-hosted
+`hy ui validate` and `hy build --ui-backend` paths run preflight without
+a native host.
 
 ## Windows (WinUI 3)
 
@@ -93,11 +103,13 @@ cross-target use `--target windows` or `--target macos`.
 
 ## Boundaries
 
-- One developer-facing `hy build` command does **not** mean the compiled
-  application is one physical file: the Linux/Windows runtime directory
-  and macOS application bundle remain required.
-- Linux/macOS document validation currently reuses the **native runtime**
-  validator; a full pure-Hydrogen XML validator is still future work.
+- Default Linux builds produce one standalone GTK4 ELF, but system GTK4
+  libraries and a child Hydrogen event backend process remain. Windows
+  still uses a neighboring runtime directory and macOS a normal
+  multi-file application bundle on Development.
+- The self-hosted compiler performs bounded lexical UI preflight without
+  a native runtime. Full native schema checks can run when an explicit
+  native SDK is supplied; the complete Hydrogen validator is future work.
 - `hy ui <project.hyproj>` uses Hydrogen's integrated build path.
   The older `hy ui <file.hy>` single-source preview still uses its
   legacy UI host until transient-project support has been ported.

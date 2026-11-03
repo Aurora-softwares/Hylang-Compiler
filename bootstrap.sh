@@ -587,15 +587,15 @@ printf "\n"
 # Stage 0
 # ------------------------------------------------------------------------------
 step "Configuring build..."
-run cmake -S "$PROJECT_DIR" -B "$BOOTSTRAP_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
+run cmake -S "$PROJECT_DIR" -B "$BOOTSTRAP_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=OFF
 step "Building C++ Stage 0 compiler..."
 run cmake --build "$BOOTSTRAP_BUILD_DIR" --target hy --parallel
 require_executable "$STAGE0" "Stage 0 compiler"
 
-# Build native desktop *runtime* resources when Qt 6.8+ is available.
-# Only hyui-native and hyui-launcher are built: the obsolete hyui packaging
-# executable is not required by self-hosted Linux UI builds.
-if [[ "${HYDROGEN_BUILD_UI:-auto}" != "OFF" && "${HYDROGEN_BUILD_UI:-auto}" != "off" ]]; then
+# Direct GTK4 Linux UI applications do not need a separately built Qt host.
+# Keep the legacy SDK as an explicit opt-in on Linux and optional on other OSes.
+if [[ "$(uname -s)" != Linux || "${HYDROGEN_BUILD_UI:-off}" == ON ||
+      "${HYDROGEN_BUILD_UI:-off}" == on ]]; then
     UI_LOG="$BUILD_DIR/ui-runtime-build.log"
     if cmake -S "$PROJECT_DIR" -B "$BOOTSTRAP_BUILD_DIR" \
         -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON >"$UI_LOG" 2>&1 &&
@@ -847,11 +847,11 @@ bootstrap_target Linux "$LINUX_PROJECT_FILE" native "$LINUX_DIR" "" || true
 bootstrap_target Windows "$WINDOWS_PROJECT_FILE" wine "$WINDOWS_DIR" .exe || true
 bootstrap_target macOS "$MACOS_PROJECT_FILE" darling "$MACOS_DIR" "" || true
 
-# The UI SDK is an optional desktop dependency, not a prerequisite for a
-# freestanding compiler. When Qt 6.8+ is installed, build its native host here,
-# so 'hydrogen-stage1 build <ui.hyproj> -o app' works with no environment setup.
-# Set HYDROGEN_BOOTSTRAP_UI=off to skip this optional step on headless systems.
-if [[ -x "$LINUX_STAGE1" && "${HYDROGEN_BOOTSTRAP_UI:-auto}" != off ]]; then
+# Standalone hyui tooling remains optional for legacy SDK packaging.
+# Normal Linux builds use the direct GTK4 frontend; HYDROGEN_BOOTSTRAP_UI=on
+# explicitly restores the old Qt host build for SDK compatibility.
+if [[ -x "$LINUX_STAGE1" && "${HYDROGEN_BOOTSTRAP_UI:-auto}" != off &&
+      ( "$(uname -s)" != Linux || "${HYDROGEN_BOOTSTRAP_UI:-auto}" == on ) ]]; then
     UI_BUILD_DIR="$BUILD_DIR/ui"
     if cmake -S "$PROJECT_DIR" -B "$UI_BUILD_DIR" \
         -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=ON \

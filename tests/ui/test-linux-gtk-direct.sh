@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# End-to-end native GTK4 frontend build. No hyui-native or Qt is needed.
+set -euo pipefail
+root="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
+cd "$root"
+# Existing CI passes no arguments and tests Stage 1. Developers can run
+# --all-stages to check native GTK4 generation by Stages 1, 2 and 3.
+if [[ "${1:-}" == "--all-stages" ]]; then
+  compilers=(
+    "build/self_hosting/linux/hydrogen-stage1"
+    "build/self_hosting/linux/hydrogen-stage2"
+    "build/self_hosting/linux/hydrogen-stage3"
+  )
+elif [[ $# -gt 0 ]]; then
+  compilers=("$1")
+else
+  compilers=("build/self_hosting/linux/hydrogen-stage1")
+fi
+for compiler in "${compilers[@]}"; do
+  [[ -x "$compiler" ]] || { echo "Missing Hydrogen compiler: $compiler" >&2; exit 1; }
+done
+command -v pkg-config >/dev/null
+pkg-config --exists gtk4 || { echo "GTK4 development package is required" >&2; exit 1; }
+work="$(mktemp -d)"
+trap 'rm -rf -- "$work"' EXIT
+index=0
+for compiler in "${compilers[@]}"; do
+index=$((index + 1))
+output="$work/Studio-stage$index"
+"$compiler" build samples/ui_studio/Studio.hyproj -o "$output" \
+  --hide-spinner --hide-log --hide-progress
+test -x "$output"
+# One ELF is delivered. No backend, launcher, runtime folder, document or
+# asset file may remain on the filesystem beside the output.
+test ! -e "$output.runtime"
+test ! -e "$output.ui-staging"
+test ! -e "$output.ui-launcher"
+test ! -e "$output.ui-backup"
+test ! -e "$output.ui-backup.runtime"
+file "$output" | grep -q 'ELF 64-bit'
+"$output" --help | grep -q 'HYDROGEN_UI_SINGLE_FILE_V1'
+if ldd "$output" | grep -q 'Qt6'; then
+  echo "Direct GTK4 frontend unexpectedly links to Qt" >&2
+  exit 1
+fi
+ldd "$output" | grep -q 'libgtk-4'
+# gtk_application_new and the GTK event loop require a running display.
+export GDK_BACKEND=x11
+export GTK_A11Y=none
+# GTK warnings about invalid widget types must be caught as regressions.
+export G_DEBUG=fatal-criticals
+# A copied ELF must run without a build tree, SDK, HYUI document, or
+# companion folder. The working directory is intentionally unrelated.
+relocated="$work/Relocated-Stage$index"
+cp -- "$output" "$relocated"
+(cd /tmp && "$relocated" --event ShowControls:showControls --state-output "$work/state.json")
+python3 - "$work/state.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+state=json.loads(Path(sys.argv[1]).read_text())
+assert state["pages.value"] == 1, state
+assert state["projectName.text"] == "Aurora Notes", state
+assert "Ready when you are" in state["status.text"], state
+PY
+"$output" --event ShowWorkspace:showWorkspace --state-output "$work/state.json"
+python3 - "$work/state.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+state=json.loads(Path(sys.argv[1]).read_text())
+assert state["pages.value"] == 0, state
+PY
+# Rebuilding a generated file is supported without a stale runtime directory.
+"$compiler" build samples/ui_studio/Studio.hyproj -o "$output" \
+  --hide-spinner --hide-log --hide-progress
+test -x "$output"
+test ! -e "$output.runtime"
+echo "Single-file GTK4 application generated, relocated, rebuilt, and dispatched Hydrogen events: $compiler"
+done
+echo "Native GTK4 single-executable builds passed for ${#compilers[@]} compiler stage(s)."

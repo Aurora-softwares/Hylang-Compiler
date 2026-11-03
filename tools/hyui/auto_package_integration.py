@@ -45,7 +45,7 @@ def run(*command, cwd=ROOT):
 
 assert compiler.is_file(), "Stage 1 compiler is missing"
 assert (ROOT / "build-ui/hyui-native").is_file(), "native GTK4 runtime is missing"
-build = run(compiler, "build", project, "-o", output)
+build = run(compiler, "build", project, "--ui-sdk", ROOT / "build/bootstrap", "-o", output)
 assert "native GTK4 UI" in build.stdout, build.stdout
 runtime = Path(str(output) + ".runtime")
 assert output.is_file() and os.access(output, os.X_OK), "native app launcher missing"

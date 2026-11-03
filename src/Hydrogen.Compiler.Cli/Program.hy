@@ -31,6 +31,23 @@ namespace Hydrogen.Compiler.Cli {
                 return StageCompare(args);
             }
             if (command == "ui") {
+                if (args.Length == 3 && args[1] == "validate") {
+                    string issue = "";
+                    if (EndsWith(args[2], ".hyproj")) {
+                        issue = UIProjectBuilder.Preflight(args[2], "");
+                    } else if (EndsWith(args[2], ".hyui")) {
+                        issue = UIValidator.Preflight(args[2]);
+                    } else {
+                        System.Console.WriteLine("error: expected .hyui or a UI .hyproj");
+                        return 1;
+                    }
+                    if (issue != "") {
+                        System.Console.WriteLine("error: " + issue);
+                        return 1;
+                    }
+                    System.Console.WriteLine("HYUI preflight ok");
+                    return 0;
+                }
                 if (args.Length != 2) {
                     System.Console.WriteLine("usage: hy ui <file.hy|project.hyproj>");
                     return 1;
@@ -1071,6 +1088,15 @@ namespace Hydrogen.Compiler.Cli {
                 return 1;
             }
             if (target != "") { projectType = target; }
+            // Backend-only compilation is still a UI build. Validate the
+            // document without an external renderer before generating code.
+            if (uiBackend && manifest.HasUI()) {
+                string issue = UIProjectBuilder.Preflight(projectPath, uiSdk);
+                if (issue != "") {
+                    System.Console.WriteLine("error: " + issue);
+                    return 1;
+                }
+            }
             if (manifest.HasUI() && !uiBackend) {
                 string quotedProject = QuoteCommandPath(projectPath);
                 string quotedOutput = QuoteCommandPath(output);
@@ -1086,6 +1112,38 @@ namespace Hydrogen.Compiler.Cli {
                 }
                 bool onMacOS = !System.Host.Process.IsWindows() &&
                     System.Host.Process.Run("test \"$(uname -s)\" = Darwin") == 0;
+                if (projectType == "exe" && !System.Host.Process.IsWindows() &&
+                    !onMacOS && uiSdk == "") {
+                    // Default native Linux GTK4 build: one ELF with embedded
+                    // Hydrogen code, HYUI document and assets.
+                    string issue = UIProjectBuilder.Preflight(projectPath, "");
+                    if (issue != "") {
+                        System.Console.WriteLine("error: " + issue);
+                        return 1;
+                    }
+                    issue = UIGtkDirectPackager.Prepare(output);
+                    if (issue != "") {
+                        System.Console.WriteLine("error: " + issue);
+                        return 1;
+                    }
+                    NativeCompiler directCompiler = new NativeCompiler();
+                    NativeCompilerResult directResult = directCompiler.BuildProject(
+                        projectPath, UIGtkDirectPackager.Backend(output));
+                    if (!directResult.Success()) {
+                        System.Console.Write(directResult.DiagnosticsText());
+                        UIGtkDirectPackager.Abort(output);
+                        return 1;
+                    }
+                    issue = UIGtkDirectPackager.Finish(projectPath, output);
+                    if (issue != "") {
+                        System.Console.WriteLine("error: " + issue);
+                        UIGtkDirectPackager.Abort(output);
+                        return 1;
+                    }
+                    System.Console.WriteLine("wrote " + output + " (linux-x64; single-file native GTK4 UI)");
+                    return 0;
+                }
+                // Legacy native-host packaging remains opt-in via --ui-sdk.
                 if (projectType == "exe" && !System.Host.Process.IsWindows() && (!onMacOS || target != "")) {
                     string sdkRoot = UIRuntimeManager.SdkRoot(uiSdk);
                     string error = UIProjectBuilder.Preflight(projectPath, sdkRoot);
@@ -1195,6 +1253,13 @@ namespace Hydrogen.Compiler.Cli {
             progress.Stop();
             if (!result.Success()) {
                 System.Console.Write(result.DiagnosticsText());
+                return 1;
+            }
+            // The compiled backend must be executable even when not packaged.
+            // The native compiler otherwise leaves a raw ELF without +x.
+            if (uiBackend && projectType == "exe" && !System.Host.Process.IsWindows() &&
+                System.Host.Process.Run("/bin/chmod +x " + QuoteCommandPath(output)) != 0) {
+                System.Console.WriteLine("error: cannot mark Hydrogen UI backend executable: " + output);
                 return 1;
             }
             if (!progress.ReportsResult()) { System.Console.WriteLine("wrote " + output); }
