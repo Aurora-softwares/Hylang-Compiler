@@ -98,6 +98,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private int[] nativeImportPatches;
         private int[] nativeImportIndexes;
         private int nativeImportPatchCount;
+        private int[] gtkCallbackPatches;
+        private int gtkCallbackPatchCount;
         private bool receiverPushed;
         private bool directBaseCall;
         private bool addressReadOnly;
@@ -244,6 +246,22 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
 				i = i + 1;
 			}
+
+
+            if (gtkCallbackPatchCount > 0) {
+                // The GTK signal invokes this native callback on the same
+                // thread as Hydrogen. It updates a Hydrogen-owned int[] event
+                // cell; the Hydrogen event loop calls application methods.
+                int callback = code.Position();
+                code.EmitByte(0xc7); code.EmitByte(0x06);
+                code.Emit32(1); // mov dword [rsi],1 (rsi=user_data)
+                code.EmitByte(0xc3); // ret
+                int cb = 0;
+                while (cb < gtkCallbackPatchCount) {
+                    PatchRelative(gtkCallbackPatches[cb], callback);
+                    cb = cb + 1;
+                }
+            }
 
 			// Package the output for the selected operating system.
 			if (windows) {
@@ -480,6 +498,8 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             nativeImportPatches = new int[0];
             nativeImportIndexes = new int[0];
             nativeImportPatchCount = 0;
+            gtkCallbackPatches = new int[0];
+            gtkCallbackPatchCount = 0;
             continuePatches = new int[0];
             continueCount = 0;
             staticOwners = new string[0];
@@ -2631,6 +2651,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (name == "System.Native.Gtk.Init") { return "gtk_init"; }
             if (name == "System.Native.Gtk.WindowNew") { return "gtk_window_new"; }
             if (name == "System.Native.Gtk.WindowSetTitle") { return "gtk_window_set_title"; }
+            if (name == "System.Native.Gtk.LabelSetText") { return "gtk_label_set_text"; }
+            if (name == "System.Native.Gtk.OnClick") { return "g_signal_connect_data"; }
+            if (name == "System.Native.Gtk.EmitSignal") { return "g_signal_emit_by_name"; }
             if (name == "System.Native.Gtk.WindowSetDefaultSize") { return "gtk_window_set_default_size"; }
             if (name == "System.Native.Gtk.WindowPresent") { return "gtk_window_present"; }
             if (name == "System.Native.Gtk.WindowVisible") { return "gtk_widget_get_visible"; }
@@ -2651,6 +2674,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 failure = "native GTK APIs require a Linux desktop executable";
                 return false;
             }
+            if (name == "System.Native.Gtk.OnClick") {
+                return NativeGtkClick(expression);
+            }
             string first = "";
             string second = "";
             string third = "";
@@ -2668,7 +2694,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 name == "System.Native.Gtk.Ref") { first = "long"; }
             if (name == "System.Native.Gtk.LabelNew" ||
                 name == "System.Native.Gtk.ButtonNew") { first = "string"; }
-            if (name == "System.Native.Gtk.WindowSetTitle") {
+            if (name == "System.Native.Gtk.WindowSetTitle" ||
+                name == "System.Native.Gtk.LabelSetText" ||
+                name == "System.Native.Gtk.EmitSignal") {
                 first = "long"; second = "string";
             }
             if (name == "System.Native.Gtk.WindowSetChild" ||
@@ -2719,6 +2747,7 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xe3); // mov rbx,rsp
             code.EmitByte(0x48); code.EmitByte(0x83);
             code.EmitByte(0xe4); code.EmitByte(0xf0); // and rsp,-16
+            code.EmitByte(0x31); code.EmitByte(0xc0); // SysV varargs: no vector args
             code.EmitByte(0xff); code.EmitByte(0x15); // call qword [rip+GOT]
             string symbol = GtkSymbol(name);
             int index = -1;
@@ -2744,6 +2773,60 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             }
             valueType = result;
             return true;
+        }
+
+
+        // The native GTK callback touches only a rooted int[] state cell.
+        // Event logic remains ordinary Hydrogen code in the same process.
+        private bool NativeGtkClick(IrExpression expression) {
+            IrExpression[] args = expression.Arguments();
+            if (args.Length != 2) {
+                failure = "GTK clicked signal requires a widget and int[] state";
+                return false;
+            }
+            if (!CompileExpression(args[0]) || !Assignable(valueType, "long")) {
+                failure = "invalid GTK clicked signal widget"; return false;
+            }
+            code.EmitByte(0x50); // push button pointer
+            if (!CompileExpression(args[1]) || valueType != "int[]") {
+                failure = "GTK clicked state must be int[]"; return false;
+            }
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc0); code.EmitByte(8);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // rcx=flags data
+            code.EmitByte(0x5f); // pop rdi=button
+            EmitLiteral("clicked");
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc0); code.EmitByte(8);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc6); // rsi=signal
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x15); // lea rdx, [rip+cb]
+            gtkCallbackPatches = AppendInt(gtkCallbackPatches, gtkCallbackPatchCount, code.Position());
+            gtkCallbackPatchCount = gtkCallbackPatchCount + 1;
+            code.Emit32(0);
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xc0); // r8d=0
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xc9); // r9d=0
+
+            // Align stack, call g_signal_connect_data from the ELF import GOT.
+            code.EmitByte(0x53);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xe3);
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xe4); code.EmitByte(0xf0);
+            code.EmitByte(0xff); code.EmitByte(0x15);
+            string symbol = "g_signal_connect_data";
+            int index = -1;
+            int i = 0;
+            while (i < nativeImportNames.Length) {
+                if (nativeImportNames[i] == symbol) { index = i; break; }
+                i = i + 1;
+            }
+            if (index < 0) {
+                index = nativeImportNames.Length;
+                nativeImportNames = AppendString(nativeImportNames, index, symbol);
+            }
+            nativeImportPatches = AppendInt(nativeImportPatches, nativeImportPatchCount, code.Position());
+            nativeImportIndexes = AppendInt(nativeImportIndexes, nativeImportPatchCount, index);
+            nativeImportPatchCount = nativeImportPatchCount + 1;
+            code.Emit32(0);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xdc);
+            code.EmitByte(0x5b);
+            valueType = "void"; return true;
         }
 
         private bool RuntimeCall(IrExpression expression, string runtime, string first, string second, string resultType) {

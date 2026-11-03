@@ -924,7 +924,12 @@ namespace Hydrogen.Compiler.Binding {
                 qualified == "System.Native.Gtk.ButtonNew") {
                 return Intrinsic(e, qualified, "string", "", "long");
             }
-            if (qualified == "System.Native.Gtk.WindowSetTitle") {
+            if (qualified == "System.Native.Gtk.OnClick") {
+                return Intrinsic(e, qualified, "long", "int[]", "void");
+            }
+            if (qualified == "System.Native.Gtk.WindowSetTitle" ||
+                qualified == "System.Native.Gtk.LabelSetText" ||
+                qualified == "System.Native.Gtk.EmitSignal") {
                 return Intrinsic(e, qualified, "long", "string", "void");
             }
             if (qualified == "System.Native.Gtk.WindowSetChild" ||

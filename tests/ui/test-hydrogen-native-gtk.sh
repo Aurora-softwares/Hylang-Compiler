@@ -21,6 +21,13 @@ if ldd "$work/app" | grep -q 'not found'; then
   echo "Missing runtime library" >&2
   exit 1
 fi
+# Emit the real GTK "clicked" signal and prove Hydrogen observes its
+# native callback without a separate child backend or IPC.
+"$work/app" --self-test-click >"$work/click-out" 2>"$work/click-error" || {
+  cat "$work/click-out" "$work/click-error" >&2
+  exit 1
+}
+grep -q 'HYDROGEN_NATIVE_GTK_CLICKED' "$work/click-out"
 set +e
 timeout --signal=TERM 4s "$work/app" >"$work/stdout" 2>"$work/stderr"
 result=$?
