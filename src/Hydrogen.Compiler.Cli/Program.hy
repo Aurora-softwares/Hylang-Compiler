@@ -1310,6 +1310,13 @@ namespace Hydrogen.Compiler.Cli {
                 System.Console.Write(result.DiagnosticsText());
                 return 1;
             }
+            // A standalone HYUI backend is an ordinary executable. It must
+            // be runnable even when built without its native window wrapper.
+            if (uiBackend && projectType == "exe" && !System.Host.Process.IsWindows() &&
+                System.Host.Process.Run("chmod +x -- " + QuoteCommandPath(output)) != 0) {
+                System.Console.WriteLine("error: cannot make Hydrogen UI backend executable");
+                return 1;
+            }
             if (!progress.ReportsResult()) { System.Console.WriteLine("wrote " + output); }
             return 0;
         }
