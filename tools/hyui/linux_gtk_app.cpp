@@ -972,7 +972,10 @@ struct App {
         }
         std::string initial;
         if(!execute({},initial))return 1;
-        application=gtk_application_new("software.aurora.HydrogenNativeGTK",G_APPLICATION_DEFAULT_FLAGS);
+        // Every compiled Hydrogen UI app is an independent native window host.
+        // A shared GApplication ID otherwise forwards QuarkIDE activation to
+        // the still-open launcher instead of starting the second process.
+        application=gtk_application_new(nullptr,G_APPLICATION_NON_UNIQUE);
         g_signal_connect(application,"activate",G_CALLBACK(activated),this);
         // The compiled application owns its GTK event loop; the native UI host
         // and launcher are not executed or required.
