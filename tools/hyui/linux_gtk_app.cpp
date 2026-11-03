@@ -190,9 +190,10 @@ struct App {
             offset += std::size_t(written);
         }
         if (fchmod(backendFd, 0500) != 0) throw std::runtime_error("cannot set in-memory Hydrogen code executable");
-        // The parent's open memfd is resolved by the child at exec time; the
-        // embedded backend never touches a persistent file or install path.
-        backend = "/proc/" + std::to_string(getpid()) + "/fd/" + std::to_string(backendFd);
+        // Each event process inherits the memfd at descriptor 197. Resolving
+        // /proc/self/fd/197 in that child avoids requiring ptrace permission
+        // to inspect the parent on hardened Linux distributions.
+        backend = "/proc/self/fd/197";
     }
     std::string id(Node* n) {
         std::string key=attr(n,"id");
@@ -382,6 +383,13 @@ struct App {
     bool execute(const std::vector<std::string>& args,std::string& stdoutText) {
         GSubprocessLauncher* launcher=g_subprocess_launcher_new(
             GSubprocessFlags(G_SUBPROCESS_FLAGS_STDOUT_PIPE|G_SUBPROCESS_FLAGS_STDERR_PIPE));
+        const int childFd = dup(backendFd);
+        if (childFd < 0) {
+            std::cerr << "cannot duplicate embedded Hydrogen backend descriptor\n";
+            g_object_unref(launcher);
+            return false;
+        }
+        g_subprocess_launcher_take_fd(launcher, childFd, 197);
         std::vector<const char*> argv;
         argv.push_back(backend.c_str());
         for(auto& a:args)argv.push_back(a.c_str());
