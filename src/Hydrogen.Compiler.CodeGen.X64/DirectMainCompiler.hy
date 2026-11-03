@@ -247,7 +247,6 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 				i = i + 1;
 			}
 
-
             if (gtkCallbackPatchCount > 0) {
                 // The GTK signal invokes this native callback on the same
                 // thread as Hydrogen. It updates a Hydrogen-owned int[] event
@@ -303,7 +302,6 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
 				return new DirectImageResult(true, image, "", -1);
 			}
-
 
             if (nativeImportNames.Length > 0) {
                 // The self-hosted linker constructs DT_NEEDED, dynsym and RELA
@@ -2643,7 +2641,6 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             failure = "native string conversion requires a string, integral value, or bool"; return false;
         }
 
-
         // Narrow, typed native GTK ABI surface. These calls are ordinary C ABI
         // function calls emitted by Hydrogen and resolved by the ELF loader.
         // The language-level UI owns windows and state; GTK is only an OS toolkit.
@@ -2774,7 +2771,6 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             valueType = result;
             return true;
         }
-
 
         // The native GTK callback touches only a rooted int[] state cell.
         // Event logic remains ordinary Hydrogen code in the same process.

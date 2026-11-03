@@ -12,12 +12,9 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         public byte[] Build(byte[] code, string[] literals, int[] literalPatches,
                             int[] literalIndexes, string[] symbols, int[] symbolPatches,
                             int[] symbolIndexes) {
-            if (symbols.Length == 0 || symbols.Length != symbolPatches.Length) {
-                // More than one reference to a symbol is permitted; only the
-                // symbol-index array and patch array must be equally sized.
-                if (symbols.Length == 0 || symbolPatches.Length != symbolIndexes.Length) {
-                    return null;
-                }
+            // Multiple call sites may reference the same imported symbol.
+            if (symbols.Length == 0 || symbolPatches.Length != symbolIndexes.Length) {
+                return null;
             }
             if (literalPatches.Length != literalIndexes.Length) { return null; }
             string interpreter = "/lib64/ld-linux-x86-64.so.2";
