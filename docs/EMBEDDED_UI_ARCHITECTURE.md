@@ -23,20 +23,21 @@ This is an architectural migration, **not completed by the initial preflight com
 - 🟢 Require pure-Hydrogen UI preflight before compiling a `--ui-backend` for every supported desktop target.
 - 🟢 Add `tests/ui/test-ui-backend-no-host.sh` to build and run the UI app's Hydrogen backend with no native SDK or Qt host. This verifies **code generation and application logic only**, not a graphical window.
 - 🟢 On Linux, default `hy build <ui.hyproj>` generates and launches an application-specific native GTK4 executable with no Qt or `hyui-native` dependency. GTK4 development headers and a C++ compiler are presently required at build time.
-- 🟡 Linux UI event handlers still run through a private compiled Hydrogen backend executable. Native rendering is direct, but full single-process integration remains for the later milestone.
+- 🟢 Linux `hy build <ui.hyproj>` now produces **one relocatable GTK4 ELF** containing the compiled Hydrogen backend, HYUI document and assets. No `.runtime` directory is shipped.
+- 🟡 The embedded Hydrogen backend executes from a Linux `memfd` child process for each event. This is **one file, not yet one process**. In-process calls require a Hydrogen native object/linker ABI.
 - 🔴 Implement the full native `.hyui` schema in Hydrogen so compilation validates exactly what runtime accepts.
 - 🔴 Replace process-based `Bridge` event delivery with **in-process** calls into the compiled Hydrogen application.
-- [ ] Define target-specific UI runtime ABI for Linux GTK4/libadwaita, Windows WinUI 3, and macOS AppKit. Preserve OS theme and controls.
-- [ ] Extend each target compiler/linker to link the appropriate UI entry point and runtime into the generated app rather than generating a launcher/backend pair.
-- [ ] Embed or package required document/assets with the app; keep safe path and size checks.
-- [ ] Remove `hyui-native`/`hyui-launcher` dependency from Linux and desktop packaging paths only after parity tests pass.
-- [ ] Build the sample via each Stage 1–3 binary; assert one runnable app entry point, one process, correct event dispatch, and visual fidelity.
-- [ ] Run bootstrap reproducibility checks and native visual regression tests on supported hosts.
+- 🔴 Define target-specific UI runtime ABI for Linux GTK4/libadwaita, Windows WinUI 3, and macOS AppKit. Preserve OS theme and controls.
+- 🔴 Extend each target compiler/linker to link the appropriate UI entry point and runtime into the generated app rather than generating a launcher/backend pair.
+- 🟢 Embed Linux HYUI document/assets and Hydrogen backend ELF into the GTK4 executable through a bounded ustar resource table. Other platform targets remain outstanding.
+- 🔴 Remove `hyui-native`/`hyui-launcher` dependency from Linux and desktop packaging paths only after parity tests pass.
+- 🟡 The GTK4 single-file test checks ELF relocation, UI event dispatch, rebuilding and no sidecars. Stage 2/3 runs and one-process dispatch remain separate verification gates.
+- 🔴 Run bootstrap reproducibility checks and native visual regression tests on supported hosts.
 
 ## Acceptance criteria for the final implementation
 
 1. `hydrogen-stageN build samples/ui_studio/Studio.hyproj -o build/ui_studio` succeeds on a clean supported host **without** the `hyui-native` or `hyui-launcher` executable, for N = 1, 2, 3.
-2. On Linux, `build/ui_studio` is the program itself; no `build/ui_studio.runtime/hyui` or `__hyui_backend` executable.
+2. On Linux, `build/ui_studio` is the complete deployable ELF; no `build/ui_studio.runtime` directory or standalone backend/launcher executable.
 3. Native UI controls and all events work in the **same process** as user Hydrogen code. No backend `QProcess` child.
 4. Platform-specific native rendering is preserved and system dependencies are stated clearly; one executable does not imply static linking all OS libraries.
 5. Unsupported platforms and absent native SDK dependencies fail at build time with specific, actionable errors.
@@ -56,4 +57,4 @@ bash tests/ui/test-ui-backend-no-host.sh
 # dbus-run-session -- xvfb-run -a bash tests/ui/test-linux-gtk-direct.sh --all-stages
 ```
 
-**Current status:** On Linux, normal UI builds use `UIGtkDirectPackager` to compile `tools/hyui/linux_gtk_app.cpp` into the requested executable. That executable creates actual GTK4 widgets with no `hyui-native`, `hyui-launcher`, or Qt dependency. The compiler generates a private Hydrogen backend process beside the UI executable; Windows, macOS, and the final single-process integration remain unfinished. The direct-frontend test is present, but its latest CI run must pass before we claim full verification.
+**Current status:** The Linux default path creates one ELF file with GTK4 widgets, an embedded UI document/assets and Hydrogen backend. `tar` and `objcopy` are used only **at build time** to link resources; execution still needs GTK4 system libraries. The Hydrogen backend runs from an in-memory file descriptor in a child process (no extracted disk files), so **single-process UI events remain unfinished**. Windows and macOS are also pending. CI must pass on this implementation before considering it verified.
