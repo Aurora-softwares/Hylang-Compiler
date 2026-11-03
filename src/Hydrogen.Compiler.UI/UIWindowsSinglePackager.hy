@@ -85,13 +85,14 @@ namespace Hydrogen.Compiler.UI {
 
             // Windows App SDK 1.5+ supports single-file self-contained WinUI
             // desktop programs. These properties are checked by its SDK.
-            string publish = "& dotnet publish " +
+            string publish = "$uiArchive = (Resolve-Path -LiteralPath " +
+                PQ(archive) + ").Path; & dotnet publish " +
                 PQ("tools/hyui/windows/Hyui.WinUI.csproj") +
                 " -c Release -r win-x64 -p:Platform=x64" +
                 " -p:WindowsPackageType=None -p:WindowsAppSDKSelfContained=true" +
                 " -p:SelfContained=true -p:EnableMsixTooling=true" +
                 " -p:IncludeAllContentForSelfExtract=true -p:PublishSingleFile=true" +
-                " " + PQ("-p:HydrogenUiArchive=" + archive) +
+                " ('-p:HydrogenUiArchive=' + $uiArchive)" +
                 " -o " + PQ(stage + "/publish") +
                 "; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }";
             if (!PS(publish)) {
