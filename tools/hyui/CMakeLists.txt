@@ -95,10 +95,10 @@ if(WIN32 OR APPLE)
             "-DHYDROGEN_UI_QT_PREFIX=${HYDROGEN_QT_PREFIX}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/ExportNativeRuntime.cmake"
         VERBATIM)
-    add_dependencies(hydrogen-ui-sdk hyui-launcher)
     if(WIN32)
-        add_dependencies(hydrogen-ui-sdk hyui-winui)
+        add_dependencies(hydrogen-ui-sdk hyui-launcher hyui-winui)
     else()
+        # The AppKit renderer is the .app entry point, not a launcher dependency.
         add_dependencies(hydrogen-ui-sdk hyui-native)
     endif()
 endif()
