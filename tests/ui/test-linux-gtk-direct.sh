@@ -73,7 +73,9 @@ PY
 # G_DEBUG=fatal-criticals above turns invalid GTK object access into a failure.
 timeout --signal=TERM 8s "$output" --self-test-close >"$work/close.stdout" 2>"$work/close.stderr" || {
   echo "Closing the native GTK window failed:" >&2
-  cat "$work/close.stdout" "$work/close.stderr" >&2
+  # Limit diagnostics: a GTK teardown loop can generate very large logs.
+  tail -n 50 "$work/close.stdout" >&2 || true
+  tail -n 100 "$work/close.stderr" >&2 || true
   exit 1
 }
 "$output" --event ShowWorkspace:showWorkspace --state-output "$work/state.json"
