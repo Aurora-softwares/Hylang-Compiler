@@ -22,4 +22,10 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
   </ItemGroup>
+  <!-- Stage 1-3 may embed a project-specific UI/backend archive when making
+       an unpackaged self-contained single-file WinUI application. Ordinary
+       SDK/test builds do not set HydrogenUiArchive and are unchanged. -->
+  <ItemGroup Condition="'$(HydrogenUiArchive)' != ''">
+    <EmbeddedResource Include="$(HydrogenUiArchive)" LogicalName="Hydrogen.Native.EmbeddedUi.zip" />
+  </ItemGroup>
 </Project>
