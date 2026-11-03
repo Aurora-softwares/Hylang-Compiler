@@ -3409,11 +3409,15 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 				return;
 			}
 
-			// Existing Linux / Windows implementation.
+			// Linux exit(60) terminates only the calling thread. GTK4 and
+			// other native libraries can create worker threads, so returning
+			// from Main must terminate the process with exit_group(231).
+			// Keep the existing Windows runtime syscall contract unchanged.
 			code.EmitByte(0x48);
 			code.EmitByte(0xc7);
 			code.EmitByte(0xc0);
-			code.Emit32(60);
+			if (windows) { code.Emit32(60); }
+			else { code.Emit32(231); }
 
 			if (windows) {
 				EmitRuntime("win_syscall");
