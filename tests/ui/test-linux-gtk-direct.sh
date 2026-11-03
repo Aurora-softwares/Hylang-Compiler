@@ -62,7 +62,9 @@ ldd "$output" | grep -q 'libgtk-4'
 export GDK_BACKEND=x11
 export GTK_A11Y=none
 # GTK warnings about invalid widget types must be caught as regressions.
-export G_DEBUG=fatal-criticals
+# Treat warnings from container ownership (e.g. GtkListBox removing an
+# unsupported popover child) as failures, not just type assertion criticals.
+export G_DEBUG=fatal-warnings
 # A copied ELF must run without a build tree, SDK, HYUI document, or
 # companion folder. The working directory is intentionally unrelated.
 relocated="$work/Relocated-Stage$index"

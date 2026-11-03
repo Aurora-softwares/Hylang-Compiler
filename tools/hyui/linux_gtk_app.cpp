@@ -164,6 +164,9 @@ struct App {
     GtkApplication* application=nullptr;
     GtkWidget* window=nullptr;
     std::map<std::string,Control> controls;
+    // Explicit GtkOverlay parents for controls targeted by HYUI popovers.
+    // GtkListBox and other controls do not support arbitrary popover children.
+    std::map<std::string,GtkWidget*> popoverHosts;
     std::map<std::string,std::string> state;
     std::vector<std::unique_ptr<Hook>> hooks;
     std::string statePath,eventRequest;
@@ -594,6 +597,23 @@ struct App {
         } else if(GTK_IS_BOX(parent)) gtk_box_append(GTK_BOX(parent),child);
         else if(GTK_IS_SCROLLED_WINDOW(parent))gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(parent),child);
     }
+    GtkWidget* withPopoverHost(Node* n,GtkWidget* widget) {
+        if(!widget || !document.root)return widget;
+        const std::string name=attr(n,"id");
+        if(name.empty())return widget;
+        for(const auto& accessory:document.root->children) {
+            if((accessory->tag=="ContextMenu" || accessory->tag=="Popover") &&
+               attr(accessory.get(),"target")==name) {
+                GtkWidget* host=gtk_overlay_new();
+                gtk_overlay_set_child(GTK_OVERLAY(host),widget);
+                gtk_widget_set_hexpand(host,gtk_widget_get_hexpand(widget));
+                gtk_widget_set_vexpand(host,gtk_widget_get_vexpand(widget));
+                popoverHosts[name]=host;
+                return host;
+            }
+        }
+        return widget;
+    }
     GtkWidget* build(Node* n) {
         const auto& tag=n->tag;
         GtkWidget *w=nullptr,*container=nullptr;
@@ -634,7 +654,7 @@ struct App {
                 gtk_stack_set_visible_child_name(GTK_STACK(w),id(n->children[initial].get()).c_str());
             if(auto* h=hook(n,"onChange"))
                 g_signal_connect(w,"notify::visible-child-name",G_CALLBACK(changed),h);
-            return wrapper;
+            return withPopoverHost(n,wrapper);
         } else if(tag=="Label") {
             w=gtk_label_new(attr(n,"text").c_str());
             gtk_label_set_wrap(GTK_LABEL(w),TRUE);
@@ -679,7 +699,7 @@ struct App {
             gtk_box_append(GTK_BOX(row),w);
             registerControl(n,w,"Switch");
             bind(w,"notify::active",n,"onChange");
-            return row;
+            return withPopoverHost(n,row);
         } else if(tag=="Slider") {
             w=gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL,number(attr(n,"minimum")),number(attr(n,"maximum"),100),1);
             gtk_range_set_value(GTK_RANGE(w),number(attr(n,"value")));
@@ -764,7 +784,7 @@ struct App {
                 gtk_box_append(GTK_BOX(w),button);
             }
             registerControl(n,w,"MenuBar");
-            return w;
+            return withPopoverHost(n,w);
         } else if(tag=="Menu"||tag=="ContextMenu"||tag=="Popover"||tag=="Clipboard"||tag=="Dialog"||tag=="State"||tag=="Timer") {
             registerControl(n,nullptr,tag.c_str());
             return nullptr;
@@ -775,7 +795,7 @@ struct App {
         if(container)for(auto& child:n->children)append(container,build(child.get()),n,child.get());
         if(w && truth(attr(n,"fill")))gtk_widget_set_hexpand(w,TRUE);
         if(w && number(attr(n,"preferredWidth"))>0)gtk_widget_set_size_request(w,number(attr(n,"preferredWidth")),-1);
-        return w;
+        return withPopoverHost(n,w);
     }
     static void contextPressed(GtkGestureClick*,gint,gdouble,gdouble,gpointer data) {
         auto* h=static_cast<Hook*>(data);
@@ -791,8 +811,12 @@ struct App {
         for(auto& child:document.root->children) {
             Node* n=child.get();
             if(n->tag!="ContextMenu" && n->tag!="Popover")continue;
-            auto target=controls.find(attr(n,"target"));
+            const std::string name=attr(n,"target");
+            auto target=controls.find(name);
             if(target==controls.end() || !target->second.widget)continue;
+            auto host=popoverHosts.find(name);
+            if(host==popoverHosts.end() || !GTK_IS_OVERLAY(host->second))
+                throw std::runtime_error("HYUI popover target has no native overlay: "+name);
             GtkWidget* pop=gtk_popover_new();
             // Hide before parenting: GTK may map visible children as soon
             // as they are attached, which would grab input prematurely.
@@ -810,7 +834,10 @@ struct App {
                 gtk_widget_set_margin_bottom(contents,12);
                 gtk_popover_set_child(GTK_POPOVER(pop),contents);
             }
-            gtk_widget_set_parent(pop,target->second.widget);
+            // Add with the container API: gtk_widget_set_parent(pop, GtkListBox)
+            // made GtkListBox try to remove an unknown child on window close,
+            // leaving the process stuck in a GTK teardown warning loop.
+            gtk_overlay_add_overlay(GTK_OVERLAY(host->second),pop);
             registerControl(n,pop,n->tag.c_str());
             // Explicitly-open popovers may appear at startup, but context
             // menus must remain closed until their right-click gesture.
