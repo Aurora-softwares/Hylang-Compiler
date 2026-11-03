@@ -66,7 +66,7 @@ namespace Hydrogen.Compiler.Cli {
                     string preview = buildArgs[3];
                     if (System.Host.Process.IsWindows()) {
                         preview = preview + ".exe";
-                    } else if (System.Host.Process.Run("test \"$(uname -s)\" = Darwin") == 0) {
+                    } else if (System.Host.Process.Run("test \"$(/usr/bin/uname -s)\" = Darwin") == 0) {
                         preview = preview + ".app";
                         return System.Host.Process.Run("open " + QuoteCommandPath(preview));
                     }
@@ -979,7 +979,7 @@ namespace Hydrogen.Compiler.Cli {
         // authoritative, including on cross-compilation hosts.
         private static string HostDesktopTarget() {
             if (System.Host.Process.IsWindows()) { return "windows"; }
-            if (System.Host.Process.Run("test \"$(uname -s)\" = Darwin") == 0) {
+            if (System.Host.Process.Run("test \"$(/usr/bin/uname -s)\" = Darwin") == 0) {
                 return "macos";
             }
             return "exe";
@@ -1038,7 +1038,7 @@ namespace Hydrogen.Compiler.Cli {
             // Native ELF and Mach-O files are written byte-for-byte by the
             // self-hosted emitter. Make them executable on Unix hosts.
             if (!uefi && !windows && !System.Host.Process.IsWindows() &&
-                System.Host.Process.Run("chmod +x -- " + QuoteCommandPath(output)) != 0) {
+                System.Host.Process.Run("/bin/chmod +x -- " + QuoteCommandPath(output)) != 0) {
                 System.Console.WriteLine("error: cannot make compiled output executable");
                 return 1;
             }
@@ -1161,7 +1161,7 @@ namespace Hydrogen.Compiler.Cli {
                     return 1;
                 }
                 bool onMacOS = !System.Host.Process.IsWindows() &&
-                    System.Host.Process.Run("test \"$(uname -s)\" = Darwin") == 0;
+                    System.Host.Process.Run("test \"$(/usr/bin/uname -s)\" = Darwin") == 0;
                 if (projectType == "exe" && !System.Host.Process.IsWindows() && !onMacOS && uiSdk == "") {
                     // Linux default: generate this application's native GTK4
                     // frontend directly, without Qt, hyui-native or launcher.
@@ -1345,7 +1345,7 @@ namespace Hydrogen.Compiler.Cli {
             // they need executable permission, whether or not a UI is present.
             if ((projectType == "exe" || projectType == "macos") &&
                 !System.Host.Process.IsWindows() &&
-                System.Host.Process.Run("chmod +x -- " + QuoteCommandPath(output)) != 0) {
+                System.Host.Process.Run("/bin/chmod +x -- " + QuoteCommandPath(output)) != 0) {
                 System.Console.WriteLine("error: cannot make generated executable runnable");
                 return 1;
             }
@@ -1466,7 +1466,7 @@ namespace Hydrogen.Compiler.Cli {
                 }
                 if (!check && !System.Host.Process.IsWindows() &&
                     (childProject.Type() == "exe" || childProject.Type() == "macos") &&
-                    System.Host.Process.Run("chmod +x -- " + QuoteCommandPath(outputPath)) != 0) {
+                    System.Host.Process.Run("/bin/chmod +x -- " + QuoteCommandPath(outputPath)) != 0) {
                     System.Console.WriteLine("error: cannot make collection output executable");
                     return 1;
                 }
