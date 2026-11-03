@@ -24,6 +24,31 @@ permissions:
   contents: read
 
 jobs:
+  linux-gtk-single-file:
+    name: Single-file GTK4 application without Qt or hyui-native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native GTK4 build requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential binutils cmake pkg-config libgtk-4-dev xvfb dbus-x11 file python3
+      - name: Build Hydrogen Stage 1 without native UI host
+        run: |
+          cmake -S . -B build/bootstrap -DCMAKE_BUILD_TYPE=Release -DHYDROGEN_BUILD_UI=OFF
+          cmake --build build/bootstrap --target hy --parallel 3
+          mkdir -p build/self_hosting/linux
+          ./build/bootstrap/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build/self_hosting/linux/hydrogen-stage1
+          test ! -e build/bootstrap/hyui-native
+          test ! -e build/bootstrap/hyui-launcher
+      - name: Validate UI backend compilation with no native host
+        run: bash tests/ui/test-ui-backend-no-host.sh --compiler "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1"
+      - name: Build, relocate, and launch single-file native GTK4 UI
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' \
+            bash tests/ui/test-linux-gtk-direct.sh
+
   macos-ui:
     name: AppKit UI interactions and appearance
     runs-on: macos-15-intel
@@ -188,7 +213,7 @@ jobs:
           cp build-ui/hyui-native build/bootstrap/hyui-native
           cp build-ui/hyui-launcher build/bootstrap/hyui-launcher
           test ! -e build/bootstrap/hyui
-          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/Studio
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/Studio
           file build/Studio
           test -x build/Studio
           test -x build/Studio.runtime/hyui
@@ -213,11 +238,11 @@ jobs:
           file build/StudioMac.app/Contents/Resources/app/__hyui_backend
       - name: Rebuild owned UI package without replacing unowned files
         run: |
-          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/Studio
+          ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/Studio
           test -x build/Studio
           test -x build/Studio.runtime/app/__hyui_backend
           printf 'sentinel' > build/unowned-file
-          if ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj -o build/unowned-file; then
+          if ./build/self_hosting/linux/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --ui-sdk build/bootstrap -o build/unowned-file; then
             echo "ERROR: Hydrogen overwrote an unowned executable"
             exit 1
           fi
