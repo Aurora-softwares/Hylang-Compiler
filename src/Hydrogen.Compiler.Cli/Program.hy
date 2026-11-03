@@ -985,6 +985,19 @@ namespace Hydrogen.Compiler.Cli {
             return "exe";
         }
 
+        // POSIX chmod is available at /bin/chmod on Linux and macOS.
+        // macOS BSD chmod does not support GNU's "--" option terminator.
+        // Prefix relative names beginning with "-" to keep them from being
+        // interpreted as flags. The absolute command works during Stage 1-3
+        // bootstrap, even when the build proof deliberately clears PATH.
+        private static bool MakeHostExecutable(string path) {
+            if (System.Host.Process.IsWindows()) { return true; }
+            string name = path;
+            if (StartsWith(name, "-")) { name = "./" + name; }
+            return System.Host.Process.Run("/bin/chmod +x " +
+                QuoteCommandPath(name)) == 0;
+        }
+
         private static int Compile(string[] args) {
             bool uefi = false;
             bool windows = false;
@@ -1037,8 +1050,7 @@ namespace Hydrogen.Compiler.Cli {
             }
             // Native ELF and Mach-O files are written byte-for-byte by the
             // self-hosted emitter. Make them executable on Unix hosts.
-            if (!uefi && !windows && !System.Host.Process.IsWindows() &&
-                System.Host.Process.Run("/bin/chmod +x -- " + QuoteCommandPath(output)) != 0) {
+            if (!uefi && !windows && !MakeHostExecutable(output)) {
                 System.Console.WriteLine("error: cannot make compiled output executable");
                 return 1;
             }
@@ -1344,8 +1356,7 @@ namespace Hydrogen.Compiler.Cli {
             // ELF and Mach-O outputs are emitted directly to disk. On Unix,
             // they need executable permission, whether or not a UI is present.
             if ((projectType == "exe" || projectType == "macos") &&
-                !System.Host.Process.IsWindows() &&
-                System.Host.Process.Run("/bin/chmod +x -- " + QuoteCommandPath(output)) != 0) {
+                !MakeHostExecutable(output)) {
                 System.Console.WriteLine("error: cannot make generated executable runnable");
                 return 1;
             }
@@ -1464,9 +1475,8 @@ namespace Hydrogen.Compiler.Cli {
                     System.Console.Write(result.DiagnosticsText());
                     return 1;
                 }
-                if (!check && !System.Host.Process.IsWindows() &&
-                    (childProject.Type() == "exe" || childProject.Type() == "macos") &&
-                    System.Host.Process.Run("/bin/chmod +x -- " + QuoteCommandPath(outputPath)) != 0) {
+                if (!check && (childProject.Type() == "exe" || childProject.Type() == "macos") &&
+                    !MakeHostExecutable(outputPath)) {
                     System.Console.WriteLine("error: cannot make collection output executable");
                     return 1;
                 }
