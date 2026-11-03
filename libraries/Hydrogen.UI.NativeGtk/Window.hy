@@ -56,19 +56,19 @@ namespace Hydrogen.UI {
             return System.Native.Gtk.WindowVisible(handle);
         }
 
+        // Nonblocking event read, also useful for deterministic tests.
+        public bool PollClick() {
+            if (clickState[0] == 0) { return false; }
+            clickState[0] = 0;
+            return true;
+        }
+
         // The native GTK signal marks a Hydrogen int[] cell. The caller
         // processes the event in Hydrogen on the same GUI thread.
         public bool NextEvent() {
-            if (clickState[0] != 0) {
-                clickState[0] = 0;
-                return true;
-            }
+            if (PollClick()) { return true; }
             System.Native.Gtk.MainIteration();
-            if (clickState[0] != 0) {
-                clickState[0] = 0;
-                return true;
-            }
-            return false;
+            return PollClick();
         }
 
         public void Run() {

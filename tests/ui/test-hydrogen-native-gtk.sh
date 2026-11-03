@@ -23,7 +23,7 @@ if ldd "$work/app" | grep -q 'not found'; then
 fi
 # Emit the real GTK "clicked" signal and prove Hydrogen observes its
 # native callback without a separate child backend or IPC.
-"$work/app" --self-test-click >"$work/click-out" 2>"$work/click-error" || {
+timeout --signal=TERM 12s "$work/app" --self-test-click >"$work/click-out" 2>"$work/click-error" || {
   cat "$work/click-out" "$work/click-error" >&2
   exit 1
 }

@@ -10,7 +10,8 @@ namespace HydrogenNativeGtk {
 
             if (args.Length > 0 && args[0] == "--self-test-click") {
                 window.EmitClickForTests();
-                if (!window.NextEvent()) { return 4; }
+                System.Console.WriteLine("HYDROGEN_NATIVE_GTK_SIGNAL_EMITTED");
+                if (!window.PollClick()) { return 4; }
                 window.SetLabelText("Clicked directly inside Hydrogen");
                 System.Console.WriteLine("HYDROGEN_NATIVE_GTK_CLICKED");
                 window.Close();
