@@ -1,0 +1,11 @@
+format = 2
+name = "Hydrogen.UI.NativeGtk"
+version = "0.1.0"
+type = "lib"
+sources = ["Window.hy"]
+
+[package]
+id = "Hydrogen.UI.NativeGtk"
+description = "Native Linux GTK4 window and event loop in Hydrogen"
+authors = ["Aurora Softwares"]
+license = "MIT"

@@ -1257,7 +1257,7 @@ namespace Hydrogen.Compiler.Cli {
             }
             // The compiled backend must be executable even when not packaged.
             // The native compiler otherwise leaves a raw ELF without +x.
-            if (uiBackend && projectType == "exe" && !System.Host.Process.IsWindows() &&
+            if (projectType == "exe" && !System.Host.Process.IsWindows() &&
                 System.Host.Process.Run("/bin/chmod +x " + QuoteCommandPath(output)) != 0) {
                 System.Console.WriteLine("error: cannot mark Hydrogen UI backend executable: " + output);
                 return 1;

@@ -94,6 +94,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
         private string[] runtimeTargets;
         private int[] runtimePatches;
         private int runtimePatchCount;
+        private string[] nativeImportNames;
+        private int[] nativeImportPatches;
+        private int[] nativeImportIndexes;
+        private int nativeImportPatchCount;
+        private int[] gtkCallbackPatches;
+        private int gtkCallbackPatchCount;
         private bool receiverPushed;
         private bool directBaseCall;
         private bool addressReadOnly;
@@ -241,6 +247,21 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 				i = i + 1;
 			}
 
+            if (gtkCallbackPatchCount > 0) {
+                // The GTK signal invokes this native callback on the same
+                // thread as Hydrogen. It updates a Hydrogen-owned int[] event
+                // cell; the Hydrogen event loop calls application methods.
+                int callback = code.Position();
+                code.EmitByte(0xc7); code.EmitByte(0x06);
+                code.Emit32(1); // mov dword [rsi],1 (rsi=user_data)
+                code.EmitByte(0xc3); // ret
+                int cb = 0;
+                while (cb < gtkCallbackPatchCount) {
+                    PatchRelative(gtkCallbackPatches[cb], callback);
+                    cb = cb + 1;
+                }
+            }
+
 			// Package the output for the selected operating system.
 			if (windows) {
 				WindowsImageBuilder builder =
@@ -281,6 +302,17 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 
 				return new DirectImageResult(true, image, "", -1);
 			}
+
+            if (nativeImportNames.Length > 0) {
+                // The self-hosted linker constructs DT_NEEDED, dynsym and RELA
+                // directly. No host compiler, C/C++ shim, or toolchain required.
+                byte[] linked = new LinuxDynamicImageBuilder().Build(
+                    code.ToArray(), payloads, payloadPatchOffsets,
+                    payloadPatchIndexes, nativeImportNames,
+                    nativeImportPatches, nativeImportIndexes);
+                if (linked == null) { return Failed("Linux native dynamic ELF linkage failed"); }
+                return new DirectImageResult(true, linked, "", -1);
+            }
 
 			// Existing Linux ELF output.
 			ElfImageBuilder elf = new ElfImageBuilder();
@@ -460,6 +492,12 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             runtimeTargets = new string[0];
             runtimePatches = new int[0];
             runtimePatchCount = 0;
+            nativeImportNames = new string[0];
+            nativeImportPatches = new int[0];
+            nativeImportIndexes = new int[0];
+            nativeImportPatchCount = 0;
+            gtkCallbackPatches = new int[0];
+            gtkCallbackPatchCount = 0;
             continuePatches = new int[0];
             continueCount = 0;
             staticOwners = new string[0];
@@ -2266,6 +2304,10 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
             if (intrinsic == "System.IO.File.ReadAllBytes") { return RuntimeCall(expression, "rt_read_bytes", "string", "", "byte[]"); }
             if (intrinsic == "System.IO.File.WriteAllText") { return RuntimeCall(expression, "rt_write_text", "string", "string", "void"); }
             if (intrinsic == "System.IO.File.WriteAllBytes") { return RuntimeCall(expression, "rt_write_bytes", "string", "byte[]", "void"); }
+
+            if (GtkSymbol(intrinsic) != "") {
+                return NativeGtkCall(expression, intrinsic);
+            }
             if (intrinsic == "System.Host.Process.Run") { return RuntimeCall(expression, "rt_process_run", "string", "", "int"); }
             if (intrinsic == "System.Host.Process.IsWindows") { return RuntimeCall(expression, "rt_is_windows", "", "", "bool"); }
             if (intrinsic == "System.Convert.ToInt32") { return RuntimeCall(expression, "rt_to_int", "string", "", "int"); }
@@ -2597,6 +2639,190 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
                 return true;
             }
             failure = "native string conversion requires a string, integral value, or bool"; return false;
+        }
+
+        // Narrow, typed native GTK ABI surface. These calls are ordinary C ABI
+        // function calls emitted by Hydrogen and resolved by the ELF loader.
+        // The language-level UI owns windows and state; GTK is only an OS toolkit.
+        private string GtkSymbol(string name) {
+            if (name == "System.Native.Gtk.Init") { return "gtk_init"; }
+            if (name == "System.Native.Gtk.WindowNew") { return "gtk_window_new"; }
+            if (name == "System.Native.Gtk.WindowSetTitle") { return "gtk_window_set_title"; }
+            if (name == "System.Native.Gtk.LabelSetText") { return "gtk_label_set_text"; }
+            if (name == "System.Native.Gtk.OnClick") { return "g_signal_connect_data"; }
+            if (name == "System.Native.Gtk.EmitSignal") { return "g_signal_emit_by_name"; }
+            if (name == "System.Native.Gtk.WindowSetDefaultSize") { return "gtk_window_set_default_size"; }
+            if (name == "System.Native.Gtk.WindowPresent") { return "gtk_window_present"; }
+            if (name == "System.Native.Gtk.WindowVisible") { return "gtk_widget_get_visible"; }
+            if (name == "System.Native.Gtk.LabelNew") { return "gtk_label_new"; }
+            if (name == "System.Native.Gtk.ButtonNew") { return "gtk_button_new_with_label"; }
+            if (name == "System.Native.Gtk.WindowSetChild") { return "gtk_window_set_child"; }
+            if (name == "System.Native.Gtk.BoxNew") { return "gtk_box_new"; }
+            if (name == "System.Native.Gtk.BoxAppend") { return "gtk_box_append"; }
+            if (name == "System.Native.Gtk.MainIteration") { return "g_main_context_iteration"; }
+            if (name == "System.Native.Gtk.WindowDestroy") { return "gtk_window_destroy"; }
+            if (name == "System.Native.Gtk.Ref") { return "g_object_ref"; }
+            if (name == "System.Native.Gtk.Unref") { return "g_object_unref"; }
+            return "";
+        }
+
+        private bool NativeGtkCall(IrExpression expression, string name) {
+            if (windows || macos || freestanding) {
+                failure = "native GTK APIs require a Linux desktop executable";
+                return false;
+            }
+            if (name == "System.Native.Gtk.OnClick") {
+                return NativeGtkClick(expression);
+            }
+            string first = "";
+            string second = "";
+            string third = "";
+            string result = "void";
+            if (name == "System.Native.Gtk.WindowNew" ||
+                name == "System.Native.Gtk.LabelNew" ||
+                name == "System.Native.Gtk.ButtonNew" ||
+                name == "System.Native.Gtk.BoxNew" ||
+                name == "System.Native.Gtk.Ref") { result = "long"; }
+            if (name == "System.Native.Gtk.WindowVisible") { result = "bool"; }
+            if (name == "System.Native.Gtk.WindowPresent" ||
+                name == "System.Native.Gtk.WindowVisible" ||
+                name == "System.Native.Gtk.WindowDestroy" ||
+                name == "System.Native.Gtk.Unref" ||
+                name == "System.Native.Gtk.Ref") { first = "long"; }
+            if (name == "System.Native.Gtk.LabelNew" ||
+                name == "System.Native.Gtk.ButtonNew") { first = "string"; }
+            if (name == "System.Native.Gtk.WindowSetTitle" ||
+                name == "System.Native.Gtk.LabelSetText" ||
+                name == "System.Native.Gtk.EmitSignal") {
+                first = "long"; second = "string";
+            }
+            if (name == "System.Native.Gtk.WindowSetChild" ||
+                name == "System.Native.Gtk.BoxAppend") {
+                first = "long"; second = "long";
+            }
+            if (name == "System.Native.Gtk.BoxNew") {
+                first = "int"; second = "int";
+            }
+            if (name == "System.Native.Gtk.WindowSetDefaultSize") {
+                first = "long"; second = "int"; third = "int";
+            }
+            IrExpression[] args = expression.Arguments();
+            int count = 0;
+            if (first != "") { count = 1; }
+            if (second != "") { count = 2; }
+            if (third != "") { count = 3; }
+            if (args.Length != count) { failure = "wrong native GTK argument count"; return false; }
+            int i = 0;
+            while (i < count) {
+                if (!CompileExpression(args[i])) { return false; }
+                string expected = first;
+                if (i == 1) { expected = second; }
+                if (i == 2) { expected = third; }
+                if (!Assignable(valueType, expected)) {
+                    failure = "invalid native GTK argument type"; return false;
+                }
+                NormalizeRax(expected);
+                if (expected == "string") {
+                    // Managed strings are [length:u64][UTF8:NUL-terminated].
+                    // GTK copies the string before the next managed allocation.
+                    code.EmitByte(0x48); code.EmitByte(0x83);
+                    code.EmitByte(0xc0); code.EmitByte(8); // add rax,8
+                }
+                code.EmitByte(0x50); // push argument
+                i = i + 1;
+            }
+            if (count >= 3) { code.EmitByte(0x5a); } // pop rdx
+            if (count >= 2) { code.EmitByte(0x5e); } // pop rsi
+            if (count >= 1) { code.EmitByte(0x5f); } // pop rdi
+            if (name == "System.Native.Gtk.MainIteration") {
+                code.EmitByte(0x31); code.EmitByte(0xff); // xor edi,edi
+                code.EmitByte(0xbe); code.Emit32(1); // mov esi,1 (block)
+            }
+            // Honor the SysV AMD64 16-byte stack alignment requirement.
+            // Preserve rbx, which the Hydrogen backend may use in loops.
+            code.EmitByte(0x53); // push rbx
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xe3); // mov rbx,rsp
+            code.EmitByte(0x48); code.EmitByte(0x83);
+            code.EmitByte(0xe4); code.EmitByte(0xf0); // and rsp,-16
+            code.EmitByte(0x31); code.EmitByte(0xc0); // SysV varargs: no vector args
+            code.EmitByte(0xff); code.EmitByte(0x15); // call qword [rip+GOT]
+            string symbol = GtkSymbol(name);
+            int index = -1;
+            i = 0;
+            while (i < nativeImportNames.Length) {
+                if (nativeImportNames[i] == symbol) { index = i; break; }
+                i = i + 1;
+            }
+            if (index < 0) {
+                index = nativeImportNames.Length;
+                nativeImportNames = AppendString(nativeImportNames, index, symbol);
+            }
+            nativeImportPatches = AppendInt(nativeImportPatches, nativeImportPatchCount, code.Position());
+            nativeImportIndexes = AppendInt(nativeImportIndexes, nativeImportPatchCount, index);
+            nativeImportPatchCount = nativeImportPatchCount + 1;
+            code.Emit32(0);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xdc); // mov rsp,rbx
+            code.EmitByte(0x5b); // pop rbx
+            if (result == "bool") {
+                code.EmitByte(0x85); code.EmitByte(0xc0); // test eax,eax
+                code.EmitByte(0x0f); code.EmitByte(0x95); code.EmitByte(0xc0); // setne al
+                code.EmitByte(0x0f); code.EmitByte(0xb6); code.EmitByte(0xc0);
+            }
+            valueType = result;
+            return true;
+        }
+
+        // The native GTK callback touches only a rooted int[] state cell.
+        // Event logic remains ordinary Hydrogen code in the same process.
+        private bool NativeGtkClick(IrExpression expression) {
+            IrExpression[] args = expression.Arguments();
+            if (args.Length != 2) {
+                failure = "GTK clicked signal requires a widget and int[] state";
+                return false;
+            }
+            if (!CompileExpression(args[0]) || !Assignable(valueType, "long")) {
+                failure = "invalid GTK clicked signal widget"; return false;
+            }
+            code.EmitByte(0x50); // push button pointer
+            if (!CompileExpression(args[1]) || valueType != "int[]") {
+                failure = "GTK clicked state must be int[]"; return false;
+            }
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc0); code.EmitByte(8);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc1); // rcx=flags data
+            code.EmitByte(0x5f); // pop rdi=button
+            EmitLiteral("clicked");
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xc0); code.EmitByte(8);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xc6); // rsi=signal
+            code.EmitByte(0x48); code.EmitByte(0x8d); code.EmitByte(0x15); // lea rdx, [rip+cb]
+            gtkCallbackPatches = AppendInt(gtkCallbackPatches, gtkCallbackPatchCount, code.Position());
+            gtkCallbackPatchCount = gtkCallbackPatchCount + 1;
+            code.Emit32(0);
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xc0); // r8d=0
+            code.EmitByte(0x45); code.EmitByte(0x31); code.EmitByte(0xc9); // r9d=0
+
+            // Align stack, call g_signal_connect_data from the ELF import GOT.
+            code.EmitByte(0x53);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xe3);
+            code.EmitByte(0x48); code.EmitByte(0x83); code.EmitByte(0xe4); code.EmitByte(0xf0);
+            code.EmitByte(0xff); code.EmitByte(0x15);
+            string symbol = "g_signal_connect_data";
+            int index = -1;
+            int i = 0;
+            while (i < nativeImportNames.Length) {
+                if (nativeImportNames[i] == symbol) { index = i; break; }
+                i = i + 1;
+            }
+            if (index < 0) {
+                index = nativeImportNames.Length;
+                nativeImportNames = AppendString(nativeImportNames, index, symbol);
+            }
+            nativeImportPatches = AppendInt(nativeImportPatches, nativeImportPatchCount, code.Position());
+            nativeImportIndexes = AppendInt(nativeImportIndexes, nativeImportPatchCount, index);
+            nativeImportPatchCount = nativeImportPatchCount + 1;
+            code.Emit32(0);
+            code.EmitByte(0x48); code.EmitByte(0x89); code.EmitByte(0xdc);
+            code.EmitByte(0x5b);
+            valueType = "void"; return true;
         }
 
         private bool RuntimeCall(IrExpression expression, string runtime, string first, string second, string resultType) {
@@ -3183,11 +3409,15 @@ namespace Hydrogen.Compiler.CodeGen.X64 {
 				return;
 			}
 
-			// Existing Linux / Windows implementation.
+			// Linux exit(60) terminates only the calling thread. GTK4 and
+			// other native libraries can create worker threads, so returning
+			// from Main must terminate the process with exit_group(231).
+			// Keep the existing Windows runtime syscall contract unchanged.
 			code.EmitByte(0x48);
 			code.EmitByte(0xc7);
 			code.EmitByte(0xc0);
-			code.Emit32(60);
+			if (windows) { code.Emit32(60); }
+			else { code.Emit32(231); }
 
 			if (windows) {
 				EmitRuntime("win_syscall");

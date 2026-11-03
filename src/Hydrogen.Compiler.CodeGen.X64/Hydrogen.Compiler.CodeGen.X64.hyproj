@@ -8,6 +8,7 @@ sources = [
 	"AustralisNativeImageBuilder.hy",
 	"DirectMainCompiler.hy",
 	"ElfImageBuilder.hy",
+	"LinuxDynamicImageBuilder.hy",
 	"FreestandingRuntimeEmitter.hy",
 	"IrLowering.hy",
 	"MacOSImageBuilder.hy",

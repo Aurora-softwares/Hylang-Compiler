@@ -60,6 +60,10 @@ import sys
 from pathlib import Path
 state=json.loads(Path(sys.argv[1]).read_text())
 assert state["pages.value"] == 1, state
+# Neither the context menu nor the popover may be mapped on startup.
+# A stray GTK4 popover captures pointer input and prevents button clicks,
+# resizing and normal window controls from working.
+assert state["__hyui.visible_popovers"] == "0", state
 assert state["projectName.text"] == "Aurora Notes", state
 assert "Ready when you are" in state["status.text"], state
 PY
