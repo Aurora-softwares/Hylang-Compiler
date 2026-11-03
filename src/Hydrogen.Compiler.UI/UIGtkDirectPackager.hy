@@ -1,10 +1,10 @@
 using Hydrogen.Compiler.Core;
 
 namespace Hydrogen.Compiler.UI {
-    // Compile one native GTK4 frontend for each Linux UI project. This does
-    // not invoke hyui-native, hyui-launcher, Qt, or a precompiled UI host.
-    // The compiled Hydrogen event backend remains separate until the final
-    // single-process integration milestone.
+    // Build one self-contained ELF file containing the native GTK4 window,
+    // embedded HYUI documents/assets, and Hydrogen-compiled application code.
+    // The backend ELF is launched from an in-memory fd until the native ABI
+    // supports linking Hydrogen application methods into the GTK process.
     public class UIGtkDirectPackager {
         private static int Run(string command) {
             return System.Host.Process.Run(command);
@@ -32,11 +32,13 @@ namespace Hydrogen.Compiler.UI {
         public static string Prepare(string output) {
             if (Run("command -v c++ >/dev/null 2>&1") != 0 ||
                 Run("command -v pkg-config >/dev/null 2>&1") != 0 ||
+                Run("command -v tar >/dev/null 2>&1") != 0 ||
+                Run("command -v objcopy >/dev/null 2>&1") != 0 ||
                 Run("pkg-config --exists gtk4") != 0) {
-                return "native GTK4 compilation needs a C++ compiler, pkg-config, and GTK4 development headers (Ubuntu: sudo apt install build-essential pkg-config libgtk-4-dev)";
+                return "single-file GTK4 builds need c++, tar, objcopy and GTK4 headers (Ubuntu: sudo apt install build-essential binutils pkg-config libgtk-4-dev)";
             }
             if (!System.IO.File.Exists("tools/hyui/linux_gtk_app.cpp")) {
-                return "native GTK4 source not found: tools/hyui/linux_gtk_app.cpp (run from Hydrogen source root)";
+                return "native GTK4 source not found: tools/hyui/linux_gtk_app.cpp (build from Hydrogen source root)";
             }
             string stage = output + ".ui-staging";
             if (Exists(stage) || Exists(output + ".ui-launcher") || Exists(output + ".ui-backup") ||
@@ -49,18 +51,22 @@ namespace Hydrogen.Compiler.UI {
             }
             bool executable = Exists(output);
             bool runtime = Exists(output + ".runtime");
-            if (executable != runtime) {
-                return "refusing to overwrite an incomplete or unowned native UI package";
+            if (!executable && runtime) {
+                return "refusing to overwrite an orphaned GTK4 runtime directory";
             }
-            if (executable && !System.IO.File.Exists(output + ".runtime/hyui-runtime.json")) {
-                return "refusing to overwrite an unowned desktop application";
-            }
-            if (executable && System.IO.File.ReadAllText(output + ".runtime/hyui-runtime.json") !=
-                "{\"format\":1,\"target\":\"linux-x64\",\"renderer\":\"gtk4-direct\"}") {
-                return "cannot overwrite a non-direct GTK4 application; use a different output path";
+            if (runtime) {
+                if (!System.IO.File.Exists(output + ".runtime/hyui-runtime.json") ||
+                    System.IO.File.ReadAllText(output + ".runtime/hyui-runtime.json") !=
+                    "{\"format\":1,\"target\":\"linux-x64\",\"renderer\":\"gtk4-direct\"}") {
+                    return "cannot overwrite an unowned or legacy UI runtime";
+                }
+            } else if (executable &&
+                       Run("grep -aFq -- " + Quote("HYDROGEN_UI_SINGLE_FILE_V1") + " " +
+                           Quote(output)) != 0) {
+                return "refusing to overwrite an unowned executable; use another output path";
             }
             if (Run("mkdir -p -- " + Quote(stage + "/app")) != 0) {
-                return "cannot stage GTK4 application output";
+                return "cannot stage single-file GTK4 application output";
             }
             return "";
         }
