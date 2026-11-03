@@ -41,11 +41,14 @@ static std::map<std::string,std::string_view> embeddedResources() {
         const std::string prefix(header + 345, strnlen(header + 345, 155));
         if (!prefix.empty()) name = prefix + "/" + name;
         while (name.rfind("./", 0) == 0) name.erase(0, 2);
-        if (name.empty() || name[0] == '/' || name.find('\\') != std::string::npos ||
+        const char type = header[156];
+        // tar -C app . adds a harmless root directory entry named "./".
+        if ((name.empty() && type != '5') ||
+            (!name.empty() && (name[0] == '/' || name.find('\\') != std::string::npos ||
             name.find("//") != std::string::npos || name.find(':') != std::string::npos ||
             name == ".." || name.rfind("../", 0) == 0 ||
             name.find("/../") != std::string::npos ||
-            (name.size() >= 3 && name.compare(name.size() - 3, 3, "/..") == 0))
+            (name.size() >= 3 && name.compare(name.size() - 3, 3, "/..") == 0))))
             throw std::runtime_error("unsafe embedded HYUI archive member");
         std::size_t fileSize = 0;
         for (int i = 124; i < 136; ++i) {
@@ -57,7 +60,6 @@ static std::map<std::string,std::string_view> embeddedResources() {
         }
         pos += 512;
         if (fileSize > length - pos) throw std::runtime_error("truncated embedded HYUI archive");
-        const char type = header[156];
         if (type == '0' || type == '\0') {
             if (!resources.emplace(name, std::string_view(blob + pos, fileSize)).second)
                 throw std::runtime_error("duplicate embedded HYUI archive member");
