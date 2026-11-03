@@ -95,7 +95,7 @@ jobs:
           test -f build-sdk/native-sdk/macos-x64.app/Contents/hyui-runtime.json
           test -x build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui
           test ! -e build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui-launcher
-          plutil -extract CFBundleExecutable raw build-sdk/native-sdk/macos-x64.app/Contents/Info.plist | grep -q '^hyui
+          plutil -extract CFBundleExecutable raw build-sdk/native-sdk/macos-x64.app/Contents/Info.plist | grep -qx hyui
           lipo -archs build-sdk/native-sdk/macos-x64.app/Contents/MacOS/hyui | grep -q x86_64
           plutil -lint build-sdk/native-sdk/macos-x64.app/Contents/Info.plist
           tar -czf build-sdk/hydrogen-ui-sdk-macos-x64.tar.gz -C build-sdk/native-sdk macos-x64.app
@@ -108,7 +108,8 @@ jobs:
           ./build-sdk/hydrogen-stage1 build samples/ui_studio/Studio.hyproj --target macos --ui-sdk build-sdk/native-sdk -o build-sdk/Studio
           test -x build-sdk/Studio.app/Contents/Resources/app/__hyui_backend
           test ! -e build-sdk/Studio.app/Contents/MacOS/hyui-launcher
-          plutil -extract CFBundleExecutable raw build-sdk/Studio.app/Contents/Info.plist | grep -q '^hyui
+          plutil -extract CFBundleExecutable raw build-sdk/Studio.app/Contents/Info.plist | grep -qx hyui
+          build-sdk/Studio.app/Contents/MacOS/hyui --state-output build-sdk/appkit-state.json --screenshot build-sdk/appkit-screenshot.png
           test -s build-sdk/appkit-screenshot.png
       - name: Upload exported macOS runtime
         uses: actions/upload-artifact@v4
