@@ -1194,8 +1194,42 @@ namespace Hydrogen.Compiler.Cli {
                     System.Console.WriteLine("wrote " + output + " (linux-x64; native GTK4 UI)");
                     return 0;
                 }
-                // The native runtime is exported once per OS and carried by
-                // the Hydrogen SDK. No separate hyui packaging executable.
+                // Native Windows builds can create a single self-contained
+                // WinUI EXE directly. Cross-compiled Windows builds and
+                // explicit SDK builds keep their existing export path.
+                if (System.Host.Process.IsWindows() && uiSdk == "" &&
+                    (projectType == "exe" || projectType == "windows")) {
+                    string destination = UIDesktopPackager.Output(output, "windows-x64");
+                    string issue = UIProjectBuilder.Preflight(projectPath, "");
+                    if (issue != "") {
+                        System.Console.WriteLine("error: " + issue);
+                        return 1;
+                    }
+                    issue = UIWindowsSinglePackager.Prepare(destination);
+                    if (issue != "") {
+                        System.Console.WriteLine("error: " + issue);
+                        return 1;
+                    }
+                    NativeCompiler winCompiler = new NativeCompiler();
+                    NativeCompilerResult winResult = winCompiler.BuildProjectWindows(
+                        projectPath, UIWindowsSinglePackager.Backend(destination));
+                    if (!winResult.Success()) {
+                        System.Console.Write(winResult.DiagnosticsText());
+                        UIWindowsSinglePackager.Abort(destination);
+                        return 1;
+                    }
+                    issue = UIWindowsSinglePackager.Finish(projectPath, destination);
+                    if (issue != "") {
+                        System.Console.WriteLine("error: " + issue);
+                        UIWindowsSinglePackager.Abort(destination);
+                        return 1;
+                    }
+                    System.Console.WriteLine("wrote " + destination +
+                        " (windows-x64; single-file native WinUI 3)");
+                    return 0;
+                }
+                // Exported desktop SDKs retain the legacy packaging path
+                // for cross-compilation and explicitly supplied SDKs.
                 string desktopTarget = projectType == "exe" && System.Host.Process.IsWindows()
                     ? "windows-x64" : (projectType == "exe" && onMacOS && target == ""
                     ? "macos-x64" : UIRuntimeManager.Target(projectType));
