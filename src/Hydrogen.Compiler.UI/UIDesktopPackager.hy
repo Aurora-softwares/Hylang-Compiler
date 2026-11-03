@@ -33,9 +33,10 @@ namespace Hydrogen.Compiler.UI {
                 return "native UI SDK renderer or target mismatch";
             }
             string host = target == "windows-x64" ? source + "/hyui.exe" : source + "/MacOS/hyui";
-            string launcher = target == "windows-x64" ? source + "/hyui-launcher.exe" : source + "/MacOS/hyui-launcher";
-            if (!System.IO.File.Exists(host) || !System.IO.File.Exists(launcher)) {
-                return "native UI SDK has no host or launcher";
+            string launcher = source + "/hyui-launcher.exe";
+            if (!System.IO.File.Exists(host) ||
+                (target == "windows-x64" && !System.IO.File.Exists(launcher))) {
+                return "native UI SDK has no required platform renderer";
             }
             string stage = output + ".ui-staging";
             if (Exists(stage) || Exists(output + ".ui-backup") || Exists(output + ".ui-backup.runtime") ||
@@ -83,6 +84,22 @@ namespace Hydrogen.Compiler.UI {
                 "{\"format\":1,\"document\":\"" + Escape(manifest.UI()) +
                 "\",\"backend\":\"" + UIRuntimeManager.BackendName(target) +
                 "\",\"target\":\"" + target + "\"}");
+            if (target == "macos-x64") {
+                // macOS launches the native AppKit renderer directly. Fix
+                // old exported SDK manifests, and remove obsolete launchers.
+                string contents = output + ".ui-staging/Contents";
+                string plist = contents + "/Info.plist";
+                if (!System.IO.File.Exists(plist)) {
+                    return "exported AppKit application has no Info.plist";
+                }
+                string info = System.IO.File.ReadAllText(plist);
+                if (Has(info, "<string>hyui-launcher</string>")) {
+                    System.IO.File.WriteAllText(plist,
+                        ReplaceAll(info, "<string>hyui-launcher</string>",
+                            "<string>hyui</string>"));
+                }
+                Del(contents + "/MacOS/hyui-launcher", false);
+            }
             bool old = Exists(output);
             if (old && !Move(output, output + ".ui-backup")) { return "cannot back up existing launcher"; }
             if (target == "windows-x64") {
@@ -208,6 +225,23 @@ namespace Hydrogen.Compiler.UI {
                 i = i + 1;
             }
             return output;
+        }
+        private static string ReplaceAll(string value, string needle, string replacement) {
+            string result = "";
+            int i = 0;
+            while (i < value.Length) {
+                int j = 0;
+                while (i + j < value.Length && j < needle.Length &&
+                    value[i + j] == needle[j]) { j = j + 1; }
+                if (j == needle.Length) {
+                    result = result + replacement;
+                    i = i + needle.Length;
+                } else {
+                    result = result + value[i];
+                    i = i + 1;
+                }
+            }
+            return result;
         }
         private static bool Has(string value, string text) {
             int i = 0;
