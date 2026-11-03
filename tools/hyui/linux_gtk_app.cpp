@@ -209,7 +209,13 @@ struct App {
         if(!n->attrs.count("visible"))state[name+".visible"]="true";
         if(!n->attrs.count("enabled"))state[name+".enabled"]="true";
         if(widget) {
-            gtk_widget_set_visible(widget,!n->attrs.count("visible")||truth(attr(n,"visible")));
+            // Popovers are modal GTK native surfaces. Mapping one during
+            // control registration grabs pointer/keyboard input and can make
+            // the entire parent window appear non-interactive. The HYUI
+            // "open" state (or a context-menu click), not "visible", owns
+            // the popover's mapped state.
+            gtk_widget_set_visible(widget,GTK_IS_POPOVER(widget)?FALSE:
+                (!n->attrs.count("visible")||truth(attr(n,"visible"))));
             gtk_widget_set_sensitive(widget,!n->attrs.count("enabled")||truth(attr(n,"enabled")));
             auto tip=attr(n,"tooltip");
             if(!tip.empty())gtk_widget_set_tooltip_text(widget,tip.c_str());
@@ -445,7 +451,13 @@ struct App {
                 if(truth(v))gtk_popover_popup(GTK_POPOVER(w));
                 else gtk_popover_popdown(GTK_POPOVER(w));
             }
-            if(prop=="visible" && w)gtk_widget_set_visible(w,truth(v));
+            if(prop=="visible" && w) {
+                // A popover's visible attribute describes whether it may be
+                // opened; it must never make an unopened popover modal.
+                if(GTK_IS_POPOVER(w)) {
+                    if(!truth(v))gtk_popover_popdown(GTK_POPOVER(w));
+                } else gtk_widget_set_visible(w,truth(v));
+            }
             else if(prop=="enabled" && w)gtk_widget_set_sensitive(w,truth(v));
             else if(prop=="text" && w) {
                 if(n->tag=="Label")gtk_label_set_text(GTK_LABEL(w),v.c_str());
@@ -755,6 +767,11 @@ struct App {
             }
             gtk_widget_set_parent(pop,target->second.widget);
             registerControl(n,pop,n->tag.c_str());
+            // Explicitly-open popovers may appear at startup, but context
+            // menus must remain closed until their right-click gesture.
+            if(n->tag=="Popover" && truth(attr(n,"open")) &&
+               (!n->attrs.count("visible")||truth(attr(n,"visible"))))
+                gtk_popover_popup(GTK_POPOVER(pop));
             if(n->tag=="ContextMenu") {
                 GtkGesture* gesture=gtk_gesture_click_new();
                 gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture),GDK_BUTTON_SECONDARY);
@@ -786,6 +803,16 @@ struct App {
         }
         if(!self->statePath.empty()) {
             self->snapshot();
+            // The scripted UI regression test inspects actual GTK widget
+            // visibility. A mistakenly mapped GtkPopover steals focus and
+            // makes the Studio window unusable despite working backend events.
+            int visiblePopovers=0;
+            for(const auto& entry:self->controls) {
+                auto* widget=entry.second.widget;
+                if(widget && GTK_IS_POPOVER(widget) && gtk_widget_get_visible(widget))
+                    ++visiblePopovers;
+            }
+            self->state["__hyui.visible_popovers"]=std::to_string(visiblePopovers);
             std::ofstream out(self->statePath);
             out<<"{";
             bool first=true;
