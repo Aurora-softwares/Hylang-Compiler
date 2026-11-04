@@ -310,34 +310,44 @@ struct App {
         gtk_window_set_child(GTK_WINDOW(dialog),layout);
         gtk_window_present(GTK_WINDOW(dialog));
     }
-    static void pickerResponse(GtkNativeDialog* native,gint response,gpointer data) {
+    static void fileDialogReady(GObject* source,GAsyncResult* result,gpointer data) {
         auto* h=static_cast<Hook*>(data);
-        const auto name=h->app->id(h->node);
-        if(response==GTK_RESPONSE_ACCEPT) {
-            GFile* file=gtk_file_chooser_get_file(GTK_FILE_CHOOSER(native));
+        const auto mode=attr(h->node,"mode","open");
+        GtkFileDialog* dialog=GTK_FILE_DIALOG(source);
+        GError* error=nullptr;
+        GFile* file=mode=="save"?gtk_file_dialog_save_finish(dialog,result,&error):
+            mode=="folder"?gtk_file_dialog_select_folder_finish(dialog,result,&error):
+            gtk_file_dialog_open_finish(dialog,result,&error);
+        if(!h->app->closing) {
+            bool accepted=false;
             if(file) {
                 gchar* path=g_file_get_path(file);
-                if(path) { h->app->state[name+".path"]=path;g_free(path); }
-                g_object_unref(file);
+                if(path) {
+                    h->app->state[h->app->id(h->node)+".path"]=path;
+                    accepted=true;
+                    g_free(path);
+                }
             }
-            h->app->dispatch(h->handler,name);
-        } else {
-            h->app->dispatch(attr(h->node,"onCancel"),name);
+            if(accepted)h->app->dispatch(h->handler,h->app->id(h->node));
+            else h->app->dispatch(attr(h->node,"onCancel"),h->app->id(h->node));
         }
-        g_object_unref(native);
+        if(file)g_object_unref(file);
+        if(error)g_error_free(error);
+        g_object_unref(dialog);
     }
     static void pickerClicked(GtkWidget*,gpointer data) {
         auto* h=static_cast<Hook*>(data);
+        if(h->app->closing)return;
+        GtkFileDialog* dialog=gtk_file_dialog_new();
+        const auto title=attr(h->node,"text","Select file");
+        gtk_file_dialog_set_title(dialog,title.c_str());
         const auto mode=attr(h->node,"mode","open");
-        GtkFileChooserAction action=GTK_FILE_CHOOSER_ACTION_OPEN;
-        if(mode=="save")action=GTK_FILE_CHOOSER_ACTION_SAVE;
-        else if(mode=="folder")action=GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER;
-        GtkFileChooserNative* chooser=gtk_file_chooser_native_new(
-            attr(h->node,"text","Select file").c_str(),
-            GTK_WINDOW(h->app->window),action,
-            mode=="save"?"Save":"Open","Cancel");
-        g_signal_connect(chooser,"response",G_CALLBACK(pickerResponse),h);
-        gtk_native_dialog_show(GTK_NATIVE_DIALOG(chooser));
+        if(mode=="save")gtk_file_dialog_save(dialog,GTK_WINDOW(h->app->window),
+            nullptr,fileDialogReady,h);
+        else if(mode=="folder")gtk_file_dialog_select_folder(dialog,GTK_WINDOW(h->app->window),
+            nullptr,fileDialogReady,h);
+        else gtk_file_dialog_open(dialog,GTK_WINDOW(h->app->window),
+            nullptr,fileDialogReady,h);
     }
     static void clipboardReady(GObject* object,GAsyncResult* result,gpointer data) {
         auto* h=static_cast<Hook*>(data);
@@ -373,6 +383,22 @@ struct App {
         const double fraction=max>min?
             std::clamp((double(number(value)-min))/double(max-min),0.0,1.0):0.0;
         gtk_progress_bar_set_fraction(bar,fraction);
+    }
+    static gboolean reflowRows(gpointer data) {
+        auto* self=static_cast<App*>(data);
+        if(self->closing)return G_SOURCE_REMOVE;
+        for(auto& [name,c]:self->controls) {
+            if(!c.node || c.node->tag!="RowPanel" || !GTK_IS_FLOW_BOX(c.widget))continue;
+            const int breakpoint=number(attr(c.node,"breakpoint"),0);
+            if(breakpoint<=0)continue;
+            const int width=gtk_widget_get_width(c.widget);
+            if(width<=0)continue;
+            const guint wanted=width<breakpoint?1u:
+                guint(std::max<size_t>(1,c.node->children.size()));
+            if(gtk_flow_box_get_max_children_per_line(GTK_FLOW_BOX(c.widget))!=wanted)
+                gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(c.widget),wanted);
+        }
+        return G_SOURCE_CONTINUE;
     }
     static gboolean pulseProgress(gpointer data) {
         auto* self=static_cast<App*>(data);
@@ -665,6 +691,11 @@ struct App {
         if(GTK_IS_STACK(parent)) {
             gtk_stack_add_titled(GTK_STACK(parent),child,attr(childNode,"id").c_str(),
                                  attr(childNode,"title","Page").c_str());
+        } else if(GTK_IS_FLOW_BOX(parent)) {
+            if(parentNode && parentNode->tag=="GridPanel")
+                gtk_widget_set_size_request(child,
+                    std::max(1,number(attr(parentNode,"minItemWidth"),240)),-1);
+            gtk_flow_box_insert(GTK_FLOW_BOX(parent),child,-1);
         } else if(GTK_IS_GRID(parent)) {
             int cols=std::max(1,number(attr(parentNode,"columns"),2));
             int index=0;
@@ -695,11 +726,18 @@ struct App {
         const auto& tag=n->tag;
         GtkWidget *w=nullptr,*container=nullptr;
         if(tag=="ColumnPanel"||tag=="RowPanel"||tag=="Toolbar"||tag=="Tab"||tag=="GridPanel") {
-            if(tag=="GridPanel") {
-                w=gtk_grid_new();gtk_grid_set_row_spacing(GTK_GRID(w),number(attr(n,"gap"),8));
-                gtk_grid_set_column_spacing(GTK_GRID(w),number(attr(n,"gap"),8));
+            if(tag=="RowPanel"||tag=="GridPanel") {
+                w=gtk_flow_box_new();
+                gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(w),GTK_SELECTION_NONE);
+                gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(w),1);
+                gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(w),
+                    tag=="GridPanel"?guint(std::max(1,number(attr(n,"columns"),3))):
+                    guint(std::max<size_t>(1,n->children.size())));
+                gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(w),number(attr(n,"gap"),8));
+                gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(w),number(attr(n,"gap"),8));
+                gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(w),TRUE);
             } else {
-                bool horizontal=tag=="RowPanel"||tag=="Toolbar";
+                bool horizontal=tag=="Toolbar";
                 w=gtk_box_new(horizontal?GTK_ORIENTATION_HORIZONTAL:GTK_ORIENTATION_VERTICAL,number(attr(n,"gap"),8));
             }
             container=w;
@@ -1039,6 +1077,10 @@ struct App {
         if(std::any_of(controls.begin(),controls.end(),[](const auto& entry) {
             return entry.second.node && entry.second.node->tag=="ProgressBar";
         }))g_timeout_add(120,pulseProgress,this);
+        if(std::any_of(controls.begin(),controls.end(),[](const auto& entry) {
+            return entry.second.node && entry.second.node->tag=="RowPanel" &&
+                number(attr(entry.second.node,"breakpoint"))>0;
+        }))g_timeout_add(120,reflowRows,this);
         if(!statePath.empty()||!eventRequest.empty())g_timeout_add(300,scripted,this);
         if(selfTestClose)g_timeout_add(300,closeForTest,this);
     }
