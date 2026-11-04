@@ -470,6 +470,11 @@ struct App {
             else if(error && error->message)std::cerr<<": "<<error->message;
             else std::cerr<<": no diagnostic text was produced by the Hydrogen backend";
             std::cerr<<"\n";
+            if(out && *out) {
+                std::string partial(out);
+                if(partial.size()>4096)partial.resize(4096);
+                std::cerr<<"Hydrogen backend emitted before failure:\n"<<partial<<"\n";
+            }
         }
         stdoutText=out?out:"";
         g_free(out);g_free(err);
