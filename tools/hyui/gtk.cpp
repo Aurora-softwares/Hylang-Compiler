@@ -222,8 +222,13 @@ public:
             W label = api.call<W>("gtk_label_new", node.attributes.value("text").toUtf8().constData());
             api.call("gtk_label_set_wrap", label, 1);
             api.call("gtk_label_set_selectable", label, 1);
-            api.margin(label, 12);
-            api.call("gtk_popover_set_child", popover, label);
+            W contents = api.call<W>("gtk_box_new", 1, 8);
+            api.margin(contents, 12);
+            append(contents, label);
+            for (const Node& child : node.children) {
+                append(contents, build(child));
+            }
+            api.call("gtk_popover_set_child", popover, contents);
             api.call("gtk_menu_button_set_popover", anchor, popover);
             control->dialog = popover; control->label = label; control->buffer = popover; control->anchor = anchor;
             connect(target, "notify::active", [this, target, control, anchor] {
