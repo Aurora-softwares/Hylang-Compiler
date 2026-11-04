@@ -225,7 +225,7 @@ struct App {
         replaceControlWidget(control,widget);
         control.node=n;
         control.kind=kind;
-        for(auto key:{"text","value","checked","enabled","visible","running","open","path"}) {
+        for(auto key:{"text","value","checked","enabled","visible","running","open","path","indeterminate"}) {
             if(n->attrs.count(key)) state[name+"."+key]=attr(n,key);
         }
         if(!n->attrs.count("visible"))state[name+".visible"]="true";
@@ -354,6 +354,36 @@ struct App {
         } else if(error) std::cerr<<"HYUI clipboard: "<<error->message<<"\n";
         if(error)g_error_free(error);
     }
+    static void tableCellSetup(GtkSignalListItemFactory*,GtkListItem* item,gpointer) {
+        GtkWidget* label=gtk_label_new("");
+        gtk_label_set_xalign(GTK_LABEL(label),0.0f);
+        gtk_label_set_ellipsize(GTK_LABEL(label),PANGO_ELLIPSIZE_END);
+        gtk_list_item_set_child(item,label);
+    }
+    static void tableCellBind(GtkSignalListItemFactory*,GtkListItem* item,gpointer data) {
+        auto* object=gtk_list_item_get_item(item);
+        auto* child=gtk_list_item_get_child(item);
+        if(!GTK_IS_STRING_OBJECT(object)||!GTK_IS_LABEL(child))return;
+        auto cells=parts(gtk_string_object_get_string(GTK_STRING_OBJECT(object)),'|');
+        guint col=GPOINTER_TO_UINT(data);
+        gtk_label_set_text(GTK_LABEL(child),col<cells.size()?cells[col].c_str():"");
+    }
+    static void setProgress(GtkProgressBar* bar,Node* node,const std::string& value) {
+        const int min=number(attr(node,"minimum")),max=number(attr(node,"maximum"),100);
+        const double fraction=max>min?
+            std::clamp((double(number(value)-min))/double(max-min),0.0,1.0):0.0;
+        gtk_progress_bar_set_fraction(bar,fraction);
+    }
+    static gboolean pulseProgress(gpointer data) {
+        auto* self=static_cast<App*>(data);
+        if(self->closing)return G_SOURCE_REMOVE;
+        for(auto& [name,c]:self->controls) {
+            if(c.node && c.node->tag=="ProgressBar" && GTK_IS_PROGRESS_BAR(c.widget)
+               && truth(self->state[name+".indeterminate"]))
+                gtk_progress_bar_pulse(GTK_PROGRESS_BAR(c.widget));
+        }
+        return G_SOURCE_CONTINUE;
+    }
     void bind(GtkWidget* widget,const char* signal,Node* n,const char* handler) {
         if(auto* h=hook(n,handler)) {
             std::string kind=signal;
@@ -393,9 +423,16 @@ struct App {
         if(tag=="Switch")return GTK_IS_SWITCH(w)?
             (gtk_switch_get_active(GTK_SWITCH(w))?"true":"false"):cached("checked");
         if(tag=="Select")return std::to_string(gtk_drop_down_get_selected(GTK_DROP_DOWN(w)));
-        if(tag=="ListBox"||tag=="Table") {
+        if(tag=="ListBox") {
             auto* row=gtk_list_box_get_selected_row(GTK_LIST_BOX(w));
             return std::to_string(row?gtk_list_box_row_get_index(row):0);
+        }
+        if(tag=="Table") {
+            if(!GTK_IS_COLUMN_VIEW(w))return cached("value");
+            auto* model=gtk_column_view_get_model(GTK_COLUMN_VIEW(w));
+            if(!GTK_IS_SINGLE_SELECTION(model))return cached("value");
+            guint selected=gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(model));
+            return selected==GTK_INVALID_LIST_POSITION?cached("value"):std::to_string(selected);
         }
         if(tag=="Tabs") {
             if(!GTK_IS_STACK(w))return cached("value");
@@ -540,7 +577,7 @@ struct App {
                 if(n->tag=="Switch")gtk_switch_set_active(GTK_SWITCH(w),truth(v));
             } else if(prop=="value" && w) {
                 if(n->tag=="ProgressBar")
-                    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w),std::clamp(number(v)/100.0,0.0,1.0));
+                    setProgress(GTK_PROGRESS_BAR(w),n,v);
                 if(n->tag=="Slider")gtk_range_set_value(GTK_RANGE(w),number(v));
                 if(n->tag=="NumberInput")gtk_spin_button_set_value(GTK_SPIN_BUTTON(w),number(v));
                 if(n->tag=="Select")gtk_drop_down_set_selected(GTK_DROP_DOWN(w),number(v));
@@ -552,12 +589,20 @@ struct App {
                         ++index;
                     }
                 }
-                if(n->tag=="ListBox"||n->tag=="Table") {
+                if(n->tag=="ListBox") {
                     gtk_list_box_select_row(GTK_LIST_BOX(w),
                         gtk_list_box_get_row_at_index(GTK_LIST_BOX(w),number(v)));
                 }
+                if(n->tag=="Table" && GTK_IS_COLUMN_VIEW(w)) {
+                    auto* selection=gtk_column_view_get_model(GTK_COLUMN_VIEW(w));
+                    if(GTK_IS_SINGLE_SELECTION(selection))
+                        gtk_single_selection_set_selected(GTK_SINGLE_SELECTION(selection),number(v));
+                }
                 if(n->tag=="Tabs" && number(v)>=0 && number(v)<int(n->children.size()))
                     gtk_stack_set_visible_child_name(GTK_STACK(w),id(n->children[number(v)].get()).c_str());
+            } else if(prop=="indeterminate" && w && n->tag=="ProgressBar") {
+                if(truth(v))gtk_progress_bar_pulse(GTK_PROGRESS_BAR(w));
+                else setProgress(GTK_PROGRESS_BAR(w),n,state[name+".value"]);
             } else if(prop=="running" && w && n->tag=="Spinner") {
                 if(truth(v))gtk_spinner_start(GTK_SPINNER(w));
                 else gtk_spinner_stop(GTK_SPINNER(w));
@@ -704,9 +749,9 @@ struct App {
             if(auto* h=hook(n,"onPick"))
                 g_signal_connect(w,"clicked",G_CALLBACK(pickerClicked),h);
         } else if(tag=="Input"||tag=="SearchInput"||tag=="PasswordInput") {
-            w=tag=="SearchInput"?gtk_search_entry_new():gtk_entry_new();
-            gtk_editable_set_text(GTK_EDITABLE(w),attr(n,"text").c_str());
-            if(tag=="PasswordInput")gtk_entry_set_visibility(GTK_ENTRY(w),FALSE);
+            w=tag=="SearchInput"?gtk_search_entry_new():
+                (tag=="PasswordInput"?gtk_password_entry_new():gtk_entry_new());
+            if(tag!="PasswordInput")gtk_editable_set_text(GTK_EDITABLE(w),attr(n,"text").c_str());
             const std::string placeholder=attr(n,"placeholder");
             if(GTK_IS_ENTRY(w))gtk_entry_set_placeholder_text(GTK_ENTRY(w),placeholder.c_str());
             else g_object_set(G_OBJECT(w),"placeholder-text",placeholder.c_str(),nullptr);
@@ -718,6 +763,8 @@ struct App {
             auto* buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(w));
             gtk_text_buffer_set_text(buffer,attr(n,"text").c_str(),-1);
             gtk_widget_set_size_request(w,-1,number(attr(n,"height"),80));
+            if(auto* h=hook(n,"onChange"))
+                g_signal_connect(buffer,"changed",G_CALLBACK(changedSimple),h);
         } else if(tag=="CheckBox") {
             w=gtk_check_button_new_with_label(attr(n,"text").c_str());
             gtk_check_button_set_active(GTK_CHECK_BUTTON(w),truth(attr(n,"checked")));
@@ -751,7 +798,7 @@ struct App {
                 g_signal_connect(w,"notify::selected",G_CALLBACK(changed),h);
         } else if(tag=="ProgressBar") {
             w=gtk_progress_bar_new();
-            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w),std::clamp(number(attr(n,"value"))/100.0,0.0,1.0));
+            setProgress(GTK_PROGRESS_BAR(w),n,attr(n,"value","0"));
         } else if(tag=="Spinner") {
             w=gtk_spinner_new();
             if(truth(attr(n,"running")))gtk_spinner_start(GTK_SPINNER(w));
@@ -771,17 +818,36 @@ struct App {
             w = gtk_picture_new_for_paintable(GDK_PAINTABLE(texture));
             g_object_unref(texture);
             gtk_widget_set_size_request(w,-1,number(attr(n,"height"),80));
-        } else if(tag=="ListBox"||tag=="Table") {
-            auto* view=gtk_list_box_new();
-            std::vector<std::string> entries=parts(attr(n,tag=="Table"?"rows":"items"),tag=="Table"?'\n':'|');
-            for(auto& entry:entries) {
+        } else if(tag=="ListBox") {
+            w=gtk_list_box_new();
+            for(const auto& entry:parts(attr(n,"items"),'|')) {
                 auto* row=gtk_label_new(entry.c_str());gtk_label_set_xalign(GTK_LABEL(row),0);
-                gtk_list_box_append(GTK_LIST_BOX(view),row);
+                gtk_list_box_append(GTK_LIST_BOX(w),row);
             }
-            gtk_list_box_select_row(GTK_LIST_BOX(view),
-                gtk_list_box_get_row_at_index(GTK_LIST_BOX(view),number(attr(n,"value"))));
-            bind(view,"row-selected",n,"onChange");
-            w=view;
+            gtk_list_box_select_row(GTK_LIST_BOX(w),
+                gtk_list_box_get_row_at_index(GTK_LIST_BOX(w),number(attr(n,"value"))));
+            bind(w,"row-selected",n,"onChange");
+            gtk_widget_set_size_request(w,-1,number(attr(n,"height"),120));
+        } else if(tag=="Table") {
+            // A real, accessible GTK4 multi-column view, not a list of
+            // unparsed pipe-separated row labels.
+            auto* rows=gtk_string_list_new(nullptr);
+            for(const auto& line:parts(attr(n,"rows"),'\n'))
+                gtk_string_list_append(rows,line.c_str());
+            auto* selection=gtk_single_selection_new(G_LIST_MODEL(rows));
+            gtk_single_selection_set_selected(selection,number(attr(n,"value")));
+            w=gtk_column_view_new(GTK_SELECTION_MODEL(selection));
+            for(guint i=0;i<parts(attr(n,"columns"),'|').size();++i) {
+                auto headings=parts(attr(n,"columns"),'|');
+                auto* factory=gtk_signal_list_item_factory_new();
+                g_signal_connect(factory,"setup",G_CALLBACK(tableCellSetup),nullptr);
+                g_signal_connect(factory,"bind",G_CALLBACK(tableCellBind),GUINT_TO_POINTER(i));
+                auto* column=gtk_column_view_column_new(headings[i].c_str(),factory);
+                gtk_column_view_column_set_expand(column,TRUE);
+                gtk_column_view_append_column(GTK_COLUMN_VIEW(w),column);
+            }
+            if(auto* h=hook(n,"onChange"))
+                g_signal_connect(selection,"notify::selected",G_CALLBACK(changed),h);
             gtk_widget_set_size_request(w,-1,number(attr(n,"height"),120));
         } else if(tag=="RadioGroup") {
             auto* box=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
@@ -970,6 +1036,9 @@ struct App {
             }
         }
         if(!attr(n,"onLoad").empty())dispatch(attr(n,"onLoad"),id(document.root.get()));
+        if(std::any_of(controls.begin(),controls.end(),[](const auto& entry) {
+            return entry.second.node && entry.second.node->tag=="ProgressBar";
+        }))g_timeout_add(120,pulseProgress,this);
         if(!statePath.empty()||!eventRequest.empty())g_timeout_add(300,scripted,this);
         if(selfTestClose)g_timeout_add(300,closeForTest,this);
     }
