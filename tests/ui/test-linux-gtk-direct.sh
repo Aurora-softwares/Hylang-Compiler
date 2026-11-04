@@ -6,10 +6,16 @@ cd "$root"
 # Existing CI passes no arguments and tests Stage 1. Developers can run
 # --all-stages to check native GTK4 generation by Stages 1, 2 and 3.
 if [[ "${1:-}" == "--all-stages" ]]; then
+  # Standalone developers use the per-target layout, while the
+  # reproducible CMake bootstrap proof writes to build/self_hosting directly.
+  stageDir="build/self_hosting/linux"
+  if [[ ! -x "$stageDir/hydrogen-stage1" ]]; then
+    stageDir="build/self_hosting"
+  fi
   compilers=(
-    "build/self_hosting/linux/hydrogen-stage1"
-    "build/self_hosting/linux/hydrogen-stage2"
-    "build/self_hosting/linux/hydrogen-stage3"
+    "$stageDir/hydrogen-stage1"
+    "$stageDir/hydrogen-stage2"
+    "$stageDir/hydrogen-stage3"
   )
 elif [[ $# -gt 0 ]]; then
   compilers=("$1")
