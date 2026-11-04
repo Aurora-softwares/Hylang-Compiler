@@ -23,7 +23,7 @@ BACKENDS = {
 def declared_controls():
     source = SCHEMA.read_text(encoding="utf-8")
     section = source.split("static const QMap<QString, QSet<QString>> attributes = {", 1)[1].split("};", 1)[0]
-    controls = set(re.findall(r'^\s*\{"([A-Za-z]+)",\s*\{', section, re.MULTILINE))
+    controls = set(re.findall(r'\{"([A-Za-z]+)",\s*\{', section))
     if not controls:
         raise AssertionError("Could not read the HYUI v1 schema")
     return controls
