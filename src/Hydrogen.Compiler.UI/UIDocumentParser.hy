@@ -124,7 +124,7 @@ namespace Hydrogen.Compiler.UI {
         }
 
         private static bool KnownElement(string name) {
-            return Token("Window|ColumnPanel|RowPanel|ScrollView|GridPanel|Panel|MenuBar|Menu|MenuItem|ContextMenu|Popover|Toolbar|ToolButton|Clipboard|Tabs|Tab|ListBox|Table|RadioGroup|Image|Dialog|Label|Button|Input|SearchInput|PasswordInput|FilePicker|TextArea|CheckBox|Switch|Select|Slider|NumberInput|ProgressBar|Spinner|Separator|Spacer|State|Timer", name);
+            return Token("Window|ColumnPanel|RowPanel|ScrollView|GridPanel|Panel|MenuBar|Menu|MenuItem|ContextMenu|Popover|Toolbar|ToolButton|Clipboard|Tabs|Tab|ListBox|Table|RadioGroup|Image|Dialog|Label|ValidationMessage|Button|ToggleButton|Input|SearchInput|PasswordInput|FilePicker|TextArea|CheckBox|Switch|Select|Slider|NumberInput|ProgressBar|Spinner|Separator|Spacer|State|Timer", name);
         }
 
         private static bool Container(string tag) {
@@ -170,7 +170,9 @@ namespace Hydrogen.Compiler.UI {
             if (tag == "Image") { return Token("source|height", key); }
             if (tag == "Dialog") { return Token("title|text|buttons|open|value|onClose", key); }
             if (tag == "Label") { return Token("text|role|tone", key); }
+            if (tag == "ValidationMessage") { return Token("text|severity", key); }
             if (tag == "Button") { return Token("text|onClick|primary", key); }
+            if (tag == "ToggleButton") { return Token("text|checked|onChange", key); }
             if (tag == "Input" || tag == "SearchInput") { return Token("text|placeholder|onChange|onSubmit", key); }
             if (tag == "PasswordInput") { return Token("placeholder|onChange|onSubmit", key); }
             if (tag == "FilePicker") { return Token("mode|text|onPick|onCancel", key); }
@@ -305,6 +307,9 @@ namespace Hydrogen.Compiler.UI {
                 if (key == "material" && !Token("auto|glass|solid", value)) { error = "invalid window material"; return false; }
                 if (key == "role" && !Token("title|heading|body|caption", value)) { error = "invalid label role"; return false; }
                 if (key == "tone" && !Token("normal|muted|accent", value)) { error = "invalid label tone"; return false; }
+                if (key == "severity" && !Token("error|warning|info|success", value)) {
+                    error = "invalid validation severity"; return false;
+                }
                 if (key == "shortcut" && !Shortcut(value)) { error = "invalid menu shortcut"; return false; }
             }
             if (tag == "Window" && version != "1") { error = "Window requires version=\"1\""; return false; }

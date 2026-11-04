@@ -167,7 +167,7 @@ class AppKitView : public NativeView {
                 attributes:@{NSFontAttributeName:label.font}];
             height = label.stringValue.length ? std::ceil(bounds.size.height) + 4 : 0;
         } else if (tag == "TextArea") { height = node->attributes.value("height", "100").toInt(); }
-        else if (tag == "Button" || tag == "Select") { height = 32; }
+        else if (tag == "Button" || tag == "ToggleButton" || tag == "Select") { height = 32; }
         else if (tag == "Switch") { height = 28; }
         else if (tag == "Spinner") { height = 20; }
         else if (tag == "ProgressBar") { height = 8; }
@@ -366,10 +366,16 @@ class AppKitView : public NativeView {
             }
             for (const auto& child : node.children) { add(contents, build(child)); }
             view = contents;
-        } else if (tag == "Label") {
+        } else if (tag == "Label" || tag == "ValidationMessage") {
             NSTextField* label = [NSTextField wrappingLabelWithString:@""]; label.maximumNumberOfLines = 0;
             if (a.value("tone") == "muted") { label.textColor = NSColor.secondaryLabelColor; }
             if (a.value("tone") == "accent") { label.textColor = NSColor.controlAccentColor; }
+            if (tag == "ValidationMessage") {
+                QString severity = a.value("severity", "error");
+                label.textColor = severity == "warning" ? NSColor.systemOrangeColor :
+                    severity == "success" ? NSColor.systemGreenColor :
+                    severity == "info" ? NSColor.controlAccentColor : NSColor.systemRedColor;
+            }
             if (a.value("role") == "title") { label.font = [NSFont boldSystemFontOfSize:28]; }
             else if (a.value("role") == "heading") { label.font = [NSFont boldSystemFontOfSize:15]; }
             else if (a.value("role") == "caption") { label.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium]; }
@@ -399,7 +405,7 @@ class AppKitView : public NativeView {
                     [retained removeObject:panel];
                 }];
             }); view = button; control = button;
-        } else if (tag == "Button" || tag == "ToolButton" || tag == "CheckBox" || tag == "Switch") {
+        } else if (tag == "Button" || tag == "ToolButton" || tag == "CheckBox" || tag == "Switch" || tag == "ToggleButton") {
             if (tag == "Switch") {
                 NSSwitch* toggle = [[[NSSwitch alloc] init] autorelease];
                 HYAction* target = action([this, &node](id sender) { handleEvent(node, "checked", [(NSSwitch*)sender state] == NSControlStateValueOn, "onChange"); });
@@ -409,9 +415,10 @@ class AppKitView : public NativeView {
             } else {
                 NSButton* button = [NSButton buttonWithTitle:@"" target:nil action:@selector(fire:)];
                 if (tag == "CheckBox") { [button setButtonType:NSButtonTypeSwitch]; }
+                else if (tag == "ToggleButton") { [button setButtonType:NSButtonTypePushOnPushOff]; button.bezelStyle = NSBezelStyleRounded; }
                 else { button.bezelStyle = NSBezelStyleRounded; if (a.value("primary") == "true") { button.keyEquivalent = @"\r"; } }
                 button.target = action([this, &node, tag](id sender) {
-                    if (tag == "CheckBox") { handleEvent(node, "checked", [(NSButton*)sender state] == NSControlStateValueOn, "onChange"); }
+                    if (tag == "CheckBox" || tag == "ToggleButton") { handleEvent(node, "checked", [(NSButton*)sender state] == NSControlStateValueOn, "onChange"); }
                     else if (node.attributes.contains("onClick")) { bridge.dispatch(node.attributes["onClick"], node.id); }
                 }); view = button; control = button;
             }
@@ -477,10 +484,10 @@ class AppKitView : public NativeView {
                 for (const Node& parent : doc.window.children) { if (parent.tag == "Toolbar") { enabled = enabled && state.value(parent.id + ".enabled").toBool(); break; } }
             }
             if ([c.control respondsToSelector:@selector(setEnabled:)]) { [c.control setEnabled:enabled]; }
-            if (tag == "Label" || tag == "Input" || tag == "SearchInput") { if (string([c.control stringValue]) != value("text").toString()) { [c.control setStringValue:text(value("text").toString())]; } }
+            if (tag == "Label" || tag == "ValidationMessage" || tag == "Input" || tag == "SearchInput") { if (string([c.control stringValue]) != value("text").toString()) { [c.control setStringValue:text(value("text").toString())]; } }
             if (tag == "TextArea") { if (string([(NSTextView*)c.control string]) != value("text").toString()) { [(NSTextView*)c.control setString:text(value("text").toString())]; } }
-            if (tag == "Button" || tag == "ToolButton" || tag == "FilePicker" || tag == "CheckBox") { [(NSButton*)c.control setTitle:text(value("text").toString())]; }
-            if (tag == "CheckBox" || tag == "Switch") { [c.control setState:value("checked").toBool() ? NSControlStateValueOn : NSControlStateValueOff]; }
+            if (tag == "Button" || tag == "ToolButton" || tag == "ToggleButton" || tag == "FilePicker" || tag == "CheckBox") { [(NSButton*)c.control setTitle:text(value("text").toString())]; }
+            if (tag == "CheckBox" || tag == "ToggleButton" || tag == "Switch") { [c.control setState:value("checked").toBool() ? NSControlStateValueOn : NSControlStateValueOff]; }
             if (tag == "Tabs") {
                 [(NSSegmentedControl*)c.control setSelectedSegment:value("value").toInt()]; int index = 0;
                 for (const Node& page : c.node->children) { items[page.id].view.hidden = index++ != value("value").toInt() || !state.value(page.id + ".visible").toBool(); }

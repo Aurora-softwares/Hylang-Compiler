@@ -78,10 +78,10 @@ public sealed partial class NativeWindow : Window
     static int Number(XElement n, string key, int fallback) => int.TryParse(Attr(n, key), out int result) ? result : fallback;
     static bool Allowed(XElement node, string property) => property switch {
         "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer" or "ContextMenu" or "Clipboard"),
-        "text" => node.Name.LocalName is "Label" or "Input" or "SearchInput" or "TextArea" or "Button" or "ToolButton" or "FilePicker" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog" or "Popover",
+        "text" => node.Name.LocalName is "Label" or "ValidationMessage" or "ToggleButton" or "Input" or "SearchInput" or "TextArea" or "Button" or "ToolButton" or "FilePicker" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog" or "Popover",
         "path" => node.Name.LocalName == "FilePicker",
         "value" => node.Name.LocalName is "State" or "Clipboard" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog",
-        "checked" => node.Name.LocalName is "CheckBox" or "Switch" or "MenuItem",
+        "checked" => node.Name.LocalName is "CheckBox" or "ToggleButton" or "Switch" or "MenuItem",
         "running" => node.Name.LocalName is "Spinner" or "Timer",
         "open" => node.Name.LocalName is "Dialog" or "Popover",
         "indeterminate" => node.Name.LocalName == "ProgressBar",
@@ -263,14 +263,28 @@ public sealed partial class NativeWindow : Window
             } else {
                 element = tag == "Panel" ? new Border { Child = panel, Padding = new Thickness(Number(node, "padding", 20)), BorderThickness = new Thickness(1), Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"], BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"] } : panel;
             }
-        } else if (tag == "Label") {
+        } else if (tag is "Label" or "ValidationMessage") {
             var label = new TextBlock { Text = Attr(node, "text"), TextWrapping = TextWrapping.Wrap };
+            if (tag == "ValidationMessage") {
+                var severity = Attr(node, "severity", "error");
+                label.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(severity switch {
+                    "warning" => Microsoft.UI.Colors.DarkOrange,
+                    "success" => Microsoft.UI.Colors.ForestGreen,
+                    "info" => Microsoft.UI.Colors.DodgerBlue,
+                    _ => Microsoft.UI.Colors.Firebrick
+                });
+            }
             string role = Attr(node, "role"); if (role is "title" or "heading" or "caption") label.Style = (Style)Application.Current.Resources[role == "title" ? "TitleTextBlockStyle" : role == "heading" ? "SubtitleTextBlockStyle" : "CaptionTextBlockStyle"];
             element = label;
         } else if (tag == "FilePicker") {
             var button = new Button { Content = Attr(node, "text") };
             button.Click += (_, _) => PickFile(node, id);
             element = button;
+        } else if (tag == "ToggleButton") {
+            var toggle = new ToggleButton { Content = Attr(node, "text"), IsChecked = Attr(node, "checked") == "true" };
+            toggle.Checked += (_, _) => Changed("checked", "true");
+            toggle.Unchecked += (_, _) => Changed("checked", "false");
+            element = toggle;
         } else if (tag == "Button") {
             var button = new Button { Content = Attr(node, "text") }; if (Attr(node, "primary") == "true") button.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
             button.Click += (_, _) => Dispatch(Attr(node, "onClick"), id); element = button;
@@ -378,7 +392,7 @@ public sealed partial class NativeWindow : Window
             foreach (var pair in nodes) {
                 if (pair.Value.Name.LocalName == "PasswordInput") continue;
                 if (pair.Value.Name.LocalName == "Clipboard" && pair.Key != next.Sender) continue;
-                string property = pair.Value.Name.LocalName == "FilePicker" ? "path" : pair.Value.Name.LocalName is "State" or "Clipboard" or "Select" or "NumberInput" or "ProgressBar" or "Slider" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "Switch" or "MenuItem" ? "checked" : "text";
+                string property = pair.Value.Name.LocalName == "FilePicker" ? "path" : pair.Value.Name.LocalName is "State" or "Clipboard" or "Select" or "NumberInput" or "ProgressBar" or "Slider" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "ToggleButton" or "Switch" or "MenuItem" ? "checked" : "text";
                 arguments.Add(pair.Key); arguments.Add(values.GetValueOrDefault(pair.Key + "." + property, ""));
             }
             if (arguments.Sum(a => a.Length) > 24000) throw new InvalidOperationException("Value snapshot too large");
@@ -490,6 +504,7 @@ public sealed partial class NativeWindow : Window
                 case TextBox input: if (input.Text != Value("text")) input.Text = Value("text"); break;
                 case AutoSuggestBox search: if (search.Text != Value("text")) search.Text = Value("text"); break;
                 case CheckBox check: check.IsChecked = Value("checked") == "true"; check.Content = Value("text"); break;
+                case ToggleButton toggleButton: toggleButton.Content = Value("text"); toggleButton.IsChecked = Value("checked") == "true"; break;
                 case Button button: button.Content = Value("text"); break;
                 case ToggleSwitch toggle: toggle.IsOn = Value("checked") == "true"; break;
                 case ComboBox select: select.SelectedIndex = int.Parse(Value("value")); break;
