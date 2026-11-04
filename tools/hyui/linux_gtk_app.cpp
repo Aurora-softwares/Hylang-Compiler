@@ -175,6 +175,7 @@ struct App {
     bool applying=false;
     bool closing=false;
     bool selfTestClose=false;
+    bool verifyNativeControls=false;
     int generatedId=0;
     App():resources(embeddedResources()) {}
     ~App() {
@@ -1116,6 +1117,49 @@ struct App {
         }
         if(!self->statePath.empty()) {
             self->snapshot();
+            if(self->verifyNativeControls) {
+                bool native=true;
+                int tables=0,rows=0,grids=0,editors=0,passwords=0;
+                for(auto& [name,c]:self->controls) {
+                    if(!c.node)continue;
+                    const auto& tag=c.node->tag;
+                    GtkWidget* w=c.widget;
+                    if(tag=="Table") {
+                        ++tables;
+                        native=native&&GTK_IS_COLUMN_VIEW(w);
+                        if(GTK_IS_COLUMN_VIEW(w)) {
+                            auto* columns=gtk_column_view_get_columns(GTK_COLUMN_VIEW(w));
+                            native=native&&g_list_model_get_n_items(columns)==
+                                parts(attr(c.node,"columns"),'|').size();
+                        }
+                    }
+                    if(tag=="RowPanel") {++rows;native=native&&GTK_IS_FLOW_BOX(w);}
+                    if(tag=="GridPanel") {++grids;native=native&&GTK_IS_FLOW_BOX(w);}
+                    if(tag=="TextArea") {
+                        ++editors;
+                        native=native&&GTK_IS_TEXT_VIEW(w) &&
+                            GTK_IS_SCROLLED_WINDOW(gtk_widget_get_parent(w));
+                    }
+                    if(tag=="PasswordInput") {
+                        ++passwords;native=native&&GTK_IS_PASSWORD_ENTRY(w);
+                    }
+                    if(tag=="Toolbar")native=native&&GTK_IS_BOX(w)&&
+                        GTK_IS_HEADER_BAR(gtk_window_get_titlebar(GTK_WINDOW(self->window)));
+                    if(tag=="ProgressBar"&&GTK_IS_PROGRESS_BAR(w)) {
+                        double original=gtk_progress_bar_get_fraction(GTK_PROGRESS_BAR(w));
+                        int min=number(attr(c.node,"minimum"));
+                        int max=number(attr(c.node,"maximum"),100);
+                        if(max>min) {
+                            setProgress(GTK_PROGRESS_BAR(w),c.node,std::to_string(min+(max-min)/2));
+                            double got=gtk_progress_bar_get_fraction(GTK_PROGRESS_BAR(w));
+                            native=native&&got>=0.49&&got<=0.51;
+                            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w),original);
+                        }
+                    }
+                }
+                native=native&&tables>0&&rows>0&&grids>0&&editors>0&&passwords>0;
+                self->state["__hyui.native_controls_checked"]=native?"true":"false";
+            }
             // The scripted UI regression test inspects actual GTK widget
             // visibility. A mistakenly mapped GtkPopover steals focus and
             // makes the Studio window unusable despite working backend events.
@@ -1195,6 +1239,7 @@ struct App {
             if(arg=="--state-output"&&i+1<argc)statePath=argv[++i];
             else if(arg=="--event"&&i+1<argc)eventRequest=argv[++i];
             else if(arg=="--self-test-close")selfTestClose=true;
+            else if(arg=="--verify-native-controls")verifyNativeControls=true;
             else if(arg=="--help") {
                 std::cout<<"Hydrogen native GTK4 application (--event handler:sender --state-output path)\n"
                          << SINGLE_FILE_MAGIC << "\n";
