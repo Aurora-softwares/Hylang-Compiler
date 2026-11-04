@@ -305,7 +305,7 @@ struct App {
         if(!gtk_accelerator_parse(accelerator.c_str(),&key,&mods)||key==0)
             throw std::runtime_error("invalid HYUI menu shortcut: "+spec);
         if(!shortcutController) {
-            shortcutController=gtk_shortcut_controller_new();
+            shortcutController=GTK_SHORTCUT_CONTROLLER(gtk_shortcut_controller_new());
             gtk_shortcut_controller_set_scope(shortcutController,GTK_SHORTCUT_SCOPE_GLOBAL);
             gtk_widget_add_controller(window,GTK_EVENT_CONTROLLER(shortcutController));
         }
