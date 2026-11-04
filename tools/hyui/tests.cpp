@@ -33,6 +33,26 @@ private slots:
         QVERIFY(!d.parse(nested));
     }
 
+    void toggleButtonAndValidationMessageContract() {
+        hyui::Document document;
+        QVERIFY(document.parse(R"(<Window version="1"><ToggleButton id="flag" text="Enable" checked="true" onChange="Flip"/><ValidationMessage id="error" text="Required field" severity="warning"/></Window>)"));
+        QCOMPARE(document.initialState["flag.checked"].toBool(), true);
+        QCOMPARE(document.initialState["error.text"].toString(), QString("Required field"));
+        QVERIFY(document.properties["flag"].contains("checked"));
+        QVERIFY(document.properties["error"].contains("text"));
+        QVERIFY(document.handlers["Flip"].contains("flag"));
+        const QList<QByteArray> invalid = {
+            R"(<Window version="1"><ToggleButton checked="yes"/></Window>)",
+            R"(<Window version="1"><ValidationMessage severity="critical"/></Window>)",
+            R"(<Window version="1"><ToggleButton onClick="Wrong"/></Window>)",
+            R"(<Window version="1"><ValidationMessage checked="true"/></Window>)"
+        };
+        for (const QByteArray& xml : invalid) {
+            hyui::Document malformed;
+            QVERIFY2(!malformed.parse(xml), xml.constData());
+        }
+    }
+
     void responseIsTypedAndAtomic() {
         hyui::Document d;
         QVERIFY(d.parse("<Window version=\"1\"><Label id=\"status\" text=\"ready\"/><ProgressBar id=\"progress\"/><Spinner id=\"busy\"/></Window>"));
