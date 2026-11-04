@@ -124,11 +124,11 @@ namespace Hydrogen.Compiler.UI {
         }
 
         private static bool KnownElement(string name) {
-            return Token("Window|ColumnPanel|RowPanel|ScrollView|GridPanel|Panel|MenuBar|Menu|MenuItem|ContextMenu|Popover|Toolbar|ToolButton|Clipboard|Tabs|Tab|ListBox|Table|RadioGroup|Image|Dialog|Label|ValidationMessage|Button|ToggleButton|Input|SearchInput|PasswordInput|FilePicker|TextArea|CheckBox|Switch|Select|Slider|NumberInput|ProgressBar|Spinner|Separator|Spacer|State|Timer", name);
+            return Token("Window|ColumnPanel|RowPanel|ScrollView|GridPanel|Panel|SplitView|StatusBar|MenuBar|Menu|MenuItem|ContextMenu|Popover|Toolbar|ToolButton|Clipboard|Tabs|Tab|ListBox|Table|RadioGroup|Image|Dialog|Label|ValidationMessage|Button|ToggleButton|Input|SearchInput|PasswordInput|FilePicker|TextArea|CheckBox|Switch|Select|Slider|NumberInput|ProgressBar|Spinner|Separator|Spacer|State|Timer", name);
         }
 
         private static bool Container(string tag) {
-            return Token("Window|ColumnPanel|RowPanel|ScrollView|GridPanel|Panel|MenuBar|Menu|ContextMenu|Popover|Toolbar|Tabs|Tab", tag);
+            return Token("Window|ColumnPanel|RowPanel|ScrollView|GridPanel|Panel|SplitView|MenuBar|Menu|ContextMenu|Popover|Toolbar|Tabs|Tab", tag);
         }
 
         private static bool AllowedChild(string parent, string child) {
@@ -139,6 +139,7 @@ namespace Hydrogen.Compiler.UI {
             if (parent == "Toolbar") { return child == "ToolButton"; }
             if (child == "Tab" || child == "Menu" || child == "MenuItem" || child == "ToolButton") { return false; }
             if (Token("MenuBar|Toolbar|ContextMenu|Popover|Clipboard|Dialog", child)) { return parent == "Window"; }
+            if (parent == "SplitView" && Token("State|Timer", child)) { return false; }
             return true;
         }
 
@@ -157,6 +158,8 @@ namespace Hydrogen.Compiler.UI {
             if (tag == "ScrollView") { return Token("height|gap", key); }
             if (tag == "GridPanel") { return Token("gap|columns|minItemWidth", key); }
             if (tag == "Panel") { return Token("title|padding|gap", key); }
+            if (tag == "SplitView") { return Token("height|value|onChange", key); }
+            if (tag == "StatusBar") { return key == "text"; }
             if (tag == "Menu") { return key == "text"; }
             if (tag == "MenuItem") { return Token("text|onClick|checked|shortcut", key); }
             if (tag == "ContextMenu") { return key == "target"; }
