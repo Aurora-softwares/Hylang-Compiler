@@ -59,6 +59,10 @@ namespace HydrogenStudio {
                 if (Application.Value(args, "confirmation") == "0") { Application.SetText("dialogResult", "Confirmed. Your template is ready."); }
                 else { Application.SetText("dialogResult", "Cancelled. Your settings are preserved."); }
             }
+            if (handler == "ToggleFeature") {
+                Application.SetText("validationHint", Application.Value(args, "featureToggle") == "true" ?
+                    "Optional features enabled." : "Optional features disabled.");
+            }
             if (handler == "Preview") {
                 Application.SetText("summary", Summary(args));
             }
