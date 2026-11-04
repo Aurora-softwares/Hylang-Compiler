@@ -410,7 +410,7 @@ public:
                 W widget = build(child);
                 if (widget) { api.call("gtk_widget_set_size_request", widget, a.value("minItemWidth", "240").toInt(), -1); api.call("gtk_flow_box_insert", w, widget, -1); }
             }
-        } else if (tag == "Label") {
+        } else if (tag == "Label" || tag == "ValidationMessage") {
             w = api.call<W>("gtk_label_new", "");
             api.call("gtk_label_set_wrap", w, 1); api.call("gtk_label_set_wrap_mode", w, 2);
             api.call("gtk_label_set_xalign", w, 0.0f);
@@ -420,6 +420,7 @@ public:
             if (role == "caption") { api.css(w, "caption"); }
             if (a.value("tone") == "muted") { api.css(w, "dim-label"); }
             if (a.value("tone") == "accent") { api.css(w, "accent"); }
+            if (tag == "ValidationMessage") { api.css(w, a.value("severity", "error").toUtf8().constData()); }
         } else if (tag == "MenuItem" && a.contains("checked")) {
             w = api.call<W>("gtk_check_button_new_with_label", ""); c->widget = w;
             connect(c, "toggled", [this, c, event] { event("checked", api.call<int>("gtk_check_button_get_active", c->widget) != 0, "onClick"); });
@@ -459,6 +460,11 @@ public:
                 };
                 api.call<unsigned long>("g_signal_connect_data", c->dialog, "response", reinterpret_cast<void(*)()>(responseThunk), c, nullptr, 0);
                 api.call("gtk_native_dialog_show", c->dialog);
+            });
+        } else if (tag == "ToggleButton") {
+            w = api.call<W>("gtk_toggle_button_new_with_label", ""); c->widget = w;
+            connect(c, "toggled", [this, c, event] {
+                event("checked", api.call<int>("gtk_toggle_button_get_active", c->widget) != 0, "onChange");
             });
         } else if (tag == "Button" || tag == "MenuItem" || tag == "ToolButton") {
             bool popoverTarget = tag == "Button" && std::any_of(document.window.children.cbegin(), document.window.children.cend(),
@@ -603,11 +609,11 @@ public:
             bool enabled = value("enabled").toBool();
             if (tag == "ToolButton" && !toolbarId.isEmpty()) { enabled = enabled && state.value(toolbarId + ".enabled").toBool(); }
             api.call("gtk_widget_set_sensitive", c->widget, enabled ? 1 : 0);
-            if (tag == "Label") { api.text(c->widget, "gtk_label_set_text", value("text").toString()); }
+            if (tag == "Label" || tag == "ValidationMessage") { api.text(c->widget, "gtk_label_set_text", value("text").toString()); }
             if (tag == "Button" && std::any_of(document.window.children.cbegin(), document.window.children.cend(),
                 [c](const Node& child) { return child.tag == "Popover" && child.attributes.value("target") == c->node->id; })) {
                 api.text(c->widget, "gtk_menu_button_set_label", value("text").toString());
-            } else if (tag == "Button" || tag == "ToolButton" || tag == "FilePicker" || (tag == "MenuItem" && !c->node->attributes.contains("checked"))) { api.text(c->widget, "gtk_button_set_label", value("text").toString()); }
+            } else if (tag == "Button" || tag == "ToolButton" || tag == "ToggleButton" || tag == "FilePicker" || (tag == "MenuItem" && !c->node->attributes.contains("checked"))) { api.text(c->widget, "gtk_button_set_label", value("text").toString()); }
             if ((tag == "Input" || tag == "SearchInput") && QString::fromUtf8(api.call<const char*>("gtk_editable_get_text", c->widget)) != value("text").toString()) { api.text(c->widget, "gtk_editable_set_text", value("text").toString()); }
             if (tag == "TextArea") {
                 char* current = nullptr; api.call("g_object_get", c->buffer, "text", &current, nullptr);
@@ -615,6 +621,7 @@ public:
                 api.call("g_free", current);
             }
             if (tag == "CheckBox" || (tag == "MenuItem" && c->node->attributes.contains("checked"))) { api.text(c->widget, "gtk_check_button_set_label", value("text").toString()); api.call("gtk_check_button_set_active", c->widget, value("checked").toBool() ? 1 : 0); }
+            if (tag == "ToggleButton") { api.call("gtk_toggle_button_set_active", c->widget, value("checked").toBool() ? 1 : 0); }
             if (tag == "Switch") { api.call("gtk_switch_set_active", c->widget, value("checked").toBool() ? 1 : 0); if (c->label) { api.text(c->label, "gtk_label_set_text", value("text").toString()); } }
             if (tag == "Menu") { api.text(c->widget, "gtk_menu_button_set_label", value("text").toString()); }
             if (tag == "Tabs") { api.text(c->buffer, "gtk_stack_set_visible_child_name", QString::number(value("value").toInt())); }
