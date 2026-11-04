@@ -66,10 +66,10 @@ private slots:
         QCOMPARE(d.ranges.value("choice").first, 0);
         QCOMPARE(d.ranges.value("choice").second, 3);
         hyui::Bridge bridge(d, {}, {});
-        QVERIFY(bridge.apply("HYUI\\tSET\\tchoice\\topen\\ttrue\\n"
-                             "HYUI\\tSET\\tchoice\\tvalue\\t3\\n"));
+        QVERIFY(bridge.apply("HYUI\tSET\tchoice\topen\ttrue\n"
+                             "HYUI\tSET\tchoice\tvalue\t3\n"));
         QCOMPARE(bridge.state().value("choice.value").toInt(), 3);
-        QVERIFY(!bridge.apply("HYUI\\tSET\\tchoice\\tvalue\\t4\\n"));
+        QVERIFY(!bridge.apply("HYUI\tSET\tchoice\tvalue\t4\n"));
         QVERIFY(!d.parse(R"HYUI(<Window version="1">
             <Dialog title="Too many" buttons="1|2|3|4|5|6|7|8|9"/>
         </Window>)HYUI"));
@@ -137,7 +137,7 @@ private slots:
             "<Window version=\"1\"><ListBox/></Window>",
             "<Window version=\"1\"><RadioGroup items=\"One\" value=\"1\"/></Window>",
             "<Window version=\"1\"><Table columns=\"A|B\" rows=\"One\"/></Window>",
-            "<Window version=\"1\"><Dialog buttons=\"1|2|3|4\"/></Window>",
+            "<Window version=\"1\"><Dialog buttons=\"1|2|3|4|5|6|7|8|9\"/></Window>",
             "<Window version=\"1\"><Image source=\"../secret.png\"/></Window>",
             "<Window version=\"1\"><Image source=\"https://example.com/image.png\"/></Window>"
         };
