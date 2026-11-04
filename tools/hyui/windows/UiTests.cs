@@ -136,6 +136,19 @@ public sealed partial class NativeWindow
         Check(featureToggle.IsChecked == false &&
               ((TextBlock)controls["validationHint"]).Text == "Reset by Hydrogen",
               "WinUI toggle or validation feedback did not update");
+        Check(controls["ideSplit"] is Grid, "SplitView must use a native WinUI Grid");
+        var split = (Grid)controls["ideSplit"];
+        Check(split.ColumnDefinitions.Count == 3 && split.Children.OfType<Microsoft.UI.Xaml.Controls.Primitives.Thumb>().Count() == 1,
+              "SplitView must have two panes and a draggable native Thumb");
+        Check(controls["ideStatus"] is TextBlock, "StatusBar must use a native WinUI TextBlock");
+        Apply("HYUI\tSET\tideSplit\tvisible\ttrue\nHYUI\tSET\tideStatus\tvisible\ttrue\nHYUI\tSET\tideSplit\tvalue\t300\nHYUI\tSET\tideStatus\ttext\tStatus updated\n");
+        Check(split.ColumnDefinitions[0].Width.Value == 300 &&
+              ((TextBlock)controls["ideStatus"]).Text == "Status updated",
+              "WinUI SplitView divider or StatusBar did not respond to Hydrogen state");
+        values["ideSplit.value"] = "325";
+        Dispatch("ResizeIdePane", "ideSplit"); await Idle();
+        Check(values["ideStatus.text"] == "Navigator width: 325 px",
+              "WinUI split callback did not reach Hydrogen");
         ((RadioButtons)controls["channel"]).SelectedIndex = 1; await Idle(); Check(values["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         ((ListView)controls["templates"]).SelectedIndex = 2; await Idle(); Check(values["selectionText.text"] == "Template index: 2", "List event did not reach Hydrogen");
         var toolbar = controls["studioToolbar"] as CommandBar;
