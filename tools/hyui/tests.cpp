@@ -142,14 +142,20 @@ private slots:
         QCOMPARE(bridge.state()["tip.text"].toString(), "Updated tip");
         QCOMPARE(bridge.state()["tip.open"].toBool(), true);
         QVERIFY(!bridge.apply("HYUI\tSET\ttip\tvisible\tfalse\n"));
+        // A native Popover may now contain interactive Hydrogen controls.
+        QVERIFY(d.parse(R"(<Window version="1"><Button id="anchor" text="Tip"/>
+            <Popover id="tip" target="anchor" text="Help">
+                <Button id="inspect" text="Inspect" onClick="Inspect"/>
+            </Popover></Window>)"));
+        QCOMPARE(d.window.children.back().children.size(),size_t(1));
+        QVERIFY(d.handlers["Inspect"].contains("inspect"));
         const QList<QByteArray> invalid = {
             "<Window version=\"1\"><Popover id=\"tip\" target=\"missing\" text=\"Help\"/></Window>",
             "<Window version=\"1\"><Label id=\"anchor\" text=\"Help\"/><Popover id=\"tip\" target=\"anchor\" text=\"Help\"/></Window>",
             "<Window version=\"1\"><Button id=\"anchor\"/><Popover target=\"anchor\" text=\"Help\"/></Window>",
             "<Window version=\"1\"><Button id=\"anchor\"/><Popover id=\"tip\" target=\"anchor\"/></Window>",
             "<Window version=\"1\"><Button id=\"anchor\"/><Popover id=\"tip\" target=\"anchor\" text=\"Help\" visible=\"true\"/></Window>",
-            "<Window version=\"1\"><Panel><Popover id=\"tip\" target=\"anchor\" text=\"Help\"/></Panel></Window>",
-            "<Window version=\"1\"><Button id=\"anchor\"/><Popover id=\"tip\" target=\"anchor\" text=\"Help\"><Label/></Popover></Window>"
+            "<Window version=\"1\"><Panel><Popover id=\"tip\" target=\"anchor\" text=\"Help\"/></Panel></Window>"
         };
         for (const auto& xml : invalid) { QVERIFY2(!d.parse(xml), xml.constData()); }
     }
