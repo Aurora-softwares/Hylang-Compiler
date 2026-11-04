@@ -3,6 +3,7 @@
 #include <QMap>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 #include <vector>
 
@@ -18,6 +19,7 @@ struct Node {
 class Document {
 public:
     bool parse(const QByteArray& xml);
+    static QStringList supportedElements();
     QString resourcePath(const QString& relative) const;
     QString error;
     QString sourcePath;

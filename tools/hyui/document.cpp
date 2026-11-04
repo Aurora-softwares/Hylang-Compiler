@@ -44,6 +44,7 @@ static const QSet<QString> common = {"id", "visible", "enabled", "fill", "prefer
 static const QSet<QString> booleans = {"visible", "enabled", "fill", "primary", "checked", "running", "indeterminate", "open"};
 static const QSet<QString> numbers = {"width", "height", "padding", "gap", "breakpoint", "columns", "minItemWidth",
                                       "preferredWidth", "minimum", "maximum", "interval"};
+QStringList Document::supportedElements() { return attributes.keys(); }
 static bool container(const QString& tag) {
     return tag == "Tabs" || tag == "Tab" || tag == "MenuBar" || tag == "Menu" || tag == "ContextMenu" || tag == "Popover" || tag == "Toolbar" || tag == "Window" || tag == "Panel" || tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel" || tag == "ScrollView";
 }
@@ -226,7 +227,7 @@ bool Document::parse(const QByteArray& xml) {
                     if (node.attributes.value("columns").isEmpty() || node.attributes.value("rows").isEmpty()) { return invalid("Table requires columns and rows"); }
                     for (const auto& row : node.attributes.value("rows").split('\n')) { if (row.split('|').size() != columns.size()) { return invalid("Table row must match column count"); } }
                 }
-                if (node.tag == "Dialog" && (node.attributes.value("buttons", "OK").isEmpty() || node.attributes.value("buttons", "OK").split('|').size() > 3)) { return invalid("Dialog requires one to three buttons"); }
+                if (node.tag == "Dialog" && (node.attributes.value("buttons", "OK").isEmpty() || node.attributes.value("buttons", "OK").split('|').size() > 8)) { return invalid("Dialog requires one to eight buttons"); }
                 if (node.tag == "Image") {
                     QString source = node.attributes.value("source");
                     if (source.isEmpty() || QDir::isAbsolutePath(source) || source.contains(':') || source.contains('\\') || source.split('/').contains("..")) { return invalid("Image source must be a relative asset path"); }
