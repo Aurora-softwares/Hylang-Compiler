@@ -156,13 +156,18 @@ class AppKitView : public NativeView {
             if (split.subviews.count == 2) {
                 const CGFloat maxDivider = qMax<CGFloat>(0, width - split.dividerThickness);
                 const CGFloat target = qBound<CGFloat>(0, bridge.state().value(node->id + ".value").toInt(), maxDivider);
-                [split setPosition:target ofDividerAtIndex:0];
-                [split adjustSubviews];
-                for (NSView* pane in split.subviews) {
-                    CGFloat paneWidth = qMax<CGFloat>(1, pane.frame.size.width);
-                    arrange(pane, paneWidth);
-                    [pane setFrameSize:NSMakeSize(paneWidth, height)];
-                }
+                // NSSplitView adjusts divider frames from its children's previous
+                // zero-sized layout when embedded in the Hydrogen scroll document.
+                // Assign both pane frames explicitly before handing drag handling
+                // back to the native splitter.
+                const CGFloat startWidth = qMax<CGFloat>(1, target);
+                const CGFloat endWidth = qMax<CGFloat>(1, width - target - split.dividerThickness);
+                NSView* start = split.subviews[0];
+                NSView* end = split.subviews[1];
+                arrange(start, startWidth);
+                arrange(end, endWidth);
+                [start setFrame:NSMakeRect(0, 0, startWidth, height)];
+                [end setFrame:NSMakeRect(target + split.dividerThickness, 0, endWidth, height)];
             }
             return height;
         }
