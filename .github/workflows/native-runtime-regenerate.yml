@@ -1,26 +1,26 @@
-name: Regenerate Linux native runtime bytes
+name: Native runtime emitter consistency
+
 on:
   push:
-    branches: [Development]
+    branches: [Development, Release]
     paths:
       - tools/native-runtime/runtime.S
+      - tools/native-runtime/generate.py
+      - src/Hydrogen.Compiler.CodeGen.X64/NativeRuntimeEmitter.hy
+      - .github/workflows/native-runtime-regenerate.yml
+  pull_request:
+    branches: [Development, Release]
+
 permissions:
-  contents: write
+  contents: read
+
 jobs:
-  regenerate:
+  generated-runtime:
+    name: Verify immutable-path-safe runtime bytes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Regenerate self-hosted Hydrogen runtime emitter
+      - name: Regenerate Linux runtime byte emitter
         run: python3 tools/native-runtime/generate.py
-      - name: Commit generated runtime bytes
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/Hydrogen.Compiler.CodeGen.X64/NativeRuntimeEmitter.hy
-          if git diff --cached --quiet; then
-            echo 'Runtime emitter was already up to date.'
-          else
-            git commit -m 'build(native): regenerate runtime emitter after immutable path fix'
-            git push origin HEAD:Development
-          fi
+      - name: Fail if runtime source and checked-in byte emitter differ
+        run: git diff --exit-code -- src/Hydrogen.Compiler.CodeGen.X64/NativeRuntimeEmitter.hy
