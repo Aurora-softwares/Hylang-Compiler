@@ -125,6 +125,11 @@
   <Dialog id="about" title="Hydrogen Studio" text="Native menus, tabs, lists, tables, radio groups, images and dialogs, connected to Hydrogen." buttons="OK" open="false" value="0" />
   <ToggleButton id="featureToggle" text="Enable experimental tools" checked="false" onChange="ToggleFeature" visible="false" accessibleName="Enable experimental tools" />
   <ValidationMessage id="validationHint" text="Optional features are disabled." severity="info" visible="false" accessibleName="Feature validation" />
+  <SplitView id="ideSplit" value="260" height="260" onChange="ResizeIdePane" visible="false" accessibleName="Resizable IDE panes">
+    <Panel id="ideNavigator" title="File explorer" padding="8"><Label text="src / Program.hy" /></Panel>
+    <Panel id="ideEditor" title="Editor" padding="8"><Label text="Hydrogen source editor placeholder" /></Panel>
+  </SplitView>
+  <StatusBar id="ideStatus" text="Navigator ready" visible="false" accessibleName="IDE status" />
   <State id="sessionState" value="ready" />
   <Timer id="buildTimer" interval="350" running="false" onTick="Tick" />
 </Window>
