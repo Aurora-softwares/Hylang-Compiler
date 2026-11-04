@@ -791,6 +791,21 @@ struct App {
     GtkWidget* build(Node* n) {
         const auto& tag=n->tag;
         GtkWidget *w=nullptr,*container=nullptr;
+        if(tag=="Toolbar") {
+            // The titlebar stays present even when the commands are hidden.
+            // Otherwise a hidden Toolbar would also hide the close/maximise
+            // buttons on client-side decorated GTK4 windows.
+            auto* header=gtk_header_bar_new();
+            auto* actions=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
+            for(auto& child:n->children) {
+                GtkWidget* button=build(child.get());
+                if(button)gtk_box_append(GTK_BOX(actions),button);
+            }
+            gtk_header_bar_pack_start(GTK_HEADER_BAR(header),actions);
+            registerControl(n,actions,"Toolbar");
+            gtk_window_set_titlebar(GTK_WINDOW(window),header);
+            return nullptr;
+        }
         if(tag=="ColumnPanel"||tag=="RowPanel"||tag=="Toolbar"||tag=="Tab"||tag=="GridPanel") {
             if(tag=="RowPanel"||tag=="GridPanel") {
                 w=gtk_flow_box_new();
@@ -874,9 +889,15 @@ struct App {
             gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(w),GTK_WRAP_WORD_CHAR);
             auto* buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(w));
             gtk_text_buffer_set_text(buffer,attr(n,"text").c_str(),-1);
-            gtk_widget_set_size_request(w,-1,number(attr(n,"height"),80));
             if(auto* h=hook(n,"onChange"))
                 g_signal_connect(buffer,"changed",G_CALLBACK(changedSimple),h);
+            GtkWidget* scroller=gtk_scrolled_window_new();
+            gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroller),
+                std::max(50,number(attr(n,"height"),80)));
+            gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller),w);
+            registerControl(n,w,"TextArea");
+            gtk_widget_set_hexpand(scroller,TRUE);
+            return withPopoverHost(n,scroller);
         } else if(tag=="CheckBox") {
             w=gtk_check_button_new_with_label(attr(n,"text").c_str());
             gtk_check_button_set_active(GTK_CHECK_BUTTON(w),truth(attr(n,"checked")));
