@@ -487,7 +487,7 @@ struct App {
         };
         if(!w) {
             if(tag=="Input"||tag=="SearchInput"||tag=="TextArea"||tag=="PasswordInput")return cached("text");
-            if(tag=="CheckBox"||tag=="Switch")return cached("checked");
+            if(tag=="CheckBox"||tag=="Switch"||tag=="ToggleButton")return cached("checked");
             return cached("value");
         }
         if(tag=="Input"||tag=="SearchInput"||tag=="PasswordInput")return gtk_editable_get_text(GTK_EDITABLE(w));
@@ -505,6 +505,8 @@ struct App {
         if(tag=="CheckBox"||(tag=="MenuItem"&&c.node->attrs.count("checked")))
             return GTK_IS_CHECK_BUTTON(w)?
                 (gtk_check_button_get_active(GTK_CHECK_BUTTON(w))?"true":"false"):cached("checked");
+        if(tag=="ToggleButton")return GTK_IS_TOGGLE_BUTTON(w)?
+            (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(w))?"true":"false"):cached("checked");
         if(tag=="Switch")return GTK_IS_SWITCH(w)?
             (gtk_switch_get_active(GTK_SWITCH(w))?"true":"false"):cached("checked");
         if(tag=="Select")return std::to_string(gtk_drop_down_get_selected(GTK_DROP_DOWN(w)));
@@ -665,7 +667,8 @@ struct App {
                         gtk_widget_set_visible(label->second,!v.empty());
                     }
                 }
-                if(n->tag=="Label")gtk_label_set_text(GTK_LABEL(w),v.c_str());
+                if(n->tag=="Label"||n->tag=="ValidationMessage")gtk_label_set_text(GTK_LABEL(w),v.c_str());
+                else if(n->tag=="ToggleButton")gtk_button_set_label(GTK_BUTTON(w),v.c_str());
                 else if(n->tag=="Input"||n->tag=="SearchInput")gtk_editable_set_text(GTK_EDITABLE(w),v.c_str());
                 else if(n->tag=="TextArea" && GTK_IS_TEXT_VIEW(w)) {
                     GtkTextBuffer* buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(w));
@@ -675,6 +678,7 @@ struct App {
                 if(n->tag=="CheckBox"||(n->tag=="MenuItem"&&GTK_IS_CHECK_BUTTON(w)))
                     gtk_check_button_set_active(GTK_CHECK_BUTTON(w),truth(v));
                 if(n->tag=="Switch")gtk_switch_set_active(GTK_SWITCH(w),truth(v));
+                if(n->tag=="ToggleButton")gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w),truth(v));
             } else if(prop=="value" && w) {
                 if(n->tag=="ProgressBar")
                     setProgress(GTK_PROGRESS_BAR(w),n,v);
@@ -860,7 +864,7 @@ struct App {
             if(auto* h=hook(n,"onChange"))
                 g_signal_connect(w,"notify::visible-child-name",G_CALLBACK(changed),h);
             return withPopoverHost(n,wrapper);
-        } else if(tag=="Label") {
+        } else if(tag=="Label"||tag=="ValidationMessage") {
             w=gtk_label_new(attr(n,"text").c_str());
             gtk_label_set_wrap(GTK_LABEL(w),TRUE);
             gtk_label_set_xalign(GTK_LABEL(w),0);
@@ -868,6 +872,11 @@ struct App {
             if(role=="title")gtk_widget_add_css_class(w,"title-1");
             if(role=="heading")gtk_widget_add_css_class(w,"heading");
             if(attr(n,"tone")=="muted")gtk_widget_add_css_class(w,"dim-label");
+            if(tag=="ValidationMessage")gtk_widget_add_css_class(w,attr(n,"severity","error").c_str());
+        } else if(tag=="ToggleButton") {
+            w=gtk_toggle_button_new_with_label(attr(n,"text").c_str());
+            gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w),truth(attr(n,"checked")));
+            bind(w,"toggled",n,"onChange");
         } else if(tag=="Button"||tag=="ToolButton"||tag=="MenuItem") {
             if(tag=="MenuItem"&&n->attrs.count("checked")) {
                 w=gtk_check_button_new_with_label(attr(n,"text").c_str());
