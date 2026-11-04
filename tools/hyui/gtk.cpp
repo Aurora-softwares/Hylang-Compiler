@@ -378,6 +378,16 @@ public:
             if (a.contains("tooltip")) { api.text(viewport, "gtk_widget_set_tooltip_text", a["tooltip"]); }
             if (a.contains("accessibleName")) { api.call("gtk_accessible_update_property", viewport, 4, a["accessibleName"].toUtf8().constData(), -1); }
             c->widget = w; c->container = viewport; return viewport;
+        } else if (tag == "SplitView") {
+            w = api.call<W>("gtk_paned_new", 0); c->widget = w;
+            api.call("gtk_widget_set_size_request", w, -1, a.value("height", "260").toInt());
+            W start = build(node.children[0]), end = build(node.children[1]);
+            api.call("gtk_paned_set_start_child", w, start);
+            api.call("gtk_paned_set_end_child", w, end);
+            api.call("gtk_paned_set_position", w, a.value("value", "260").toInt());
+            connect(c, "notify::position", [this, c, event] {
+                event("value", api.call<int>("gtk_paned_get_position", c->widget), "onChange");
+            }, true);
         } else if (tag == "ScrollView") {
             W box = api.call<W>("gtk_box_new", 1, a.value("gap", "12").toInt());
             for (const auto& child : node.children) { append(box, build(child)); }
@@ -410,7 +420,7 @@ public:
                 W widget = build(child);
                 if (widget) { api.call("gtk_widget_set_size_request", widget, a.value("minItemWidth", "240").toInt(), -1); api.call("gtk_flow_box_insert", w, widget, -1); }
             }
-        } else if (tag == "Label" || tag == "ValidationMessage") {
+        } else if (tag == "Label" || tag == "ValidationMessage" || tag == "StatusBar") {
             w = api.call<W>("gtk_label_new", "");
             api.call("gtk_label_set_wrap", w, 1); api.call("gtk_label_set_wrap_mode", w, 2);
             api.call("gtk_label_set_xalign", w, 0.0f);
@@ -421,6 +431,7 @@ public:
             if (a.value("tone") == "muted") { api.css(w, "dim-label"); }
             if (a.value("tone") == "accent") { api.css(w, "accent"); }
             if (tag == "ValidationMessage") { api.css(w, a.value("severity", "error").toUtf8().constData()); }
+            if (tag == "StatusBar") { api.css(w, "caption"); api.css(w, "dim-label"); }
         } else if (tag == "MenuItem" && a.contains("checked")) {
             w = api.call<W>("gtk_check_button_new_with_label", ""); c->widget = w;
             connect(c, "toggled", [this, c, event] { event("checked", api.call<int>("gtk_check_button_get_active", c->widget) != 0, "onClick"); });
@@ -609,7 +620,13 @@ public:
             bool enabled = value("enabled").toBool();
             if (tag == "ToolButton" && !toolbarId.isEmpty()) { enabled = enabled && state.value(toolbarId + ".enabled").toBool(); }
             api.call("gtk_widget_set_sensitive", c->widget, enabled ? 1 : 0);
-            if (tag == "Label" || tag == "ValidationMessage") { api.text(c->widget, "gtk_label_set_text", value("text").toString()); }
+            if (tag == "Label" || tag == "ValidationMessage" || tag == "StatusBar") { api.text(c->widget, "gtk_label_set_text", value("text").toString()); }
+            if (tag == "SplitView") {
+                const int desired = value("value").toInt();
+                if (api.call<int>("gtk_paned_get_position", c->widget) != desired) {
+                    api.call("gtk_paned_set_position", c->widget, desired);
+                }
+            }
             if (tag == "Button" && std::any_of(document.window.children.cbegin(), document.window.children.cend(),
                 [c](const Node& child) { return child.tag == "Popover" && child.attributes.value("target") == c->node->id; })) {
                 api.text(c->widget, "gtk_menu_button_set_label", value("text").toString());
