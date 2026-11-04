@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Media;
@@ -124,6 +125,17 @@ public sealed partial class NativeWindow
         }
         Root.Width = 1120; AppWindow.Resize(new Windows.Graphics.SizeInt32(1136, 640)); await Task.Delay(200);
         await Until(() => ((BitmapImage)((Image)controls["logo"]).Source).PixelWidth > 0, "Bundled image did not decode");
+        Check(controls["featureToggle"] is ToggleButton, "ToggleButton must use native WinUI ToggleButton");
+        Check(controls["validationHint"] is TextBlock, "ValidationMessage must use native WinUI TextBlock");
+        var featureToggle = (ToggleButton)controls["featureToggle"];
+        featureToggle.IsChecked = true; await Idle();
+        Check(values["featureToggle.checked"] == "true" &&
+              values["validationHint.text"] == "Optional features enabled.",
+              "WinUI toggle event did not reach Hydrogen");
+        Apply("HYUI\tSET\tfeatureToggle\tchecked\tfalse\nHYUI\tSET\tvalidationHint\ttext\tReset by Hydrogen\n");
+        Check(featureToggle.IsChecked == false &&
+              ((TextBlock)controls["validationHint"]).Text == "Reset by Hydrogen",
+              "WinUI toggle or validation feedback did not update");
         ((RadioButtons)controls["channel"]).SelectedIndex = 1; await Idle(); Check(values["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         ((ListView)controls["templates"]).SelectedIndex = 2; await Idle(); Check(values["selectionText.text"] == "Template index: 2", "List event did not reach Hydrogen");
         var toolbar = controls["studioToolbar"] as CommandBar;
