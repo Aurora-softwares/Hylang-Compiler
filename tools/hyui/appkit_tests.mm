@@ -151,7 +151,13 @@ int main(int argc, char** argv) {
             if (!nativeTip) { std::cerr << "popover open=" << bridge.state()["templateTip.open"].toBool() << " target hidden=" << tipButton.hiddenOrHasHiddenAncestor << " windows=" << NSApp.windows.count << '\n'; }
             require(nativeTip != nil && bridge.state()["templateTip.open"].toBool(), "native AppKit popover did not open");
             require(bridge.apply("HYUI\tSET\ttemplateTip\ttext\tUpdated template tip\n"), "cannot update native popover text");
-            require([((NSTextField*)nativeTip.subviews.firstObject).stringValue isEqualToString:@"Updated template tip"], "native popover text did not update");
+            NSView* tipContents = nativeTip.subviews.firstObject;
+            require([tipContents isKindOfClass:NSView.class] &&
+                    [tipContents.subviews.firstObject isKindOfClass:NSTextField.class] &&
+                    [((NSTextField*)tipContents.subviews.firstObject).stringValue isEqualToString:@"Updated template tip"],
+                    "native popover text did not update");
+            require([find(nativeTip, @"popoverInspectTemplate") isKindOfClass:NSButton.class],
+                    "native AppKit popover must host a Hydrogen button");
             require(bridge.apply("HYUI\tSET\ttemplateTip\topen\tfalse\n"), "cannot dismiss native popover from Hydrogen");
             NSMenu* contextMenu = table.menu;
             require([contextMenu isKindOfClass:NSMenu.class] && contextMenu.numberOfItems == 1, "native context menu was not attached to the list");
