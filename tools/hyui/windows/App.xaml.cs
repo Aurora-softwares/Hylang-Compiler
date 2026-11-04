@@ -501,10 +501,10 @@ public sealed partial class NativeWindow : Window
                 case RadioButtons group: group.SelectedIndex = int.Parse(Value("value")); break;
                 case ListView list: list.SelectedIndex = int.Parse(Value("value")); break;
                 case TextBlock label: label.Text = Value("text"); break;
-                case ToggleButton toggleButton: toggleButton.Content = Value("text"); toggleButton.IsChecked = Value("checked") == "true"; break;
                 case TextBox input: if (input.Text != Value("text")) input.Text = Value("text"); break;
                 case AutoSuggestBox search: if (search.Text != Value("text")) search.Text = Value("text"); break;
                 case CheckBox check: check.IsChecked = Value("checked") == "true"; check.Content = Value("text"); break;
+                case ToggleButton toggleButton: toggleButton.Content = Value("text"); toggleButton.IsChecked = Value("checked") == "true"; break;
                 case Button button: button.Content = Value("text"); break;
                 case ToggleSwitch toggle: toggle.IsOn = Value("checked") == "true"; break;
                 case ComboBox select: select.SelectedIndex = int.Parse(Value("value")); break;
