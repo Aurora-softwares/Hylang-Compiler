@@ -500,6 +500,7 @@ struct App {
             gchar* str=gtk_text_buffer_get_text(buffer,&a,&b,FALSE);
             std::string result=str?str:"";g_free(str);return result;
         }
+        if(tag=="SplitView")return std::to_string(gtk_paned_get_position(GTK_PANED(w)));
         if(tag=="Slider")return std::to_string(int(gtk_range_get_value(GTK_RANGE(w))));
         if(tag=="NumberInput")return std::to_string(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(w)));
         if(tag=="CheckBox"||(tag=="MenuItem"&&c.node->attrs.count("checked")))
@@ -543,12 +544,12 @@ struct App {
         for(auto& [name,c]:controls) {
             std::string prop;
             const auto& tag=c.node->tag;
-            if(tag=="Input"||tag=="SearchInput"||tag=="TextArea") prop="text";
+            if(tag=="Input"||tag=="SearchInput"||tag=="TextArea"||tag=="StatusBar") prop="text";
             else if(tag=="PasswordInput")continue;
             else if(tag=="CheckBox"||tag=="Switch"||
                 (tag=="MenuItem"&&c.node->attrs.count("checked")))prop="checked";
             else if(tag=="Select"||tag=="ListBox"||tag=="Table"||tag=="Slider"||
-                    tag=="NumberInput"||tag=="Tabs"||tag=="RadioGroup")prop="value";
+                    tag=="NumberInput"||tag=="Tabs"||tag=="SplitView"||tag=="RadioGroup")prop="value";
             if(!prop.empty())state[name+"."+prop]=value(c);
         }
     }
@@ -667,7 +668,7 @@ struct App {
                         gtk_widget_set_visible(label->second,!v.empty());
                     }
                 }
-                if(n->tag=="Label"||n->tag=="ValidationMessage")gtk_label_set_text(GTK_LABEL(w),v.c_str());
+                if(n->tag=="Label"||n->tag=="ValidationMessage"||n->tag=="StatusBar")gtk_label_set_text(GTK_LABEL(w),v.c_str());
                 else if(n->tag=="ToggleButton")gtk_button_set_label(GTK_BUTTON(w),v.c_str());
                 else if(n->tag=="Input"||n->tag=="SearchInput")gtk_editable_set_text(GTK_EDITABLE(w),v.c_str());
                 else if(n->tag=="TextArea" && GTK_IS_TEXT_VIEW(w)) {
@@ -683,6 +684,7 @@ struct App {
                 if(n->tag=="ProgressBar")
                     setProgress(GTK_PROGRESS_BAR(w),n,v);
                 if(n->tag=="Slider")gtk_range_set_value(GTK_RANGE(w),number(v));
+                if(n->tag=="SplitView")gtk_paned_set_position(GTK_PANED(w),number(v));
                 if(n->tag=="NumberInput")gtk_spin_button_set_value(GTK_SPIN_BUTTON(w),number(v));
                 if(n->tag=="Select")gtk_drop_down_set_selected(GTK_DROP_DOWN(w),number(v));
                 if(n->tag=="RadioGroup") {
@@ -728,11 +730,11 @@ struct App {
             if(tag=="Clipboard" && name==sender)prop="value";
             else if(tag=="FilePicker")prop="path";
             else if(tag=="Dialog")prop="value";
-            else if(tag=="Input"||tag=="SearchInput"||tag=="TextArea"||tag=="Label")prop="text";
+            else if(tag=="Input"||tag=="SearchInput"||tag=="TextArea"||tag=="Label"||tag=="StatusBar")prop="text";
             else if(tag=="CheckBox"||tag=="Switch"||
                 (tag=="MenuItem"&&c.node->attrs.count("checked")))prop="checked";
             else if(tag=="Select"||tag=="ListBox"||tag=="Table"||tag=="Slider"||
-                tag=="NumberInput"||tag=="Tabs"||tag=="RadioGroup"||tag=="ProgressBar")prop="value";
+                tag=="NumberInput"||tag=="Tabs"||tag=="SplitView"||tag=="RadioGroup"||tag=="ProgressBar")prop="value";
             if(prop.empty())continue;
             auto val=state[name+"."+prop];
             bytes+=name.size()+val.size()+6;
@@ -843,6 +845,16 @@ struct App {
             gtk_widget_set_margin_top(container,number(attr(n,"padding"),12));
             gtk_widget_set_margin_bottom(container,number(attr(n,"padding"),12));
             gtk_frame_set_child(GTK_FRAME(w),container);
+        } else if(tag=="SplitView") {
+            w=gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+            gtk_widget_set_size_request(w,-1,number(attr(n,"height"),260));
+            GtkWidget* start=build(n->children[0].get());
+            GtkWidget* end=build(n->children[1].get());
+            if(!start||!end)throw std::runtime_error("SplitView requires two visual panes");
+            gtk_paned_set_start_child(GTK_PANED(w),start);
+            gtk_paned_set_end_child(GTK_PANED(w),end);
+            gtk_paned_set_position(GTK_PANED(w),number(attr(n,"value"),260));
+            bind(w,"notify::position",n,"onChange");
         } else if(tag=="ScrollView") {
             w=gtk_scrolled_window_new();
             container=gtk_box_new(GTK_ORIENTATION_VERTICAL,number(attr(n,"gap"),6));
@@ -864,7 +876,7 @@ struct App {
             if(auto* h=hook(n,"onChange"))
                 g_signal_connect(w,"notify::visible-child-name",G_CALLBACK(changed),h);
             return withPopoverHost(n,wrapper);
-        } else if(tag=="Label"||tag=="ValidationMessage") {
+        } else if(tag=="Label"||tag=="ValidationMessage"||tag=="StatusBar") {
             w=gtk_label_new(attr(n,"text").c_str());
             gtk_label_set_wrap(GTK_LABEL(w),TRUE);
             gtk_label_set_xalign(GTK_LABEL(w),0);
@@ -873,6 +885,7 @@ struct App {
             if(role=="heading")gtk_widget_add_css_class(w,"heading");
             if(attr(n,"tone")=="muted")gtk_widget_add_css_class(w,"dim-label");
             if(tag=="ValidationMessage")gtk_widget_add_css_class(w,attr(n,"severity","error").c_str());
+            if(tag=="StatusBar")gtk_widget_add_css_class(w,"dim-label");
         } else if(tag=="ToggleButton") {
             w=gtk_toggle_button_new_with_label(attr(n,"text").c_str());
             gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w),truth(attr(n,"checked")));
@@ -1143,7 +1156,7 @@ struct App {
             self->snapshot();
             if(self->verifyNativeControls) {
                 bool native=true;
-                int tables=0,rows=0,grids=0,editors=0,passwords=0,toggles=0,messages=0;
+                int tables=0,rows=0,grids=0,editors=0,passwords=0,toggles=0,messages=0,splits=0,statuses=0;
                 for(auto& [name,c]:self->controls) {
                     if(!c.node)continue;
                     const auto& tag=c.node->tag;
@@ -1173,6 +1186,12 @@ struct App {
                     if(tag=="ValidationMessage") {
                         ++messages;native=native&&GTK_IS_LABEL(w);
                     }
+                    if(tag=="SplitView") {
+                        ++splits;native=native&&GTK_IS_PANED(w);
+                    }
+                    if(tag=="StatusBar") {
+                        ++statuses;native=native&&GTK_IS_LABEL(w);
+                    }
                     if(tag=="Toolbar")native=native&&GTK_IS_BOX(w)&&
                         GTK_IS_HEADER_BAR(gtk_window_get_titlebar(GTK_WINDOW(self->window)));
                     if(tag=="ProgressBar"&&GTK_IS_PROGRESS_BAR(w)) {
@@ -1187,7 +1206,7 @@ struct App {
                         }
                     }
                 }
-                native=native&&tables>0&&rows>0&&grids>0&&editors>0&&passwords>0&&toggles>0&&messages>0;
+                native=native&&tables>0&&rows>0&&grids>0&&editors>0&&passwords>0&&toggles>0&&messages>0&&splits>0&&statuses>0;
                 self->state["__hyui.native_controls_checked"]=native?"true":"false";
             }
             // The scripted UI regression test inspects actual GTK widget
