@@ -167,6 +167,7 @@ struct App {
     // Explicit GtkOverlay parents for controls targeted by HYUI popovers.
     // GtkListBox and other controls do not support arbitrary popover children.
     std::map<std::string,GtkWidget*> popoverHosts;
+    std::map<std::string,GtkWidget*> popoverTextLabels;
     std::map<std::string,GCancellable*> dialogs;
     GtkShortcutController* shortcutController=nullptr;
     std::map<std::string,std::string> state;
@@ -657,6 +658,13 @@ struct App {
             }
             else if(prop=="enabled" && w)gtk_widget_set_sensitive(w,truth(v));
             else if(prop=="text" && w) {
+                if(n->tag=="Popover") {
+                    auto label=popoverTextLabels.find(name);
+                    if(label!=popoverTextLabels.end()) {
+                        gtk_label_set_text(GTK_LABEL(label->second),v.c_str());
+                        gtk_widget_set_visible(label->second,!v.empty());
+                    }
+                }
                 if(n->tag=="Label")gtk_label_set_text(GTK_LABEL(w),v.c_str());
                 else if(n->tag=="Input"||n->tag=="SearchInput")gtk_editable_set_text(GTK_EDITABLE(w),v.c_str());
                 else if(n->tag=="TextArea" && GTK_IS_TEXT_VIEW(w)) {
@@ -1061,11 +1069,18 @@ struct App {
                     append(contents,build(item.get()),n,item.get());
                 gtk_popover_set_child(GTK_POPOVER(pop),contents);
             } else {
-                GtkWidget* contents=gtk_label_new(attr(n,"text").c_str());
+                GtkWidget* contents=gtk_box_new(GTK_ORIENTATION_VERTICAL,8);
                 gtk_widget_set_margin_start(contents,14);
                 gtk_widget_set_margin_end(contents,14);
                 gtk_widget_set_margin_top(contents,12);
                 gtk_widget_set_margin_bottom(contents,12);
+                GtkWidget* label=gtk_label_new(attr(n,"text").c_str());
+                gtk_label_set_wrap(GTK_LABEL(label),TRUE);
+                gtk_widget_set_visible(label,!attr(n,"text").empty());
+                gtk_box_append(GTK_BOX(contents),label);
+                popoverTextLabels[id(n)]=label;
+                for(auto& item:n->children)
+                    append(contents,build(item.get()),n,item.get());
                 gtk_popover_set_child(GTK_POPOVER(pop),contents);
             }
             // Add with the container API: gtk_widget_set_parent(pop, GtkListBox)

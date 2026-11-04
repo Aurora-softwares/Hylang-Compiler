@@ -156,7 +156,13 @@ public sealed partial class NativeWindow : Window
             string id = Attr(node, "id"), targetId = Attr(node, "target");
             if (!controls.TryGetValue(targetId, out var target)) throw new InvalidDataException("Popover target is not a visual control");
             var label = new TextBlock { TextWrapping = TextWrapping.Wrap, MaxWidth = 300, Margin = new Thickness(12) };
-            var flyout = new Flyout { Content = label };
+            var content = new StackPanel { Spacing = 8, Padding = new Thickness(4) };
+            content.Children.Add(label);
+            foreach (var child in node.Elements()) {
+                var native = Build(child);
+                if (native != null) content.Children.Add(native);
+            }
+            var flyout = new Flyout { Content = content };
             flyout.Closed += (_, _) => {
                 if (values.GetValueOrDefault(id + ".open") != "true") return;
                 values[id + ".open"] = "false";

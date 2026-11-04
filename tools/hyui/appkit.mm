@@ -77,6 +77,8 @@ class AppKitView : public NativeView {
     QMap<QString, NSAlert*> alerts;
     QMap<QString, NSPopover*> popovers;
     QMap<QString, NSTextField*> popoverLabels;
+    QMap<QString, NSView*> popoverContents;
+    QMap<QString, NSView*> popoverFrames;
     bool applying = false;
     bool disposing = false;
     bool layoutDirty = true;
@@ -232,17 +234,26 @@ class AppKitView : public NativeView {
             NSPopover* popover = [[[NSPopover alloc] init] autorelease];
             popover.behavior = NSPopoverBehaviorTransient;
             NSViewController* controller = [[[NSViewController alloc] init] autorelease];
-            NSView* contents = [[[HYLayoutView alloc] initWithFrame:NSMakeRect(0, 0, 300, 72)] autorelease];
-            contents.identifier = text(node.id);
+            NSView* frame = [[[HYLayoutView alloc] initWithFrame:NSMakeRect(0, 0, 300, 72)] autorelease];
+            frame.identifier = text(node.id);
+            NSView* contents = stack();
+            layouts[contents].gap = 8;
+            [frame addSubview:contents];
             NSTextField* label = [NSTextField wrappingLabelWithString:text(node.attributes.value("text"))];
-            label.frame = NSMakeRect(12, 12, 276, 48); [contents addSubview:label];
-            controller.view = contents; popover.contentViewController = controller;
+            add(contents,label);
+            // Popovers host the same native AppKit controls as normal panels,
+            // including independently dispatched Hydrogen event handlers.
+            for(const Node& child:node.children)add(contents,build(child));
+            controller.view = frame; popover.contentViewController = controller;
             popover.delegate = action([this, &node](id) {
                 if (!bridge.state().value(node.id + ".open").toBool()) { return; }
                 bridge.store(node.id, "open", false);
                 if (node.attributes.contains("onClose")) { bridge.dispatch(node.attributes["onClose"], node.id); }
             });
-            [retained addObject:popover]; popovers.insert(node.id, popover); popoverLabels.insert(node.id, label);
+            [retained addObject:popover]; popovers.insert(node.id, popover);
+            popoverLabels.insert(node.id, label);
+            popoverContents.insert(node.id, contents);
+            popoverFrames.insert(node.id, frame);
         }
     }
     void updateDialogs() {
@@ -490,13 +501,15 @@ class AppKitView : public NativeView {
         for (auto it = popovers.cbegin(); it != popovers.cend(); ++it) {
             NSPopover* popover = it.value();
             NSString* labelText = text(state.value(it.key() + ".text").toString());
-            NSTextField* label = popoverLabels[it.key()]; label.stringValue = labelText;
-            NSRect measured = [labelText boundingRectWithSize:NSMakeSize(276, CGFLOAT_MAX)
-                options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
-                attributes:@{NSFontAttributeName:label.font}];
-            CGFloat height = qMax<CGFloat>(72, std::ceil(measured.size.height) + 24);
-            popover.contentSize = NSMakeSize(300, height);
-            label.frame = NSMakeRect(12, 12, 276, height - 24);
+            NSTextField* label = popoverLabels[it.key()];
+            label.stringValue = labelText;
+            label.hidden = labelText.length == 0;
+            NSView* contents = popoverContents[it.key()];
+            NSView* frame = popoverFrames[it.key()];
+            CGFloat contentHeight = qMax<CGFloat>(48,arrange(contents,276));
+            [contents setFrame:NSMakeRect(12,12,276,contentHeight)];
+            [frame setFrameSize:NSMakeSize(300,contentHeight+24)];
+            popover.contentSize = NSMakeSize(300,contentHeight+24);
             bool open = state.value(it.key() + ".open").toBool();
             if (!open && popover.shown) { [popover close]; }
             if (open && !popover.shown && window.isVisible) {
