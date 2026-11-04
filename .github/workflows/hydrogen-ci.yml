@@ -442,6 +442,14 @@ jobs:
       - name: Run SDK and integration regression tests
         run: ctest --test-dir build --output-on-failure --parallel 2 -E '^(hy_stage1_|hy_stage6_)'
 
+      # Stage 1 alone is insufficient: Stage 2/3 must also generate and
+      # run real native GTK4 desktop programs from a foreign working directory.
+      - name: Verify GTK4 UI generation from self-hosted Stages 1, 2 and 3
+        run: |
+          sudo apt-get install -y binutils pkg-config libgtk-4-dev xvfb dbus-x11 file python3
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1600x1200x24' \
+            bash tests/ui/test-linux-gtk-direct.sh --all-stages
+
       - name: Record provenance and package compilers
         run: |
           cd build/self_hosting
