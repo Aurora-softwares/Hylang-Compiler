@@ -94,6 +94,9 @@ for compiler in "${stages[@]}"; do
     check_invalid '<Window version="1"><FilePicker mode="read" text="Open" onPick="Pick"/></Window>' 'FilePicker requires mode'
     check_invalid '<Window version="1"><Timer interval="10" onTick="Tick"/></Window>' 'invalid numeric'
     check_invalid '<Window version="1"><Toolbar><ToolButton text="No handler"/></Toolbar></Window>' 'ToolButton requires text and onClick'
+    check_invalid '<Window version="1"><SplitView><Panel/></SplitView></Window>' 'SplitView requires exactly two visual panes'
+    check_invalid '<Window version="1"><SplitView><Panel/><Panel/><Panel/></SplitView></Window>' 'SplitView requires exactly two visual panes'
+    check_invalid '<Window version="1"><Panel><Window version="1"/></Panel></Window>' 'invalid placement'
     echo "HYUI native-free schema and backend passed: $compiler"
 done
 
