@@ -34,6 +34,7 @@ namespace Hydrogen.Compiler.UI {
             maxDepth = 0;
             error = "";
             string[] stack = new string[33];
+            int[] childCounts = new int[33];
             int depth = 0;
             int pos = 0;
             bool rootSeen = false;
@@ -85,6 +86,10 @@ namespace Hydrogen.Compiler.UI {
                         error = "mismatched closing element " + name;
                         return false;
                     }
+                    if (name == "SplitView" && childCounts[depth - 1] != 2) {
+                        error = "SplitView requires exactly two visual panes";
+                        return false;
+                    }
                     depth = depth - 1;
                 } else {
                     if (!rootSeen) {
@@ -97,6 +102,17 @@ namespace Hydrogen.Compiler.UI {
                         error = "invalid placement of " + name + " in " + stack[depth - 1];
                         return false;
                     }
+                    if (depth > 0 && stack[depth - 1] == "SplitView") {
+                        childCounts[depth - 1] = childCounts[depth - 1] + 1;
+                        if (childCounts[depth - 1] > 2) {
+                            error = "SplitView requires exactly two visual panes";
+                            return false;
+                        }
+                    }
+                    if (name == "SplitView" && selfClosing) {
+                        error = "SplitView requires exactly two visual panes";
+                        return false;
+                    }
                     elements = elements + 1;
                     if (elements > 512 || depth >= 32) {
                         error = "UI nesting or element limit exceeded";
@@ -107,6 +123,7 @@ namespace Hydrogen.Compiler.UI {
                     }
                     if (!selfClosing) {
                         stack[depth] = name;
+                        childCounts[depth] = 0;
                         depth = depth + 1;
                         if (depth > maxDepth) { maxDepth = depth; }
                     }
@@ -132,7 +149,7 @@ namespace Hydrogen.Compiler.UI {
         }
 
         private static bool AllowedChild(string parent, string child) {
-            if (!Container(parent)) { return false; }
+            if (!Container(parent) || child == "Window") { return false; }
             if (parent == "Tabs") { return child == "Tab"; }
             if (parent == "MenuBar") { return child == "Menu"; }
             if (parent == "Menu" || parent == "ContextMenu") { return child == "MenuItem"; }
