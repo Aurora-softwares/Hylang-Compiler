@@ -14,7 +14,7 @@
 - (BOOL)isFlipped { return YES; }
 @end
 
-@interface HYAction : NSObject<NSTextFieldDelegate, NSTextViewDelegate, NSWindowDelegate, NSTableViewDelegate, NSTableViewDataSource, NSToolbarDelegate, NSPopoverDelegate> {
+@interface HYAction : NSObject<NSTextFieldDelegate, NSTextViewDelegate, NSWindowDelegate, NSTableViewDelegate, NSTableViewDataSource, NSToolbarDelegate, NSPopoverDelegate, NSSplitViewDelegate> {
 @public
     std::function<void(id)> callback;
     NSArray* tableRows;
@@ -34,6 +34,7 @@
 - (void)tableViewSelectionDidChange:(NSNotification*)note { [self fire:note.object]; }
 - (BOOL)windowShouldClose:(NSWindow*)window { QCoreApplication::quit(); return YES; }
 - (void)popoverDidClose:(NSNotification*)note { [self fire:note.object]; }
+- (void)splitViewDidResizeSubviews:(NSNotification*)note { [self fire:note.object]; }
 - (NSArray<NSString*>*)toolbarAllowedItemIdentifiers:(NSToolbar*)toolbar { return toolbarIdentifiers; }
 - (NSArray<NSString*>*)toolbarDefaultItemIdentifiers:(NSToolbar*)toolbar { return toolbarIdentifiers; }
 - (NSToolbarItem*)toolbar:(NSToolbar*)toolbar itemForItemIdentifier:(NSToolbarItemIdentifier)identifier willBeInsertedIntoToolbar:(BOOL)flag {
@@ -148,6 +149,23 @@ class AppKitView : public NativeView {
         }
         const Node* node = nodes.value(view, nullptr);
         QString tag = node ? node->tag : "Label";
+        if (tag == "SplitView") {
+            CGFloat height = node->attributes.value("height", "260").toInt();
+            NSSplitView* split = (NSSplitView*)view;
+            [split setFrameSize:NSMakeSize(width, height)];
+            if (split.subviews.count == 2) {
+                const CGFloat maxDivider = qMax<CGFloat>(0, width - split.dividerThickness);
+                const CGFloat target = qBound<CGFloat>(0, bridge.state().value(node->id + ".value").toInt(), maxDivider);
+                [split setPosition:target ofDividerAtIndex:0];
+                [split adjustSubviews];
+                for (NSView* pane in split.subviews) {
+                    CGFloat paneWidth = qMax<CGFloat>(1, pane.frame.size.width);
+                    arrange(pane, paneWidth);
+                    [pane setFrameSize:NSMakeSize(paneWidth, height)];
+                }
+            }
+            return height;
+        }
         if (tag == "ScrollView") {
             CGFloat height = node->attributes.value("height", "200").toInt();
             [view setFrameSize:NSMakeSize(width, height)];
@@ -308,7 +326,19 @@ class AppKitView : public NativeView {
             QObject::connect(timer, &QTimer::timeout, &signalScope, [this, &node] { bridge.dispatch(node.attributes["onTick"], node.id); }); timers.append(timer); return nil;
         }
         NSView* view = nil; id control = nil; id extra = nil;
-        if (tag == "Tabs") {
+        if (tag == "SplitView") {
+            NSSplitView* split = [[[NSSplitView alloc] init] autorelease];
+            split.vertical = YES;
+            split.dividerStyle = NSSplitViewDividerStyleThin;
+            for (const Node& pane : node.children) { NSView* child = build(pane); if (child) { [split addSubview:child]; } }
+            split.delegate = action([this, &node](id sender) {
+                NSSplitView* pane = (NSSplitView*)sender;
+                if (pane.subviews.count == 2 && pane.bounds.size.width > 0) {
+                    handleEvent(node, "value", int(std::round(pane.subviews[0].frame.size.width)), "onChange");
+                }
+            });
+            view = split; control = split;
+        } else if (tag == "Tabs") {
             view = stack(); NSSegmentedControl* tabs = [[[NSSegmentedControl alloc] init] autorelease];
             tabs.segmentCount = node.children.size(); tabs.segmentDistribution = NSSegmentDistributionFill;
             tabs.trackingMode = NSSegmentSwitchTrackingSelectOne; int index = 0;
@@ -366,8 +396,9 @@ class AppKitView : public NativeView {
             }
             for (const auto& child : node.children) { add(contents, build(child)); }
             view = contents;
-        } else if (tag == "Label" || tag == "ValidationMessage") {
+        } else if (tag == "Label" || tag == "ValidationMessage" || tag == "StatusBar") {
             NSTextField* label = [NSTextField wrappingLabelWithString:@""]; label.maximumNumberOfLines = 0;
+            if (tag == "StatusBar") { label.font = [NSFont systemFontOfSize:11]; label.textColor = NSColor.secondaryLabelColor; }
             if (a.value("tone") == "muted") { label.textColor = NSColor.secondaryLabelColor; }
             if (a.value("tone") == "accent") { label.textColor = NSColor.controlAccentColor; }
             if (tag == "ValidationMessage") {
@@ -484,10 +515,18 @@ class AppKitView : public NativeView {
                 for (const Node& parent : doc.window.children) { if (parent.tag == "Toolbar") { enabled = enabled && state.value(parent.id + ".enabled").toBool(); break; } }
             }
             if ([c.control respondsToSelector:@selector(setEnabled:)]) { [c.control setEnabled:enabled]; }
-            if (tag == "Label" || tag == "ValidationMessage" || tag == "Input" || tag == "SearchInput") { if (string([c.control stringValue]) != value("text").toString()) { [c.control setStringValue:text(value("text").toString())]; } }
+            if (tag == "Label" || tag == "ValidationMessage" || tag == "StatusBar" || tag == "Input" || tag == "SearchInput") { if (string([c.control stringValue]) != value("text").toString()) { [c.control setStringValue:text(value("text").toString())]; } }
             if (tag == "TextArea") { if (string([(NSTextView*)c.control string]) != value("text").toString()) { [(NSTextView*)c.control setString:text(value("text").toString())]; } }
             if (tag == "Button" || tag == "ToolButton" || tag == "ToggleButton" || tag == "FilePicker" || tag == "CheckBox") { [(NSButton*)c.control setTitle:text(value("text").toString())]; }
             if (tag == "CheckBox" || tag == "ToggleButton" || tag == "Switch") { [c.control setState:value("checked").toBool() ? NSControlStateValueOn : NSControlStateValueOff]; }
+            if (tag == "SplitView" && c.view.bounds.size.width > 0) {
+                NSSplitView* split = (NSSplitView*)c.view;
+                CGFloat target = qBound<CGFloat>(0, value("value").toInt(),
+                    qMax<CGFloat>(0, split.bounds.size.width - split.dividerThickness));
+                if (split.subviews.count == 2 && std::abs(split.subviews[0].frame.size.width - target) > 1) {
+                    [split setPosition:target ofDividerAtIndex:0];
+                }
+            }
             if (tag == "Tabs") {
                 [(NSSegmentedControl*)c.control setSelectedSegment:value("value").toInt()]; int index = 0;
                 for (const Node& page : c.node->children) { items[page.id].view.hidden = index++ != value("value").toInt() || !state.value(page.id + ".visible").toBool(); }
