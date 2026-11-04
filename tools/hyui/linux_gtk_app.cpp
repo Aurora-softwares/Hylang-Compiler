@@ -168,6 +168,7 @@ struct App {
     // GtkListBox and other controls do not support arbitrary popover children.
     std::map<std::string,GtkWidget*> popoverHosts;
     std::map<std::string,GCancellable*> dialogs;
+    GtkShortcutController* shortcutController=nullptr;
     std::map<std::string,std::string> state;
     std::vector<std::unique_ptr<Hook>> hooks;
     std::string statePath,eventRequest;
@@ -263,6 +264,54 @@ struct App {
         if(!h->app->applying)h->app->dispatch(h->handler,h->app->id(h->node));
     }
     static void changed(GObject*,GParamSpec*,gpointer data) { clicked(nullptr,data); }
+    static void menuToggled(GtkCheckButton* button,gpointer data) {
+        auto* h=static_cast<Hook*>(data);
+        if(h->app->applying||h->app->closing)return;
+        const auto name=h->app->id(h->node);
+        h->app->state[name+".checked"]=gtk_check_button_get_active(button)?"true":"false";
+        h->app->dispatch(h->handler,name);
+        GtkWidget* parent=gtk_widget_get_parent(GTK_WIDGET(button));
+        while(parent && !GTK_IS_POPOVER(parent))parent=gtk_widget_get_parent(parent);
+        if(GTK_IS_POPOVER(parent))gtk_popover_popdown(GTK_POPOVER(parent));
+    }
+    static gboolean shortcutActivated(GtkWidget*,GVariant*,gpointer data) {
+        auto* h=static_cast<Hook*>(data);
+        if(h->app->closing)return FALSE;
+        const auto name=h->app->id(h->node);
+        auto it=h->app->controls.find(name);
+        if(it!=h->app->controls.end() && GTK_IS_CHECK_BUTTON(it->second.widget))
+            gtk_check_button_set_active(GTK_CHECK_BUTTON(it->second.widget),
+                !gtk_check_button_get_active(GTK_CHECK_BUTTON(it->second.widget)));
+        else h->app->dispatch(h->handler,name);
+        return TRUE;
+    }
+    void attachMenuShortcut(Node* n) {
+        const auto spec=attr(n,"shortcut");
+        if(spec.empty())return;
+        std::string accelerator;
+        for(auto part:parts(spec,'+')) {
+            if(part=="Primary"||part=="Ctrl"||part=="Control")accelerator+="<Control>";
+            else if(part=="Shift")accelerator+="<Shift>";
+            else if(part=="Alt")accelerator+="<Alt>";
+            else if(part=="Super")accelerator+="<Super>";
+            else {
+                if(part.size()==1)part[0]=g_ascii_tolower(part[0]);
+                accelerator+=part;
+            }
+        }
+        guint key=0;GdkModifierType mods=GdkModifierType(0);
+        if(!gtk_accelerator_parse(accelerator.c_str(),&key,&mods)||key==0)
+            throw std::runtime_error("invalid HYUI menu shortcut: "+spec);
+        if(!shortcutController) {
+            shortcutController=gtk_shortcut_controller_new();
+            gtk_shortcut_controller_set_scope(shortcutController,GTK_SHORTCUT_SCOPE_GLOBAL);
+            gtk_widget_add_controller(window,GTK_EVENT_CONTROLLER(shortcutController));
+        }
+        if(auto* h=hook(n,"onClick"))
+            gtk_shortcut_controller_add_shortcut(shortcutController,gtk_shortcut_new(
+                gtk_keyval_trigger_new(key,mods),
+                gtk_callback_action_new(shortcutActivated,h,nullptr)));
+    }
     static void changedSimple(GtkWidget*,gpointer data) { clicked(nullptr,data); }
     static void listSelected(GtkListBox*,GtkListBoxRow*,gpointer data) { clicked(nullptr,data); }
     static void switchChanged(GObject*,GParamSpec*,gpointer data) { clicked(nullptr,data); }
@@ -451,7 +500,9 @@ struct App {
         }
         if(tag=="Slider")return std::to_string(int(gtk_range_get_value(GTK_RANGE(w))));
         if(tag=="NumberInput")return std::to_string(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(w)));
-        if(tag=="CheckBox")return gtk_check_button_get_active(GTK_CHECK_BUTTON(w))?"true":"false";
+        if(tag=="CheckBox"||(tag=="MenuItem"&&c.node->attrs.count("checked")))
+            return GTK_IS_CHECK_BUTTON(w)?
+                (gtk_check_button_get_active(GTK_CHECK_BUTTON(w))?"true":"false"):cached("checked");
         if(tag=="Switch")return GTK_IS_SWITCH(w)?
             (gtk_switch_get_active(GTK_SWITCH(w))?"true":"false"):cached("checked");
         if(tag=="Select")return std::to_string(gtk_drop_down_get_selected(GTK_DROP_DOWN(w)));
@@ -490,7 +541,8 @@ struct App {
             const auto& tag=c.node->tag;
             if(tag=="Input"||tag=="SearchInput"||tag=="TextArea") prop="text";
             else if(tag=="PasswordInput")continue;
-            else if(tag=="CheckBox"||tag=="Switch")prop="checked";
+            else if(tag=="CheckBox"||tag=="Switch"||
+                (tag=="MenuItem"&&c.node->attrs.count("checked")))prop="checked";
             else if(tag=="Select"||tag=="ListBox"||tag=="Table"||tag=="Slider"||
                     tag=="NumberInput"||tag=="Tabs"||tag=="RadioGroup")prop="value";
             if(!prop.empty())state[name+"."+prop]=value(c);
@@ -611,7 +663,8 @@ struct App {
                     gtk_text_buffer_set_text(buffer,v.c_str(),-1);
                 }
             } else if(prop=="checked" && w) {
-                if(n->tag=="CheckBox")gtk_check_button_set_active(GTK_CHECK_BUTTON(w),truth(v));
+                if(n->tag=="CheckBox"||(n->tag=="MenuItem"&&GTK_IS_CHECK_BUTTON(w)))
+                    gtk_check_button_set_active(GTK_CHECK_BUTTON(w),truth(v));
                 if(n->tag=="Switch")gtk_switch_set_active(GTK_SWITCH(w),truth(v));
             } else if(prop=="value" && w) {
                 if(n->tag=="ProgressBar")
@@ -663,7 +716,8 @@ struct App {
             else if(tag=="FilePicker")prop="path";
             else if(tag=="Dialog")prop="value";
             else if(tag=="Input"||tag=="SearchInput"||tag=="TextArea"||tag=="Label")prop="text";
-            else if(tag=="CheckBox"||tag=="Switch")prop="checked";
+            else if(tag=="CheckBox"||tag=="Switch"||
+                (tag=="MenuItem"&&c.node->attrs.count("checked")))prop="checked";
             else if(tag=="Select"||tag=="ListBox"||tag=="Table"||tag=="Slider"||
                 tag=="NumberInput"||tag=="Tabs"||tag=="RadioGroup"||tag=="ProgressBar")prop="value";
             if(prop.empty())continue;
@@ -791,9 +845,17 @@ struct App {
             if(role=="heading")gtk_widget_add_css_class(w,"heading");
             if(attr(n,"tone")=="muted")gtk_widget_add_css_class(w,"dim-label");
         } else if(tag=="Button"||tag=="ToolButton"||tag=="MenuItem") {
-            w=gtk_button_new_with_label(attr(n,"text").c_str());
+            if(tag=="MenuItem"&&n->attrs.count("checked")) {
+                w=gtk_check_button_new_with_label(attr(n,"text").c_str());
+                gtk_check_button_set_active(GTK_CHECK_BUTTON(w),truth(attr(n,"checked")));
+                if(auto* h=hook(n,"onClick"))
+                    g_signal_connect(w,"toggled",G_CALLBACK(menuToggled),h);
+            } else {
+                w=gtk_button_new_with_label(attr(n,"text").c_str());
+                bind(w,"clicked",n,"onClick");
+            }
+            if(tag=="ToolButton")gtk_widget_add_css_class(w,"flat");
             if(truth(attr(n,"primary")))gtk_widget_add_css_class(w,"suggested-action");
-            bind(w,"clicked",n,"onClick");
         } else if(tag=="FilePicker") {
             w=gtk_button_new_with_label(attr(n,"text","Choose file").c_str());
             if(auto* h=hook(n,"onPick"))
@@ -925,8 +987,10 @@ struct App {
                 // Menu buttons control when their popovers become visible.
                 gtk_widget_set_visible(pop,FALSE);
                 auto* items=gtk_box_new(GTK_ORIENTATION_VERTICAL,3);
-                for(auto& item:child->children)
+                for(auto& item:child->children) {
                     append(items,build(item.get()),child.get(),item.get());
+                    attachMenuShortcut(item.get());
+                }
                 gtk_popover_set_child(GTK_POPOVER(pop),items);
                 gtk_menu_button_set_popover(GTK_MENU_BUTTON(button),pop);
                 gtk_box_append(GTK_BOX(w),button);
