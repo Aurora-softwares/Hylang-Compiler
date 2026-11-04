@@ -456,6 +456,11 @@ struct App {
             // A Hydrogen backend can terminate with no stderr (for example, a
             // runtime abort or fatal signal). Always identify how it ended.
             std::cerr<<"Hydrogen UI backend failed";
+            if(args.size()>=2 && args[0]=="--hyui-event") {
+                std::cerr<<" while handling '"<<args[1]<<"'";
+            } else if(args.empty()) {
+                std::cerr<<" during initial view selection";
+            }
             if(g_subprocess_get_if_signaled(proc)) {
                 std::cerr<<" (signal "<<g_subprocess_get_term_sig(proc)<<")";
             } else if(g_subprocess_get_if_exited(proc)) {
