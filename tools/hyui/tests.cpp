@@ -53,6 +53,28 @@ private slots:
         }
     }
 
+    void splitViewAndStatusBarContract() {
+        hyui::Document document;
+        QVERIFY(document.parse(R"(<Window version="1"><SplitView id="split" height="240" value="260" onChange="Resize"><Panel id="left"><Label text="files"/></Panel><Panel id="right"><Label text="editor"/></Panel></SplitView><StatusBar id="status" text="Ready"/></Window>)"));
+        QCOMPARE(document.window.children[0].children.size(), size_t(2));
+        QCOMPARE(document.initialState["split.value"].toInt(), 260);
+        QCOMPARE(document.initialState["status.text"].toString(), QString("Ready"));
+        QVERIFY(document.properties["split"].contains("value"));
+        QVERIFY(document.properties["status"].contains("text"));
+        QVERIFY(document.handlers["Resize"].contains("split"));
+        const QList<QByteArray> invalid = {
+            R"(<Window version="1"><SplitView><Panel/></SplitView></Window>)",
+            R"(<Window version="1"><SplitView><Panel/><Panel/><Panel/></SplitView></Window>)",
+            R"(<Window version="1"><SplitView><State value="secret"/><Panel/></SplitView></Window>)",
+            R"(<Window version="1"><SplitView value="50000"><Panel/><Panel/></SplitView></Window>)",
+            R"(<Window version="1"><StatusBar checked="true"/></Window>)"
+        };
+        for (const QByteArray& xml : invalid) {
+            hyui::Document malformed;
+            QVERIFY2(!malformed.parse(xml), xml.constData());
+        }
+    }
+
     void responseIsTypedAndAtomic() {
         hyui::Document d;
         QVERIFY(d.parse("<Window version=\"1\"><Label id=\"status\" text=\"ready\"/><ProgressBar id=\"progress\"/><Spinner id=\"busy\"/></Window>"));
