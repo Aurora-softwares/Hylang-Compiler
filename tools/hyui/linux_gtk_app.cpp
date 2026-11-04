@@ -665,6 +665,13 @@ struct App {
                         gtk_widget_set_visible(label->second,!v.empty());
                     }
                 }
+                if(n->tag=="Menu"&&GTK_IS_MENU_BUTTON(w))
+                    gtk_menu_button_set_label(GTK_MENU_BUTTON(w),v.c_str());
+                if(n->tag=="MenuItem") {
+                    if(GTK_IS_BUTTON(w))gtk_button_set_label(GTK_BUTTON(w),v.c_str());
+                    else if(GTK_IS_CHECK_BUTTON(w))
+                        gtk_check_button_set_label(GTK_CHECK_BUTTON(w),v.c_str());
+                }
                 if(n->tag=="Label")gtk_label_set_text(GTK_LABEL(w),v.c_str());
                 else if(n->tag=="Input"||n->tag=="SearchInput")gtk_editable_set_text(GTK_EDITABLE(w),v.c_str());
                 else if(n->tag=="TextArea" && GTK_IS_TEXT_VIEW(w)) {
@@ -1013,6 +1020,7 @@ struct App {
             for(auto& child:n->children) {
                 auto* button=gtk_menu_button_new();
                 gtk_menu_button_set_label(GTK_MENU_BUTTON(button),attr(child.get(),"text").c_str());
+                registerControl(child.get(),button,"Menu");
                 auto* pop=gtk_popover_new();
                 // Menu buttons control when their popovers become visible.
                 gtk_widget_set_visible(pop,FALSE);
@@ -1171,6 +1179,67 @@ struct App {
                             gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w),original);
                         }
                     }
+                }
+                // Assert the *actual GTK4 widget family* for every
+                // documented HYUI element. Silent generic widget fallbacks
+                // must not be mistaken for a native implementation.
+                std::map<std::string,bool> nativeTypes;
+                nativeTypes["Window"]=GTK_IS_APPLICATION_WINDOW(self->window);
+                for(const auto& [name,c]:self->controls) {
+                    if(!c.node)continue;
+                    const std::string& tag=c.node->tag;
+                    GtkWidget* w=c.widget;
+                    bool correct=false;
+                    if(tag=="ColumnPanel")correct=GTK_IS_BOX(w);
+                    else if(tag=="RowPanel")correct=GTK_IS_FLOW_BOX(w);
+                    else if(tag=="ScrollView")correct=GTK_IS_SCROLLED_WINDOW(w);
+                    else if(tag=="GridPanel")correct=GTK_IS_FLOW_BOX(w);
+                    else if(tag=="Panel")correct=GTK_IS_FRAME(w);
+                    else if(tag=="MenuBar")correct=GTK_IS_BOX(w);
+                    else if(tag=="Menu")correct=GTK_IS_MENU_BUTTON(w);
+                    else if(tag=="MenuItem")correct=GTK_IS_BUTTON(w)||GTK_IS_CHECK_BUTTON(w);
+                    else if(tag=="ContextMenu")correct=GTK_IS_POPOVER(w);
+                    else if(tag=="Popover")correct=GTK_IS_POPOVER(w);
+                    else if(tag=="Toolbar")correct=GTK_IS_BOX(w);
+                    else if(tag=="ToolButton")correct=GTK_IS_BUTTON(w);
+                    else if(tag=="Clipboard")correct=w==nullptr;
+                    else if(tag=="Tabs")correct=GTK_IS_STACK(w);
+                    else if(tag=="Tab")correct=GTK_IS_BOX(w);
+                    else if(tag=="ListBox")correct=GTK_IS_LIST_BOX(w);
+                    else if(tag=="Table")correct=GTK_IS_COLUMN_VIEW(w);
+                    else if(tag=="RadioGroup")correct=GTK_IS_BOX(w);
+                    else if(tag=="Image")correct=GTK_IS_PICTURE(w);
+                    else if(tag=="Dialog")correct=w==nullptr||GTK_IS_WINDOW(w);
+                    else if(tag=="Label")correct=GTK_IS_LABEL(w);
+                    else if(tag=="Button")correct=GTK_IS_BUTTON(w);
+                    else if(tag=="Input")correct=GTK_IS_ENTRY(w);
+                    else if(tag=="SearchInput")correct=GTK_IS_SEARCH_ENTRY(w);
+                    else if(tag=="PasswordInput")correct=GTK_IS_PASSWORD_ENTRY(w);
+                    else if(tag=="FilePicker")correct=GTK_IS_BUTTON(w);
+                    else if(tag=="TextArea")correct=GTK_IS_TEXT_VIEW(w)&&GTK_IS_SCROLLED_WINDOW(gtk_widget_get_parent(w));
+                    else if(tag=="CheckBox")correct=GTK_IS_CHECK_BUTTON(w);
+                    else if(tag=="Switch")correct=GTK_IS_SWITCH(w);
+                    else if(tag=="Select")correct=GTK_IS_DROP_DOWN(w);
+                    else if(tag=="Slider")correct=GTK_IS_SCALE(w);
+                    else if(tag=="NumberInput")correct=GTK_IS_SPIN_BUTTON(w);
+                    else if(tag=="ProgressBar")correct=GTK_IS_PROGRESS_BAR(w);
+                    else if(tag=="Spinner")correct=GTK_IS_SPINNER(w);
+                    else if(tag=="Separator")correct=GTK_IS_SEPARATOR(w);
+                    else if(tag=="Spacer")correct=GTK_IS_BOX(w);
+                    else if(tag=="State")correct=w==nullptr;
+                    else if(tag=="Timer")correct=w==nullptr;
+                    else correct=false;
+                    auto found=nativeTypes.find(tag);
+                    if(found==nativeTypes.end())nativeTypes[tag]=correct;
+                    else found->second=found->second&&correct;
+                }
+                const std::vector<std::string> requiredTags={
+                    "Window","ColumnPanel","RowPanel","ScrollView","GridPanel","Panel","MenuBar","Menu","MenuItem","ContextMenu","Popover","Toolbar","ToolButton","Clipboard","Tabs","Tab","ListBox","Table","RadioGroup","Image","Dialog","Label","Button","Input","SearchInput","PasswordInput","FilePicker","TextArea","CheckBox","Switch","Select","Slider","NumberInput","ProgressBar","Spinner","Separator","Spacer","State","Timer"
+                };
+                for(const auto& tag:requiredTags) {
+                    bool ok=nativeTypes.count(tag)&&nativeTypes[tag];
+                    self->state["__hyui.native."+tag]=ok?"true":"false";
+                    native=native&&ok;
                 }
                 native=native&&tables>0&&rows>0&&grids>0&&editors>0&&passwords>0;
                 self->state["__hyui.native_controls_checked"]=native?"true":"false";

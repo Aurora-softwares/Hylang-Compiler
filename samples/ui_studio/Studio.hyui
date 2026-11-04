@@ -124,4 +124,8 @@
   <Dialog id="confirmation" title="Create an application?" text="Your settings are ready. Continue with this template?" buttons="Continue|Cancel" open="false" value="0" onClose="Confirmed" />
   <Dialog id="about" title="Hydrogen Studio" text="Native menus, tabs, lists, tables, radio groups, images and dialogs, connected to Hydrogen." buttons="OK" open="false" value="0" />
   <Timer id="buildTimer" interval="350" running="false" onTick="Tick" />
+  <!-- Nonvisual state and an invisible spacer complete the public element
+       inventory without affecting the reviewed native screenshots. -->
+  <State id="coverageState" value="ready" />
+  <Spacer id="coverageSpacer" height="12" visible="false" />
 </Window>
