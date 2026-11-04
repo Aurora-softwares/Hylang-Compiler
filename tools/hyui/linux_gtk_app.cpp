@@ -167,6 +167,7 @@ struct App {
     // Explicit GtkOverlay parents for controls targeted by HYUI popovers.
     // GtkListBox and other controls do not support arbitrary popover children.
     std::map<std::string,GtkWidget*> popoverHosts;
+    std::map<std::string,GCancellable*> dialogs;
     std::map<std::string,std::string> state;
     std::vector<std::unique_ptr<Hook>> hooks;
     std::string statePath,eventRequest;
@@ -179,6 +180,10 @@ struct App {
         // Weak pointer slots reside in this map; unregister any that survive
         // the GTK window so no later GObject finalizer writes into freed memory.
         for(auto& entry:controls)replaceControlWidget(entry.second,nullptr);
+        for(auto& [name,cancel]:dialogs) {
+            g_cancellable_cancel(cancel);
+            g_object_unref(cancel);
+        }
         if (backendFd >= 0) close(backendFd);
     }
     static void replaceControlWidget(Control& control,GtkWidget* next) {
@@ -268,47 +273,48 @@ struct App {
         h->app->state[key+".value"]=std::to_string(h->index);
         h->app->dispatch(h->handler,key);
     }
-    static void dialogChoice(GtkButton*,gpointer data) {
+    static void alertChosen(GObject* source,GAsyncResult* result,gpointer data) {
         auto* h=static_cast<Hook*>(data);
-        const auto name=h->app->id(h->node);
-        h->app->state[name+".value"]=std::to_string(h->index);
-        h->app->state[name+".open"]="false";
-        GtkWidget* dialog=h->app->controls[name].widget;
-        if(dialog) {
-            h->app->replaceControlWidget(h->app->controls[name],nullptr);
-            gtk_window_destroy(GTK_WINDOW(dialog));
+        App* self=h->app;
+        const auto name=self->id(h->node);
+        GError* error=nullptr;
+        int answer=gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source),result,&error);
+        const int count=int(parts(attr(h->node,"buttons","OK"),'|').size());
+        if(answer<0||answer>=count)answer=std::max(0,count-1);
+        auto it=self->dialogs.find(name);
+        if(it!=self->dialogs.end()) {
+            g_object_unref(it->second);
+            self->dialogs.erase(it);
         }
-        auto closeHandler=attr(h->node,"onClose");
-        if(!closeHandler.empty())h->app->dispatch(closeHandler,name);
+        if(!self->closing && truth(self->state[name+".open"])) {
+            self->state[name+".value"]=std::to_string(answer);
+            self->state[name+".open"]="false";
+            self->dispatch(attr(h->node,"onClose"),name);
+        }
+        if(error)g_error_free(error);
+        g_object_unref(source);
     }
     void showDialog(Node* n) {
-        auto name=id(n);
-        if(controls[name].widget)return;
-        GtkWidget* dialog=gtk_window_new();
-        replaceControlWidget(controls[name],dialog);
-        gtk_window_set_title(GTK_WINDOW(dialog),attr(n,"title","Hydrogen").c_str());
-        gtk_window_set_transient_for(GTK_WINDOW(dialog),GTK_WINDOW(window));
-        gtk_window_set_modal(GTK_WINDOW(dialog),TRUE);
-        gtk_window_set_default_size(GTK_WINDOW(dialog),360,130);
-        GtkWidget* layout=gtk_box_new(GTK_ORIENTATION_VERTICAL,16);
-        gtk_widget_set_margin_start(layout,20);gtk_widget_set_margin_end(layout,20);
-        gtk_widget_set_margin_top(layout,20);gtk_widget_set_margin_bottom(layout,20);
-        auto* label=gtk_label_new(attr(n,"text").c_str());
-        gtk_label_set_wrap(GTK_LABEL(label),TRUE);
-        gtk_box_append(GTK_BOX(layout),label);
-        auto* buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,10);
-        auto options=parts(attr(n,"buttons","OK"),'|');
-        for(int i=0;i<int(options.size());++i) {
-            GtkWidget* button=gtk_button_new_with_label(options[i].c_str());
-            auto* h=hook(n,"onClose");
-            if(!h) {auto fallback=std::make_unique<Hook>();fallback->app=this;fallback->node=n;h=fallback.get();hooks.push_back(std::move(fallback));}
-            h->index=i;
-            g_signal_connect(button,"clicked",G_CALLBACK(dialogChoice),h);
-            gtk_box_append(GTK_BOX(buttons),button);
+        const std::string name=id(n);
+        if(dialogs.count(name))return;
+        auto* alert=gtk_alert_dialog_new("%s",attr(n,"title","Hydrogen").c_str());
+        gtk_alert_dialog_set_detail(alert,attr(n,"text").c_str());
+        auto labels=parts(attr(n,"buttons","OK"),'|');
+        std::vector<const char*> choices;
+        for(const auto& label:labels)choices.push_back(label.c_str());
+        choices.push_back(nullptr);
+        gtk_alert_dialog_set_buttons(alert,choices.data());
+        gtk_alert_dialog_set_default_button(alert,0);
+        gtk_alert_dialog_set_cancel_button(alert,std::max(0,int(labels.size())-1));
+        auto* h=hook(n,"onClose");
+        if(!h) {
+            auto fallback=std::make_unique<Hook>();
+            fallback->app=this;fallback->node=n;h=fallback.get();
+            hooks.push_back(std::move(fallback));
         }
-        gtk_box_append(GTK_BOX(layout),buttons);
-        gtk_window_set_child(GTK_WINDOW(dialog),layout);
-        gtk_window_present(GTK_WINDOW(dialog));
+        auto* cancel=g_cancellable_new();
+        dialogs[name]=cancel;
+        gtk_alert_dialog_choose(alert,GTK_WINDOW(window),cancel,alertChosen,h);
     }
     static void fileDialogReady(GObject* source,GAsyncResult* result,gpointer data) {
         auto* h=static_cast<Hook*>(data);
@@ -578,7 +584,13 @@ struct App {
             if(it==controls.end())continue;
             Node* n=it->second.node;GtkWidget* w=it->second.widget;
             state[name+"."+prop]=v;
-            if(prop=="open" && n->tag=="Dialog" && truth(v))showDialog(n);
+            if(prop=="open" && n->tag=="Dialog") {
+                if(truth(v))showDialog(n);
+                else {
+                    auto dialog=dialogs.find(name);
+                    if(dialog!=dialogs.end())g_cancellable_cancel(dialog->second);
+                }
+            }
             if(prop=="open" && n->tag=="Popover" && w) {
                 if(truth(v))gtk_popover_popup(GTK_POPOVER(w));
                 else gtk_popover_popdown(GTK_POPOVER(w));
