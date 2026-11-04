@@ -146,8 +146,13 @@ int main(int argc, char** argv) {
             require([status isKindOfClass:NSTextField.class] &&
                     [status.stringValue isEqualToString:@"Status updated"],
                     "StatusBar must use an updateable AppKit label");
-            require(std::abs(split.subviews[0].frame.size.width - 300) < 18,
-                    "Hydrogen failed to update NSSplitView divider width");
+            CGFloat actualSplitWidth = split.subviews[0].frame.size.width;
+            if (std::abs(actualSplitWidth - 300) >= 18) {
+                throw std::runtime_error(QString("Hydrogen failed to update NSSplitView divider width: actual=%1, state=%2, container=%3")
+                    .arg(double(actualSplitWidth))
+                    .arg(bridge.state()["ideSplit.value"].toInt())
+                    .arg(double(split.bounds.size.width)).toStdString());
+            }
             NSView* radio = find(gallery, @"channel"); require(radio.subviews.count == 3, "radio choices missing");
             [(NSButton*)radio.subviews[1] performClick:nil]; finish();
             require(bridge.state()["channel.value"].toInt() == 1 && bridge.state()["channelText.text"].toString() == "Preview channel selected.", "radio event failed");
