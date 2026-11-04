@@ -42,6 +42,10 @@ jobs:
           ./build/bootstrap/hy build src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj -o build/self_hosting/linux/hydrogen-stage1
           test ! -e build/bootstrap/hyui-native
           test ! -e build/bootstrap/hyui-launcher
+      - name: Verify compiled Hydrogen can write to immutable nested path literals
+        run: |
+          ./build/self_hosting/linux/hydrogen-stage1 compile tests/phase6/native_literal_file_paths.hy -o build/native-literal-file-paths
+          build/native-literal-file-paths
       - name: Validate UI backend compilation with no native host
         run: bash tests/ui/test-ui-backend-no-host.sh --compiler "$GITHUB_WORKSPACE/build/self_hosting/linux/hydrogen-stage1"
       - name: Build and execute GTK4 window written in Hydrogen only

@@ -1200,16 +1200,27 @@ rt_write_bytes:
  xor eax,eax
  ret
 rt_create_parents:
+ # An immutable Hydrogen string may live in a read-only ELF segment.
+ # Copy the pathname to writable stack memory before temporarily inserting
+ # NUL separators for mkdirat. Never change the caller's string in-place.
  test rdi,rdi
  jz rt_null_error
  push rbx
  push r12
  push r13
- mov rbx,rdi
  mov r12,[rdi]
  test r12,r12
  jz rt_io_error
- add rbx,8
+ cmp r12,4095
+ ja rt_io_error
+ sub rsp,4096
+ mov rbx,rsp
+ lea rsi,[rdi+8]
+ mov rdi,rbx
+ mov rcx,r12
+ cld
+ rep movsb
+ mov byte ptr [rbx+r12],0
  xor r13d,r13d
 .mkdir_parts:
  cmp r13,r12
@@ -1233,6 +1244,7 @@ rt_create_parents:
  inc r13
  jmp .mkdir_parts
 .mkdir_done:
+ add rsp,4096
  pop r13
  pop r12
  pop rbx
