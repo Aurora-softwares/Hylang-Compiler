@@ -63,6 +63,10 @@ namespace HydrogenStudio {
                 Application.SetText("validationHint", Application.Value(args, "featureToggle") == "true" ?
                     "Optional features enabled." : "Optional features disabled.");
             }
+            if (handler == "ToggleFeature") {
+                Application.SetText("validationHint", Application.Value(args, "featureToggle") == "true" ?
+                    "Optional features enabled." : "Optional features disabled.");
+            }
             if (handler == "Preview") {
                 Application.SetText("summary", Summary(args));
             }
