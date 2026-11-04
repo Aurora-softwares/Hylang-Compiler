@@ -136,6 +136,18 @@ int main(int argc, char** argv) {
             require(featureToggle.state == NSControlStateValueOff &&
                     [validation.stringValue isEqualToString:@"Reset by Hydrogen"],
                     "AppKit toggle or validation state did not update");
+            require(bridge.apply("HYUI\tSET\tideSplit\tvisible\ttrue\nHYUI\tSET\tideStatus\tvisible\ttrue\nHYUI\tSET\tideSplit\tvalue\t300\nHYUI\tSET\tideStatus\ttext\tStatus updated\n"),
+                    "cannot update AppKit split pane and status");
+            view->pump();
+            NSSplitView* split = (NSSplitView*)find(gallery, @"ideSplit");
+            NSTextField* status = (NSTextField*)find(gallery, @"ideStatus");
+            require([split isKindOfClass:NSSplitView.class] && split.isVertical && split.subviews.count == 2,
+                    "SplitView must use a two-pane native NSSplitView");
+            require([status isKindOfClass:NSTextField.class] &&
+                    [status.stringValue isEqualToString:@"Status updated"],
+                    "StatusBar must use an updateable AppKit label");
+            require(std::abs(split.subviews[0].frame.size.width - 300) < 18,
+                    "Hydrogen failed to update NSSplitView divider width");
             NSView* radio = find(gallery, @"channel"); require(radio.subviews.count == 3, "radio choices missing");
             [(NSButton*)radio.subviews[1] performClick:nil]; finish();
             require(bridge.state()["channel.value"].toInt() == 1 && bridge.state()["channelText.text"].toString() == "Preview channel selected.", "radio event failed");
