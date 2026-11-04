@@ -1143,7 +1143,7 @@ struct App {
             self->snapshot();
             if(self->verifyNativeControls) {
                 bool native=true;
-                int tables=0,rows=0,grids=0,editors=0,passwords=0;
+                int tables=0,rows=0,grids=0,editors=0,passwords=0,toggles=0,messages=0;
                 for(auto& [name,c]:self->controls) {
                     if(!c.node)continue;
                     const auto& tag=c.node->tag;
@@ -1167,6 +1167,12 @@ struct App {
                     if(tag=="PasswordInput") {
                         ++passwords;native=native&&GTK_IS_PASSWORD_ENTRY(w);
                     }
+                    if(tag=="ToggleButton") {
+                        ++toggles;native=native&&GTK_IS_TOGGLE_BUTTON(w);
+                    }
+                    if(tag=="ValidationMessage") {
+                        ++messages;native=native&&GTK_IS_LABEL(w);
+                    }
                     if(tag=="Toolbar")native=native&&GTK_IS_BOX(w)&&
                         GTK_IS_HEADER_BAR(gtk_window_get_titlebar(GTK_WINDOW(self->window)));
                     if(tag=="ProgressBar"&&GTK_IS_PROGRESS_BAR(w)) {
@@ -1181,7 +1187,7 @@ struct App {
                         }
                     }
                 }
-                native=native&&tables>0&&rows>0&&grids>0&&editors>0&&passwords>0;
+                native=native&&tables>0&&rows>0&&grids>0&&editors>0&&passwords>0&&toggles>0&&messages>0;
                 self->state["__hyui.native_controls_checked"]=native?"true":"false";
             }
             // The scripted UI regression test inspects actual GTK widget
