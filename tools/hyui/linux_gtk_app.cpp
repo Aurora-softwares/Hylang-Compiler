@@ -167,18 +167,26 @@ struct App {
     // Explicit GtkOverlay parents for controls targeted by HYUI popovers.
     // GtkListBox and other controls do not support arbitrary popover children.
     std::map<std::string,GtkWidget*> popoverHosts;
+    std::map<std::string,GtkWidget*> popoverTextLabels;
+    std::map<std::string,GCancellable*> dialogs;
+    GtkShortcutController* shortcutController=nullptr;
     std::map<std::string,std::string> state;
     std::vector<std::unique_ptr<Hook>> hooks;
     std::string statePath,eventRequest;
     bool applying=false;
     bool closing=false;
     bool selfTestClose=false;
+    bool verifyNativeControls=false;
     int generatedId=0;
     App():resources(embeddedResources()) {}
     ~App() {
         // Weak pointer slots reside in this map; unregister any that survive
         // the GTK window so no later GObject finalizer writes into freed memory.
         for(auto& entry:controls)replaceControlWidget(entry.second,nullptr);
+        for(auto& [name,cancel]:dialogs) {
+            g_cancellable_cancel(cancel);
+            g_object_unref(cancel);
+        }
         if (backendFd >= 0) close(backendFd);
     }
     static void replaceControlWidget(Control& control,GtkWidget* next) {
@@ -225,7 +233,7 @@ struct App {
         replaceControlWidget(control,widget);
         control.node=n;
         control.kind=kind;
-        for(auto key:{"text","value","checked","enabled","visible","running","open","path"}) {
+        for(auto key:{"text","value","checked","enabled","visible","running","open","path","indeterminate"}) {
             if(n->attrs.count(key)) state[name+"."+key]=attr(n,key);
         }
         if(!n->attrs.count("visible"))state[name+".visible"]="true";
@@ -258,6 +266,54 @@ struct App {
         if(!h->app->applying)h->app->dispatch(h->handler,h->app->id(h->node));
     }
     static void changed(GObject*,GParamSpec*,gpointer data) { clicked(nullptr,data); }
+    static void menuToggled(GtkCheckButton* button,gpointer data) {
+        auto* h=static_cast<Hook*>(data);
+        if(h->app->applying||h->app->closing)return;
+        const auto name=h->app->id(h->node);
+        h->app->state[name+".checked"]=gtk_check_button_get_active(button)?"true":"false";
+        h->app->dispatch(h->handler,name);
+        GtkWidget* parent=gtk_widget_get_parent(GTK_WIDGET(button));
+        while(parent && !GTK_IS_POPOVER(parent))parent=gtk_widget_get_parent(parent);
+        if(GTK_IS_POPOVER(parent))gtk_popover_popdown(GTK_POPOVER(parent));
+    }
+    static gboolean shortcutActivated(GtkWidget*,GVariant*,gpointer data) {
+        auto* h=static_cast<Hook*>(data);
+        if(h->app->closing)return FALSE;
+        const auto name=h->app->id(h->node);
+        auto it=h->app->controls.find(name);
+        if(it!=h->app->controls.end() && GTK_IS_CHECK_BUTTON(it->second.widget))
+            gtk_check_button_set_active(GTK_CHECK_BUTTON(it->second.widget),
+                !gtk_check_button_get_active(GTK_CHECK_BUTTON(it->second.widget)));
+        else h->app->dispatch(h->handler,name);
+        return TRUE;
+    }
+    void attachMenuShortcut(Node* n) {
+        const auto spec=attr(n,"shortcut");
+        if(spec.empty())return;
+        std::string accelerator;
+        for(auto part:parts(spec,'+')) {
+            if(part=="Primary"||part=="Ctrl"||part=="Control")accelerator+="<Control>";
+            else if(part=="Shift")accelerator+="<Shift>";
+            else if(part=="Alt")accelerator+="<Alt>";
+            else if(part=="Super")accelerator+="<Super>";
+            else {
+                if(part.size()==1)part[0]=g_ascii_tolower(part[0]);
+                accelerator+=part;
+            }
+        }
+        guint key=0;GdkModifierType mods=GdkModifierType(0);
+        if(!gtk_accelerator_parse(accelerator.c_str(),&key,&mods)||key==0)
+            throw std::runtime_error("invalid HYUI menu shortcut: "+spec);
+        if(!shortcutController) {
+            shortcutController=GTK_SHORTCUT_CONTROLLER(gtk_shortcut_controller_new());
+            gtk_shortcut_controller_set_scope(shortcutController,GTK_SHORTCUT_SCOPE_GLOBAL);
+            gtk_widget_add_controller(window,GTK_EVENT_CONTROLLER(shortcutController));
+        }
+        if(auto* h=hook(n,"onClick"))
+            gtk_shortcut_controller_add_shortcut(shortcutController,gtk_shortcut_new(
+                gtk_keyval_trigger_new(key,mods),
+                gtk_callback_action_new(shortcutActivated,h,nullptr)));
+    }
     static void changedSimple(GtkWidget*,gpointer data) { clicked(nullptr,data); }
     static void listSelected(GtkListBox*,GtkListBoxRow*,gpointer data) { clicked(nullptr,data); }
     static void switchChanged(GObject*,GParamSpec*,gpointer data) { clicked(nullptr,data); }
@@ -268,76 +324,87 @@ struct App {
         h->app->state[key+".value"]=std::to_string(h->index);
         h->app->dispatch(h->handler,key);
     }
-    static void dialogChoice(GtkButton*,gpointer data) {
+    static void alertChosen(GObject* source,GAsyncResult* result,gpointer data) {
         auto* h=static_cast<Hook*>(data);
-        const auto name=h->app->id(h->node);
-        h->app->state[name+".value"]=std::to_string(h->index);
-        h->app->state[name+".open"]="false";
-        GtkWidget* dialog=h->app->controls[name].widget;
-        if(dialog) {
-            h->app->replaceControlWidget(h->app->controls[name],nullptr);
-            gtk_window_destroy(GTK_WINDOW(dialog));
+        App* self=h->app;
+        const auto name=self->id(h->node);
+        GError* error=nullptr;
+        int answer=gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source),result,&error);
+        const int count=int(parts(attr(h->node,"buttons","OK"),'|').size());
+        if(answer<0||answer>=count)answer=std::max(0,count-1);
+        auto it=self->dialogs.find(name);
+        if(it!=self->dialogs.end()) {
+            g_object_unref(it->second);
+            self->dialogs.erase(it);
         }
-        auto closeHandler=attr(h->node,"onClose");
-        if(!closeHandler.empty())h->app->dispatch(closeHandler,name);
+        if(!self->closing && truth(self->state[name+".open"])) {
+            self->state[name+".value"]=std::to_string(answer);
+            self->state[name+".open"]="false";
+            self->dispatch(attr(h->node,"onClose"),name);
+        }
+        if(error)g_error_free(error);
+        g_object_unref(source);
     }
     void showDialog(Node* n) {
-        auto name=id(n);
-        if(controls[name].widget)return;
-        GtkWidget* dialog=gtk_window_new();
-        replaceControlWidget(controls[name],dialog);
-        gtk_window_set_title(GTK_WINDOW(dialog),attr(n,"title","Hydrogen").c_str());
-        gtk_window_set_transient_for(GTK_WINDOW(dialog),GTK_WINDOW(window));
-        gtk_window_set_modal(GTK_WINDOW(dialog),TRUE);
-        gtk_window_set_default_size(GTK_WINDOW(dialog),360,130);
-        GtkWidget* layout=gtk_box_new(GTK_ORIENTATION_VERTICAL,16);
-        gtk_widget_set_margin_start(layout,20);gtk_widget_set_margin_end(layout,20);
-        gtk_widget_set_margin_top(layout,20);gtk_widget_set_margin_bottom(layout,20);
-        auto* label=gtk_label_new(attr(n,"text").c_str());
-        gtk_label_set_wrap(GTK_LABEL(label),TRUE);
-        gtk_box_append(GTK_BOX(layout),label);
-        auto* buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,10);
-        auto options=parts(attr(n,"buttons","OK"),'|');
-        for(int i=0;i<int(options.size());++i) {
-            GtkWidget* button=gtk_button_new_with_label(options[i].c_str());
-            auto* h=hook(n,"onClose");
-            if(!h) {auto fallback=std::make_unique<Hook>();fallback->app=this;fallback->node=n;h=fallback.get();hooks.push_back(std::move(fallback));}
-            h->index=i;
-            g_signal_connect(button,"clicked",G_CALLBACK(dialogChoice),h);
-            gtk_box_append(GTK_BOX(buttons),button);
+        const std::string name=id(n);
+        if(dialogs.count(name))return;
+        auto* alert=gtk_alert_dialog_new("%s",attr(n,"title","Hydrogen").c_str());
+        gtk_alert_dialog_set_detail(alert,attr(n,"text").c_str());
+        auto labels=parts(attr(n,"buttons","OK"),'|');
+        std::vector<const char*> choices;
+        for(const auto& label:labels)choices.push_back(label.c_str());
+        choices.push_back(nullptr);
+        gtk_alert_dialog_set_buttons(alert,choices.data());
+        gtk_alert_dialog_set_default_button(alert,0);
+        gtk_alert_dialog_set_cancel_button(alert,std::max(0,int(labels.size())-1));
+        auto* h=hook(n,"onClose");
+        if(!h) {
+            auto fallback=std::make_unique<Hook>();
+            fallback->app=this;fallback->node=n;h=fallback.get();
+            hooks.push_back(std::move(fallback));
         }
-        gtk_box_append(GTK_BOX(layout),buttons);
-        gtk_window_set_child(GTK_WINDOW(dialog),layout);
-        gtk_window_present(GTK_WINDOW(dialog));
+        auto* cancel=g_cancellable_new();
+        dialogs[name]=cancel;
+        gtk_alert_dialog_choose(alert,GTK_WINDOW(window),cancel,alertChosen,h);
     }
-    static void pickerResponse(GtkNativeDialog* native,gint response,gpointer data) {
+    static void fileDialogReady(GObject* source,GAsyncResult* result,gpointer data) {
         auto* h=static_cast<Hook*>(data);
-        const auto name=h->app->id(h->node);
-        if(response==GTK_RESPONSE_ACCEPT) {
-            GFile* file=gtk_file_chooser_get_file(GTK_FILE_CHOOSER(native));
+        const auto mode=attr(h->node,"mode","open");
+        GtkFileDialog* dialog=GTK_FILE_DIALOG(source);
+        GError* error=nullptr;
+        GFile* file=mode=="save"?gtk_file_dialog_save_finish(dialog,result,&error):
+            mode=="folder"?gtk_file_dialog_select_folder_finish(dialog,result,&error):
+            gtk_file_dialog_open_finish(dialog,result,&error);
+        if(!h->app->closing) {
+            bool accepted=false;
             if(file) {
                 gchar* path=g_file_get_path(file);
-                if(path) { h->app->state[name+".path"]=path;g_free(path); }
-                g_object_unref(file);
+                if(path) {
+                    h->app->state[h->app->id(h->node)+".path"]=path;
+                    accepted=true;
+                    g_free(path);
+                }
             }
-            h->app->dispatch(h->handler,name);
-        } else {
-            h->app->dispatch(attr(h->node,"onCancel"),name);
+            if(accepted)h->app->dispatch(h->handler,h->app->id(h->node));
+            else h->app->dispatch(attr(h->node,"onCancel"),h->app->id(h->node));
         }
-        g_object_unref(native);
+        if(file)g_object_unref(file);
+        if(error)g_error_free(error);
+        g_object_unref(dialog);
     }
     static void pickerClicked(GtkWidget*,gpointer data) {
         auto* h=static_cast<Hook*>(data);
+        if(h->app->closing)return;
+        GtkFileDialog* dialog=gtk_file_dialog_new();
+        const auto title=attr(h->node,"text","Select file");
+        gtk_file_dialog_set_title(dialog,title.c_str());
         const auto mode=attr(h->node,"mode","open");
-        GtkFileChooserAction action=GTK_FILE_CHOOSER_ACTION_OPEN;
-        if(mode=="save")action=GTK_FILE_CHOOSER_ACTION_SAVE;
-        else if(mode=="folder")action=GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER;
-        GtkFileChooserNative* chooser=gtk_file_chooser_native_new(
-            attr(h->node,"text","Select file").c_str(),
-            GTK_WINDOW(h->app->window),action,
-            mode=="save"?"Save":"Open","Cancel");
-        g_signal_connect(chooser,"response",G_CALLBACK(pickerResponse),h);
-        gtk_native_dialog_show(GTK_NATIVE_DIALOG(chooser));
+        if(mode=="save")gtk_file_dialog_save(dialog,GTK_WINDOW(h->app->window),
+            nullptr,fileDialogReady,h);
+        else if(mode=="folder")gtk_file_dialog_select_folder(dialog,GTK_WINDOW(h->app->window),
+            nullptr,fileDialogReady,h);
+        else gtk_file_dialog_open(dialog,GTK_WINDOW(h->app->window),
+            nullptr,fileDialogReady,h);
     }
     static void clipboardReady(GObject* object,GAsyncResult* result,gpointer data) {
         auto* h=static_cast<Hook*>(data);
@@ -353,6 +420,52 @@ struct App {
             g_free(text);
         } else if(error) std::cerr<<"HYUI clipboard: "<<error->message<<"\n";
         if(error)g_error_free(error);
+    }
+    static void tableCellSetup(GtkSignalListItemFactory*,GtkListItem* item,gpointer) {
+        GtkWidget* label=gtk_label_new("");
+        gtk_label_set_xalign(GTK_LABEL(label),0.0f);
+        gtk_label_set_ellipsize(GTK_LABEL(label),PANGO_ELLIPSIZE_END);
+        gtk_list_item_set_child(item,label);
+    }
+    static void tableCellBind(GtkSignalListItemFactory*,GtkListItem* item,gpointer data) {
+        auto* object=gtk_list_item_get_item(item);
+        auto* child=gtk_list_item_get_child(item);
+        if(!GTK_IS_STRING_OBJECT(object)||!GTK_IS_LABEL(child))return;
+        auto cells=parts(gtk_string_object_get_string(GTK_STRING_OBJECT(object)),'|');
+        guint col=GPOINTER_TO_UINT(data);
+        gtk_label_set_text(GTK_LABEL(child),col<cells.size()?cells[col].c_str():"");
+    }
+    static void setProgress(GtkProgressBar* bar,Node* node,const std::string& value) {
+        const int min=number(attr(node,"minimum")),max=number(attr(node,"maximum"),100);
+        const double fraction=max>min?
+            std::clamp((double(number(value)-min))/double(max-min),0.0,1.0):0.0;
+        gtk_progress_bar_set_fraction(bar,fraction);
+    }
+    static gboolean reflowRows(gpointer data) {
+        auto* self=static_cast<App*>(data);
+        if(self->closing)return G_SOURCE_REMOVE;
+        for(auto& [name,c]:self->controls) {
+            if(!c.node || c.node->tag!="RowPanel" || !GTK_IS_FLOW_BOX(c.widget))continue;
+            const int breakpoint=number(attr(c.node,"breakpoint"),0);
+            if(breakpoint<=0)continue;
+            const int width=gtk_widget_get_width(c.widget);
+            if(width<=0)continue;
+            const guint wanted=width<breakpoint?1u:
+                guint(std::max<size_t>(1,c.node->children.size()));
+            if(gtk_flow_box_get_max_children_per_line(GTK_FLOW_BOX(c.widget))!=wanted)
+                gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(c.widget),wanted);
+        }
+        return G_SOURCE_CONTINUE;
+    }
+    static gboolean pulseProgress(gpointer data) {
+        auto* self=static_cast<App*>(data);
+        if(self->closing)return G_SOURCE_REMOVE;
+        for(auto& [name,c]:self->controls) {
+            if(c.node && c.node->tag=="ProgressBar" && GTK_IS_PROGRESS_BAR(c.widget)
+               && truth(self->state[name+".indeterminate"]))
+                gtk_progress_bar_pulse(GTK_PROGRESS_BAR(c.widget));
+        }
+        return G_SOURCE_CONTINUE;
     }
     void bind(GtkWidget* widget,const char* signal,Node* n,const char* handler) {
         if(auto* h=hook(n,handler)) {
@@ -389,13 +502,22 @@ struct App {
         }
         if(tag=="Slider")return std::to_string(int(gtk_range_get_value(GTK_RANGE(w))));
         if(tag=="NumberInput")return std::to_string(gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(w)));
-        if(tag=="CheckBox")return gtk_check_button_get_active(GTK_CHECK_BUTTON(w))?"true":"false";
+        if(tag=="CheckBox"||(tag=="MenuItem"&&c.node->attrs.count("checked")))
+            return GTK_IS_CHECK_BUTTON(w)?
+                (gtk_check_button_get_active(GTK_CHECK_BUTTON(w))?"true":"false"):cached("checked");
         if(tag=="Switch")return GTK_IS_SWITCH(w)?
             (gtk_switch_get_active(GTK_SWITCH(w))?"true":"false"):cached("checked");
         if(tag=="Select")return std::to_string(gtk_drop_down_get_selected(GTK_DROP_DOWN(w)));
-        if(tag=="ListBox"||tag=="Table") {
+        if(tag=="ListBox") {
             auto* row=gtk_list_box_get_selected_row(GTK_LIST_BOX(w));
             return std::to_string(row?gtk_list_box_row_get_index(row):0);
+        }
+        if(tag=="Table") {
+            if(!GTK_IS_COLUMN_VIEW(w))return cached("value");
+            auto* model=gtk_column_view_get_model(GTK_COLUMN_VIEW(w));
+            if(!GTK_IS_SINGLE_SELECTION(model))return cached("value");
+            guint selected=gtk_single_selection_get_selected(GTK_SINGLE_SELECTION(model));
+            return selected==GTK_INVALID_LIST_POSITION?cached("value"):std::to_string(selected);
         }
         if(tag=="Tabs") {
             if(!GTK_IS_STACK(w))return cached("value");
@@ -421,7 +543,8 @@ struct App {
             const auto& tag=c.node->tag;
             if(tag=="Input"||tag=="SearchInput"||tag=="TextArea") prop="text";
             else if(tag=="PasswordInput")continue;
-            else if(tag=="CheckBox"||tag=="Switch")prop="checked";
+            else if(tag=="CheckBox"||tag=="Switch"||
+                (tag=="MenuItem"&&c.node->attrs.count("checked")))prop="checked";
             else if(tag=="Select"||tag=="ListBox"||tag=="Table"||tag=="Slider"||
                     tag=="NumberInput"||tag=="Tabs"||tag=="RadioGroup")prop="value";
             if(!prop.empty())state[name+"."+prop]=value(c);
@@ -515,7 +638,13 @@ struct App {
             if(it==controls.end())continue;
             Node* n=it->second.node;GtkWidget* w=it->second.widget;
             state[name+"."+prop]=v;
-            if(prop=="open" && n->tag=="Dialog" && truth(v))showDialog(n);
+            if(prop=="open" && n->tag=="Dialog") {
+                if(truth(v))showDialog(n);
+                else {
+                    auto dialog=dialogs.find(name);
+                    if(dialog!=dialogs.end())g_cancellable_cancel(dialog->second);
+                }
+            }
             if(prop=="open" && n->tag=="Popover" && w) {
                 if(truth(v))gtk_popover_popup(GTK_POPOVER(w));
                 else gtk_popover_popdown(GTK_POPOVER(w));
@@ -529,6 +658,13 @@ struct App {
             }
             else if(prop=="enabled" && w)gtk_widget_set_sensitive(w,truth(v));
             else if(prop=="text" && w) {
+                if(n->tag=="Popover") {
+                    auto label=popoverTextLabels.find(name);
+                    if(label!=popoverTextLabels.end()) {
+                        gtk_label_set_text(GTK_LABEL(label->second),v.c_str());
+                        gtk_widget_set_visible(label->second,!v.empty());
+                    }
+                }
                 if(n->tag=="Label")gtk_label_set_text(GTK_LABEL(w),v.c_str());
                 else if(n->tag=="Input"||n->tag=="SearchInput")gtk_editable_set_text(GTK_EDITABLE(w),v.c_str());
                 else if(n->tag=="TextArea" && GTK_IS_TEXT_VIEW(w)) {
@@ -536,11 +672,12 @@ struct App {
                     gtk_text_buffer_set_text(buffer,v.c_str(),-1);
                 }
             } else if(prop=="checked" && w) {
-                if(n->tag=="CheckBox")gtk_check_button_set_active(GTK_CHECK_BUTTON(w),truth(v));
+                if(n->tag=="CheckBox"||(n->tag=="MenuItem"&&GTK_IS_CHECK_BUTTON(w)))
+                    gtk_check_button_set_active(GTK_CHECK_BUTTON(w),truth(v));
                 if(n->tag=="Switch")gtk_switch_set_active(GTK_SWITCH(w),truth(v));
             } else if(prop=="value" && w) {
                 if(n->tag=="ProgressBar")
-                    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w),std::clamp(number(v)/100.0,0.0,1.0));
+                    setProgress(GTK_PROGRESS_BAR(w),n,v);
                 if(n->tag=="Slider")gtk_range_set_value(GTK_RANGE(w),number(v));
                 if(n->tag=="NumberInput")gtk_spin_button_set_value(GTK_SPIN_BUTTON(w),number(v));
                 if(n->tag=="Select")gtk_drop_down_set_selected(GTK_DROP_DOWN(w),number(v));
@@ -552,12 +689,20 @@ struct App {
                         ++index;
                     }
                 }
-                if(n->tag=="ListBox"||n->tag=="Table") {
+                if(n->tag=="ListBox") {
                     gtk_list_box_select_row(GTK_LIST_BOX(w),
                         gtk_list_box_get_row_at_index(GTK_LIST_BOX(w),number(v)));
                 }
+                if(n->tag=="Table" && GTK_IS_COLUMN_VIEW(w)) {
+                    auto* selection=gtk_column_view_get_model(GTK_COLUMN_VIEW(w));
+                    if(GTK_IS_SINGLE_SELECTION(selection))
+                        gtk_single_selection_set_selected(GTK_SINGLE_SELECTION(selection),number(v));
+                }
                 if(n->tag=="Tabs" && number(v)>=0 && number(v)<int(n->children.size()))
                     gtk_stack_set_visible_child_name(GTK_STACK(w),id(n->children[number(v)].get()).c_str());
+            } else if(prop=="indeterminate" && w && n->tag=="ProgressBar") {
+                if(truth(v))gtk_progress_bar_pulse(GTK_PROGRESS_BAR(w));
+                else setProgress(GTK_PROGRESS_BAR(w),n,state[name+".value"]);
             } else if(prop=="running" && w && n->tag=="Spinner") {
                 if(truth(v))gtk_spinner_start(GTK_SPINNER(w));
                 else gtk_spinner_stop(GTK_SPINNER(w));
@@ -580,7 +725,8 @@ struct App {
             else if(tag=="FilePicker")prop="path";
             else if(tag=="Dialog")prop="value";
             else if(tag=="Input"||tag=="SearchInput"||tag=="TextArea"||tag=="Label")prop="text";
-            else if(tag=="CheckBox"||tag=="Switch")prop="checked";
+            else if(tag=="CheckBox"||tag=="Switch"||
+                (tag=="MenuItem"&&c.node->attrs.count("checked")))prop="checked";
             else if(tag=="Select"||tag=="ListBox"||tag=="Table"||tag=="Slider"||
                 tag=="NumberInput"||tag=="Tabs"||tag=="RadioGroup"||tag=="ProgressBar")prop="value";
             if(prop.empty())continue;
@@ -620,6 +766,11 @@ struct App {
         if(GTK_IS_STACK(parent)) {
             gtk_stack_add_titled(GTK_STACK(parent),child,attr(childNode,"id").c_str(),
                                  attr(childNode,"title","Page").c_str());
+        } else if(GTK_IS_FLOW_BOX(parent)) {
+            if(parentNode && parentNode->tag=="GridPanel")
+                gtk_widget_set_size_request(child,
+                    std::max(1,number(attr(parentNode,"minItemWidth"),240)),-1);
+            gtk_flow_box_insert(GTK_FLOW_BOX(parent),child,-1);
         } else if(GTK_IS_GRID(parent)) {
             int cols=std::max(1,number(attr(parentNode,"columns"),2));
             int index=0;
@@ -649,12 +800,34 @@ struct App {
     GtkWidget* build(Node* n) {
         const auto& tag=n->tag;
         GtkWidget *w=nullptr,*container=nullptr;
+        if(tag=="Toolbar") {
+            // The titlebar stays present even when the commands are hidden.
+            // Otherwise a hidden Toolbar would also hide the close/maximise
+            // buttons on client-side decorated GTK4 windows.
+            auto* header=gtk_header_bar_new();
+            auto* actions=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,6);
+            for(auto& child:n->children) {
+                GtkWidget* button=build(child.get());
+                if(button)gtk_box_append(GTK_BOX(actions),button);
+            }
+            gtk_header_bar_pack_start(GTK_HEADER_BAR(header),actions);
+            registerControl(n,actions,"Toolbar");
+            gtk_window_set_titlebar(GTK_WINDOW(window),header);
+            return nullptr;
+        }
         if(tag=="ColumnPanel"||tag=="RowPanel"||tag=="Toolbar"||tag=="Tab"||tag=="GridPanel") {
-            if(tag=="GridPanel") {
-                w=gtk_grid_new();gtk_grid_set_row_spacing(GTK_GRID(w),number(attr(n,"gap"),8));
-                gtk_grid_set_column_spacing(GTK_GRID(w),number(attr(n,"gap"),8));
+            if(tag=="RowPanel"||tag=="GridPanel") {
+                w=gtk_flow_box_new();
+                gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(w),GTK_SELECTION_NONE);
+                gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(w),1);
+                gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(w),
+                    tag=="GridPanel"?guint(std::max(1,number(attr(n,"columns"),3))):
+                    guint(std::max<size_t>(1,n->children.size())));
+                gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(w),number(attr(n,"gap"),8));
+                gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(w),number(attr(n,"gap"),8));
+                gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(w),TRUE);
             } else {
-                bool horizontal=tag=="RowPanel"||tag=="Toolbar";
+                bool horizontal=tag=="Toolbar";
                 w=gtk_box_new(horizontal?GTK_ORIENTATION_HORIZONTAL:GTK_ORIENTATION_VERTICAL,number(attr(n,"gap"),8));
             }
             container=w;
@@ -696,17 +869,25 @@ struct App {
             if(role=="heading")gtk_widget_add_css_class(w,"heading");
             if(attr(n,"tone")=="muted")gtk_widget_add_css_class(w,"dim-label");
         } else if(tag=="Button"||tag=="ToolButton"||tag=="MenuItem") {
-            w=gtk_button_new_with_label(attr(n,"text").c_str());
+            if(tag=="MenuItem"&&n->attrs.count("checked")) {
+                w=gtk_check_button_new_with_label(attr(n,"text").c_str());
+                gtk_check_button_set_active(GTK_CHECK_BUTTON(w),truth(attr(n,"checked")));
+                if(auto* h=hook(n,"onClick"))
+                    g_signal_connect(w,"toggled",G_CALLBACK(menuToggled),h);
+            } else {
+                w=gtk_button_new_with_label(attr(n,"text").c_str());
+                bind(w,"clicked",n,"onClick");
+            }
+            if(tag=="ToolButton")gtk_widget_add_css_class(w,"flat");
             if(truth(attr(n,"primary")))gtk_widget_add_css_class(w,"suggested-action");
-            bind(w,"clicked",n,"onClick");
         } else if(tag=="FilePicker") {
             w=gtk_button_new_with_label(attr(n,"text","Choose file").c_str());
             if(auto* h=hook(n,"onPick"))
                 g_signal_connect(w,"clicked",G_CALLBACK(pickerClicked),h);
         } else if(tag=="Input"||tag=="SearchInput"||tag=="PasswordInput") {
-            w=tag=="SearchInput"?gtk_search_entry_new():gtk_entry_new();
-            gtk_editable_set_text(GTK_EDITABLE(w),attr(n,"text").c_str());
-            if(tag=="PasswordInput")gtk_entry_set_visibility(GTK_ENTRY(w),FALSE);
+            w=tag=="SearchInput"?gtk_search_entry_new():
+                (tag=="PasswordInput"?gtk_password_entry_new():gtk_entry_new());
+            if(tag!="PasswordInput")gtk_editable_set_text(GTK_EDITABLE(w),attr(n,"text").c_str());
             const std::string placeholder=attr(n,"placeholder");
             if(GTK_IS_ENTRY(w))gtk_entry_set_placeholder_text(GTK_ENTRY(w),placeholder.c_str());
             else g_object_set(G_OBJECT(w),"placeholder-text",placeholder.c_str(),nullptr);
@@ -717,7 +898,15 @@ struct App {
             gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(w),GTK_WRAP_WORD_CHAR);
             auto* buffer=gtk_text_view_get_buffer(GTK_TEXT_VIEW(w));
             gtk_text_buffer_set_text(buffer,attr(n,"text").c_str(),-1);
-            gtk_widget_set_size_request(w,-1,number(attr(n,"height"),80));
+            if(auto* h=hook(n,"onChange"))
+                g_signal_connect(buffer,"changed",G_CALLBACK(changedSimple),h);
+            GtkWidget* scroller=gtk_scrolled_window_new();
+            gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroller),
+                std::max(50,number(attr(n,"height"),80)));
+            gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller),w);
+            registerControl(n,w,"TextArea");
+            gtk_widget_set_hexpand(scroller,TRUE);
+            return withPopoverHost(n,scroller);
         } else if(tag=="CheckBox") {
             w=gtk_check_button_new_with_label(attr(n,"text").c_str());
             gtk_check_button_set_active(GTK_CHECK_BUTTON(w),truth(attr(n,"checked")));
@@ -751,7 +940,7 @@ struct App {
                 g_signal_connect(w,"notify::selected",G_CALLBACK(changed),h);
         } else if(tag=="ProgressBar") {
             w=gtk_progress_bar_new();
-            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w),std::clamp(number(attr(n,"value"))/100.0,0.0,1.0));
+            setProgress(GTK_PROGRESS_BAR(w),n,attr(n,"value","0"));
         } else if(tag=="Spinner") {
             w=gtk_spinner_new();
             if(truth(attr(n,"running")))gtk_spinner_start(GTK_SPINNER(w));
@@ -771,17 +960,36 @@ struct App {
             w = gtk_picture_new_for_paintable(GDK_PAINTABLE(texture));
             g_object_unref(texture);
             gtk_widget_set_size_request(w,-1,number(attr(n,"height"),80));
-        } else if(tag=="ListBox"||tag=="Table") {
-            auto* view=gtk_list_box_new();
-            std::vector<std::string> entries=parts(attr(n,tag=="Table"?"rows":"items"),tag=="Table"?'\n':'|');
-            for(auto& entry:entries) {
+        } else if(tag=="ListBox") {
+            w=gtk_list_box_new();
+            for(const auto& entry:parts(attr(n,"items"),'|')) {
                 auto* row=gtk_label_new(entry.c_str());gtk_label_set_xalign(GTK_LABEL(row),0);
-                gtk_list_box_append(GTK_LIST_BOX(view),row);
+                gtk_list_box_append(GTK_LIST_BOX(w),row);
             }
-            gtk_list_box_select_row(GTK_LIST_BOX(view),
-                gtk_list_box_get_row_at_index(GTK_LIST_BOX(view),number(attr(n,"value"))));
-            bind(view,"row-selected",n,"onChange");
-            w=view;
+            gtk_list_box_select_row(GTK_LIST_BOX(w),
+                gtk_list_box_get_row_at_index(GTK_LIST_BOX(w),number(attr(n,"value"))));
+            bind(w,"row-selected",n,"onChange");
+            gtk_widget_set_size_request(w,-1,number(attr(n,"height"),120));
+        } else if(tag=="Table") {
+            // A real, accessible GTK4 multi-column view, not a list of
+            // unparsed pipe-separated row labels.
+            auto* rows=gtk_string_list_new(nullptr);
+            for(const auto& line:parts(attr(n,"rows"),'\n'))
+                gtk_string_list_append(rows,line.c_str());
+            auto* selection=gtk_single_selection_new(G_LIST_MODEL(rows));
+            gtk_single_selection_set_selected(selection,number(attr(n,"value")));
+            w=gtk_column_view_new(GTK_SELECTION_MODEL(selection));
+            for(guint i=0;i<parts(attr(n,"columns"),'|').size();++i) {
+                auto headings=parts(attr(n,"columns"),'|');
+                auto* factory=gtk_signal_list_item_factory_new();
+                g_signal_connect(factory,"setup",G_CALLBACK(tableCellSetup),nullptr);
+                g_signal_connect(factory,"bind",G_CALLBACK(tableCellBind),GUINT_TO_POINTER(i));
+                auto* column=gtk_column_view_column_new(headings[i].c_str(),factory);
+                gtk_column_view_column_set_expand(column,TRUE);
+                gtk_column_view_append_column(GTK_COLUMN_VIEW(w),column);
+            }
+            if(auto* h=hook(n,"onChange"))
+                g_signal_connect(selection,"notify::selected",G_CALLBACK(changed),h);
             gtk_widget_set_size_request(w,-1,number(attr(n,"height"),120));
         } else if(tag=="RadioGroup") {
             auto* box=gtk_box_new(GTK_ORIENTATION_VERTICAL,4);
@@ -809,8 +1017,10 @@ struct App {
                 // Menu buttons control when their popovers become visible.
                 gtk_widget_set_visible(pop,FALSE);
                 auto* items=gtk_box_new(GTK_ORIENTATION_VERTICAL,3);
-                for(auto& item:child->children)
+                for(auto& item:child->children) {
                     append(items,build(item.get()),child.get(),item.get());
+                    attachMenuShortcut(item.get());
+                }
                 gtk_popover_set_child(GTK_POPOVER(pop),items);
                 gtk_menu_button_set_popover(GTK_MENU_BUTTON(button),pop);
                 gtk_box_append(GTK_BOX(w),button);
@@ -859,11 +1069,18 @@ struct App {
                     append(contents,build(item.get()),n,item.get());
                 gtk_popover_set_child(GTK_POPOVER(pop),contents);
             } else {
-                GtkWidget* contents=gtk_label_new(attr(n,"text").c_str());
+                GtkWidget* contents=gtk_box_new(GTK_ORIENTATION_VERTICAL,8);
                 gtk_widget_set_margin_start(contents,14);
                 gtk_widget_set_margin_end(contents,14);
                 gtk_widget_set_margin_top(contents,12);
                 gtk_widget_set_margin_bottom(contents,12);
+                GtkWidget* label=gtk_label_new(attr(n,"text").c_str());
+                gtk_label_set_wrap(GTK_LABEL(label),TRUE);
+                gtk_widget_set_visible(label,!attr(n,"text").empty());
+                gtk_box_append(GTK_BOX(contents),label);
+                popoverTextLabels[id(n)]=label;
+                for(auto& item:n->children)
+                    append(contents,build(item.get()),n,item.get());
                 gtk_popover_set_child(GTK_POPOVER(pop),contents);
             }
             // Add with the container API: gtk_widget_set_parent(pop, GtkListBox)
@@ -915,6 +1132,49 @@ struct App {
         }
         if(!self->statePath.empty()) {
             self->snapshot();
+            if(self->verifyNativeControls) {
+                bool native=true;
+                int tables=0,rows=0,grids=0,editors=0,passwords=0;
+                for(auto& [name,c]:self->controls) {
+                    if(!c.node)continue;
+                    const auto& tag=c.node->tag;
+                    GtkWidget* w=c.widget;
+                    if(tag=="Table") {
+                        ++tables;
+                        native=native&&GTK_IS_COLUMN_VIEW(w);
+                        if(GTK_IS_COLUMN_VIEW(w)) {
+                            auto* columns=gtk_column_view_get_columns(GTK_COLUMN_VIEW(w));
+                            native=native&&g_list_model_get_n_items(columns)==
+                                parts(attr(c.node,"columns"),'|').size();
+                        }
+                    }
+                    if(tag=="RowPanel") {++rows;native=native&&GTK_IS_FLOW_BOX(w);}
+                    if(tag=="GridPanel") {++grids;native=native&&GTK_IS_FLOW_BOX(w);}
+                    if(tag=="TextArea") {
+                        ++editors;
+                        native=native&&GTK_IS_TEXT_VIEW(w) &&
+                            GTK_IS_SCROLLED_WINDOW(gtk_widget_get_parent(w));
+                    }
+                    if(tag=="PasswordInput") {
+                        ++passwords;native=native&&GTK_IS_PASSWORD_ENTRY(w);
+                    }
+                    if(tag=="Toolbar")native=native&&GTK_IS_BOX(w)&&
+                        GTK_IS_HEADER_BAR(gtk_window_get_titlebar(GTK_WINDOW(self->window)));
+                    if(tag=="ProgressBar"&&GTK_IS_PROGRESS_BAR(w)) {
+                        double original=gtk_progress_bar_get_fraction(GTK_PROGRESS_BAR(w));
+                        int min=number(attr(c.node,"minimum"));
+                        int max=number(attr(c.node,"maximum"),100);
+                        if(max>min) {
+                            setProgress(GTK_PROGRESS_BAR(w),c.node,std::to_string(min+(max-min)/2));
+                            double got=gtk_progress_bar_get_fraction(GTK_PROGRESS_BAR(w));
+                            native=native&&got>=0.49&&got<=0.51;
+                            gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w),original);
+                        }
+                    }
+                }
+                native=native&&tables>0&&rows>0&&grids>0&&editors>0&&passwords>0;
+                self->state["__hyui.native_controls_checked"]=native?"true":"false";
+            }
             // The scripted UI regression test inspects actual GTK widget
             // visibility. A mistakenly mapped GtkPopover steals focus and
             // makes the Studio window unusable despite working backend events.
@@ -970,6 +1230,13 @@ struct App {
             }
         }
         if(!attr(n,"onLoad").empty())dispatch(attr(n,"onLoad"),id(document.root.get()));
+        if(std::any_of(controls.begin(),controls.end(),[](const auto& entry) {
+            return entry.second.node && entry.second.node->tag=="ProgressBar";
+        }))g_timeout_add(120,pulseProgress,this);
+        if(std::any_of(controls.begin(),controls.end(),[](const auto& entry) {
+            return entry.second.node && entry.second.node->tag=="RowPanel" &&
+                number(attr(entry.second.node,"breakpoint"))>0;
+        }))g_timeout_add(120,reflowRows,this);
         if(!statePath.empty()||!eventRequest.empty())g_timeout_add(300,scripted,this);
         if(selfTestClose)g_timeout_add(300,closeForTest,this);
     }
@@ -987,6 +1254,7 @@ struct App {
             if(arg=="--state-output"&&i+1<argc)statePath=argv[++i];
             else if(arg=="--event"&&i+1<argc)eventRequest=argv[++i];
             else if(arg=="--self-test-close")selfTestClose=true;
+            else if(arg=="--verify-native-controls")verifyNativeControls=true;
             else if(arg=="--help") {
                 std::cout<<"Hydrogen native GTK4 application (--event handler:sender --state-output path)\n"
                          << SINGLE_FILE_MAGIC << "\n";

@@ -45,7 +45,7 @@ static const QSet<QString> booleans = {"visible", "enabled", "fill", "primary", 
 static const QSet<QString> numbers = {"width", "height", "padding", "gap", "breakpoint", "columns", "minItemWidth",
                                       "preferredWidth", "minimum", "maximum", "interval"};
 static bool container(const QString& tag) {
-    return tag == "Tabs" || tag == "Tab" || tag == "MenuBar" || tag == "Menu" || tag == "ContextMenu" || tag == "Toolbar" || tag == "Window" || tag == "Panel" || tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel" || tag == "ScrollView";
+    return tag == "Tabs" || tag == "Tab" || tag == "MenuBar" || tag == "Menu" || tag == "ContextMenu" || tag == "Popover" || tag == "Toolbar" || tag == "Window" || tag == "Panel" || tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel" || tag == "ScrollView";
 }
 
 QString Document::resourcePath(const QString& relative) const {

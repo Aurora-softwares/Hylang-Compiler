@@ -89,6 +89,16 @@ assert state["__hyui.visible_popovers"] == "0", state
 assert state["projectName.text"] == "Aurora Notes", state
 assert "Ready when you are" in state["status.text"], state
 PY
+# Validate the real GTK widget classes rather than simply checking that
+# their HYUI tags were accepted by the compiler. This catches regressions
+# such as rows masquerading as tables or non-scrolling text editors.
+"$output" --verify-native-controls --state-output "$work/native-controls.json"
+python3 - "$work/native-controls.json" <<'PY'
+import json,sys
+with open(sys.argv[1],encoding="utf-8") as stream:
+    state=json.load(stream)
+assert state["__hyui.native_controls_checked"] is True, state
+PY
 # Exercise the same window-manager close request as the title-bar button.
 # GTK's teardown emits change notifications; these must never dispatch an
 # event that reads disposed text views, switches, or an empty GtkStack.

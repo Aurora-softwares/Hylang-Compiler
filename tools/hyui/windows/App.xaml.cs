@@ -156,7 +156,13 @@ public sealed partial class NativeWindow : Window
             string id = Attr(node, "id"), targetId = Attr(node, "target");
             if (!controls.TryGetValue(targetId, out var target)) throw new InvalidDataException("Popover target is not a visual control");
             var label = new TextBlock { TextWrapping = TextWrapping.Wrap, MaxWidth = 300, Margin = new Thickness(12) };
-            var flyout = new Flyout { Content = label };
+            var content = new StackPanel { Spacing = 8, Padding = new Thickness(4) };
+            content.Children.Add(label);
+            foreach (var child in node.Elements()) {
+                var native = Build(child);
+                if (native != null) content.Children.Add(native);
+            }
+            var flyout = new Flyout { Content = content };
             flyout.Closed += (_, _) => {
                 if (values.GetValueOrDefault(id + ".open") != "true") return;
                 values[id + ".open"] = "false";
@@ -398,16 +404,38 @@ public sealed partial class NativeWindow : Window
             if (values.GetValueOrDefault(id + ".open") != "true") { if (dialogs.TryGetValue(id, out var active)) active.Hide(); continue; }
             if (dialogs.ContainsKey(id) || dialogs.Count != 0) continue;
             string[] buttons = Attr(pair.Value, "buttons", "OK").Split('|');
-            var dialog = new ContentDialog { Title = Attr(pair.Value, "title", "Hydrogen"), Content = values[id + ".text"], CloseButtonText = buttons[^1], XamlRoot = root.XamlRoot };
-            if (buttons.Length > 1) dialog.PrimaryButtonText = buttons[0];
-            if (buttons.Length > 2) dialog.SecondaryButtonText = buttons[1];
+            var dialog = new ContentDialog {
+                Title = Attr(pair.Value, "title", "Hydrogen"),
+                Content = values[id + ".text"],
+                CloseButtonText = buttons[^1],
+                XamlRoot = root.XamlRoot
+            };
+            int? customChoice = null;
+            if (buttons.Length <= 3) {
+                if (buttons.Length > 1) dialog.PrimaryButtonText = buttons[0];
+                if (buttons.Length > 2) dialog.SecondaryButtonText = buttons[1];
+            } else {
+                // ContentDialog has three built-in action slots. More choices
+                // use native WinUI Buttons inside its native dialog content.
+                var actions = new StackPanel { Spacing = 8 };
+                actions.Children.Add(new TextBlock {
+                    Text = values[id + ".text"], TextWrapping = TextWrapping.Wrap
+                });
+                for (int i = 0; i < buttons.Length - 1; i++) {
+                    int choice = i;
+                    var button = new Button { Content = buttons[i] };
+                    button.Click += (_, _) => { customChoice = choice; dialog.Hide(); };
+                    actions.Children.Add(button);
+                }
+                dialog.Content = actions;
+            }
             dialogs[id] = dialog;
             try {
                 var result = await dialog.ShowAsync(); dialogs.Remove(id);
                 if (disposing) continue;
                 if (values[id + ".open"] != "true") continue;
                 values[id + ".open"] = "false";
-                values[id + ".value"] = (result == ContentDialogResult.Primary ? 0 : result == ContentDialogResult.Secondary ? 1 : buttons.Length - 1).ToString();
+                values[id + ".value"] = (customChoice ?? (result == ContentDialogResult.Primary ? 0 : result == ContentDialogResult.Secondary ? 1 : buttons.Length - 1)).ToString();
                 Dispatch(Attr(pair.Value, "onClose"), id);
             } catch (Exception error) { dialogs.Remove(id); if (!disposing) { values[id + ".open"] = "false"; errors.Text = error.Message; } }
         }
