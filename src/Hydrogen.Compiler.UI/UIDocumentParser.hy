@@ -1,6 +1,7 @@
 namespace Hydrogen.Compiler.UI {
-    // A bounded lexical preflight. The native host retains authoritative XML
-    // schema validation until the full document grammar has been ported.
+    // Self-hosted HYUI v1 structure, widget, attribute and event preflight.
+    // Native renderers additionally validate cross-widget references, assets
+    // and control-specific ranges before constructing an OS window.
     public class UIDocumentParser {
         private string source;
         private string error;
@@ -230,6 +231,7 @@ namespace Hydrogen.Compiler.UI {
             string[] seen = new string[40];
             int seenCount = 0;
             string elementId = "";
+            bool explicitId = false;
             string version = "";
             string mode = "";
             string controlText = "";
@@ -279,7 +281,7 @@ namespace Hydrogen.Compiler.UI {
                 }
                 seen[seenCount] = key;
                 seenCount = seenCount + 1;
-                if (key == "id") { elementId = value; }
+                if (key == "id") { elementId = value; explicitId = true; }
                 if (key == "version") { version = value; }
                 if (key == "mode") { mode = value; }
                 if (key == "text") { controlText = value; }
@@ -317,7 +319,7 @@ namespace Hydrogen.Compiler.UI {
             if (tag == "Popover" && (elementId == "" || !hasTarget || controlText == "")) {
                 error = "Popover requires id, target and text"; return false;
             }
-            if (elementId == "") { elementId = "_hyui" + elements; }
+            if (!explicitId) { elementId = "_hyui" + elements; }
             if (!Identifier(elementId, false)) { error = "invalid UI element id"; return false; }
             int j = 0;
             while (j < idCount) {
