@@ -117,7 +117,6 @@ namespace Hydrogen.Compiler.UI {
             return true;
         }
 
-
         // Keep the self-hosted compiler's preflight aligned with the public
         // HYUI v1 schema, regardless of the target OS or native SDK.
         private static bool Token(string names, string candidate) {
