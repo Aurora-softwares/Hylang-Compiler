@@ -123,6 +123,10 @@
   <Clipboard id="studioClipboard" onRead="ClipboardRead" />
   <Dialog id="confirmation" title="Create an application?" text="Your settings are ready. Continue with this template?" buttons="Continue|Cancel" open="false" value="0" onClose="Confirmed" />
   <Dialog id="about" title="Hydrogen Studio" text="Native menus, tabs, lists, tables, radio groups, images and dialogs, connected to Hydrogen." buttons="OK" open="false" value="0" />
+  <ToggleButton id="featureToggle" text="Enable experimental tools" checked="false" onChange="ToggleFeature" visible="false" accessibleName="Enable experimental tools" />
+  <ValidationMessage id="validationHint" text="Optional features are disabled." severity="info" visible="false" accessibleName="Feature validation" />
+  <ToggleButton id="featureToggle" text="Enable experimental tools" checked="false" onChange="ToggleFeature" visible="false" accessibleName="Enable experimental tools" />
+  <ValidationMessage id="validationHint" text="Optional features are disabled." severity="info" visible="false" accessibleName="Feature validation" />
   <State id="sessionState" value="ready" />
   <Timer id="buildTimer" interval="350" running="false" onTick="Tick" />
 </Window>

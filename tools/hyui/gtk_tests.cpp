@@ -108,6 +108,21 @@ public:
         }
         view.present(1120, 600); settle();
         check(view.api.call<int>("gtk_widget_get_height", view.controls["logo"]->widget) == 80, "Image must honor its declared height");
+        W toggle = view.controls["featureToggle"]->widget;
+        check(view.api.call<int>("g_type_check_instance_is_a", toggle,
+            view.api.call<unsigned long>("gtk_toggle_button_get_type")), "ToggleButton must use GtkToggleButton");
+        W validation = view.controls["validationHint"]->widget;
+        check(view.api.call<int>("g_type_check_instance_is_a", validation,
+            view.api.call<unsigned long>("gtk_label_get_type")), "ValidationMessage must use GtkLabel");
+        view.api.call("gtk_toggle_button_set_active", toggle, 1); idle();
+        check(bridge.state()["featureToggle.checked"].toBool() &&
+              bridge.state()["validationHint.text"].toString() == "Optional features enabled.",
+              "ToggleButton change did not reach Hydrogen");
+        check(bridge.apply("HYUI\tSET\tfeatureToggle\tchecked\tfalse\nHYUI\tSET\tvalidationHint\ttext\tReset by Hydrogen\n"),
+              "Cannot update native toggle and validation feedback");
+        check(!view.api.call<int>("gtk_toggle_button_get_active", toggle) &&
+              QString::fromUtf8(view.api.call<const char*>("gtk_label_get_text", validation)) == "Reset by Hydrogen",
+              "Native toggle and validation state did not update");
         W logo = view.api.call<W>("gtk_picture_get_paintable", view.controls["logo"]->widget);
         check(logo != nullptr && view.api.call<int>("gdk_paintable_get_intrinsic_height", logo) == 80, "Bundled image must decode at its declared display size");
         view.api.call("gtk_check_button_set_active", view.controls["channel"]->choices[1], 1); idle();

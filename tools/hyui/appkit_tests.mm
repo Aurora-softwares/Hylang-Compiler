@@ -121,6 +121,21 @@ int main(int argc, char** argv) {
             NSView* gallery = NSApp.windows.firstObject.contentView; checkSiblings(gallery);
             require([(NSImageView*)find(gallery, @"logo") image] != nil, "bundled image did not load");
             auto finish = [&] { QElapsedTimer timeout; timeout.start(); while (bridge.busy() && timeout.elapsed() < 5000) { app.processEvents(); view->pump(); QThread::msleep(1); } require(!bridge.busy() && bridge.error().isEmpty(), "sample event failed"); };
+            NSButton* featureToggle = (NSButton*)find(gallery, @"featureToggle");
+            require([featureToggle isKindOfClass:NSButton.class], "ToggleButton must use a native NSButton");
+            NSTextField* validation = (NSTextField*)find(gallery, @"validationHint");
+            require([validation isKindOfClass:NSTextField.class] && !validation.isEditable,
+                    "ValidationMessage must use a native AppKit label");
+            [featureToggle performClick:nil]; finish();
+            require(bridge.state()["featureToggle.checked"].toBool() &&
+                    bridge.state()["validationHint.text"].toString() == "Optional features enabled.",
+                    "AppKit toggle change did not reach Hydrogen");
+            require(bridge.apply("HYUI\tSET\tfeatureToggle\tchecked\tfalse\nHYUI\tSET\tvalidationHint\ttext\tReset by Hydrogen\n"),
+                    "Cannot reset native toggle or validation feedback");
+            view->pump();
+            require(featureToggle.state == NSControlStateValueOff &&
+                    [validation.stringValue isEqualToString:@"Reset by Hydrogen"],
+                    "AppKit toggle or validation state did not update");
             NSView* radio = find(gallery, @"channel"); require(radio.subviews.count == 3, "radio choices missing");
             [(NSButton*)radio.subviews[1] performClick:nil]; finish();
             require(bridge.state()["channel.value"].toInt() == 1 && bridge.state()["channelText.text"].toString() == "Preview channel selected.", "radio event failed");
