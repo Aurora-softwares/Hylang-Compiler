@@ -25,7 +25,9 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"Image", {"source", "height"}},
     {"Dialog", {"title", "text", "buttons", "open", "value", "onClose"}},
     {"Label", {"text", "role", "tone"}},
+    {"ValidationMessage", {"text", "severity"}},
     {"Button", {"text", "onClick", "primary"}},
+    {"ToggleButton", {"text", "checked", "onChange"}},
     {"Input", {"text", "placeholder", "onChange", "onSubmit"}},
     {"SearchInput", {"text", "placeholder", "onChange", "onSubmit"}},
     {"PasswordInput", {"placeholder", "onChange", "onSubmit"}},
@@ -110,6 +112,10 @@ bool Document::parse(const QByteArray& xml) {
         }
         if (node.attributes.contains("tone") && !QStringList{"normal", "muted", "accent"}.contains(node.attributes["tone"])) {
             return invalid("unknown Label tone");
+        }
+        if (node.tag == "ValidationMessage" &&
+            !QStringList{"error", "warning", "info", "success"}.contains(node.attributes.value("severity", "error"))) {
+            return invalid("ValidationMessage severity must be error, warning, info, or success");
         }
         if (node.tag == "FilePicker" && !QStringList{"open", "save", "folder"}.contains(node.attributes.value("mode"))) {
             return invalid("FilePicker mode must be open, save, or folder");
