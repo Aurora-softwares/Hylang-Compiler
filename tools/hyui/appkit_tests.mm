@@ -11,6 +11,7 @@
 #include <QDir>
 #include <iostream>
 #include <stdexcept>
+#include <functional>
 #import <AppKit/AppKit.h>
 
 namespace {
@@ -47,6 +48,107 @@ void checkSiblings(NSView* root) {
         }
     }
     for (NSView* child in root.subviews) { checkSiblings(child); }
+}
+
+void verifyNativeAppKitElements(const hyui::Document& document, NSWindow* window) {
+    const QSet<QString> expected = { "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "Table", "RadioGroup", "Image", "Dialog", "Label", "Button", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer" };
+    QSet<QString> seen;
+    NSView* root = window.contentView;
+    const std::function<bool(NSMenu*, NSString*)> menuHasTitle =
+        [&](NSMenu* menu, NSString* title) -> bool {
+            if (!menu) return false;
+            for (NSMenuItem* item in menu.itemArray) {
+                if ([item.title isEqualToString:title]) return true;
+                if (item.submenu && menuHasTitle(item.submenu,title)) return true;
+            }
+            return false;
+        };
+    const std::function<void(const hyui::Node&,const hyui::Node*,bool)> inspect =
+        [&](const hyui::Node& node,const hyui::Node* parent,bool inPopover) {
+            seen.insert(node.tag);
+            NSString* identifier=[NSString stringWithUTF8String:node.id.toUtf8().constData()];
+            NSView* nativeView = find(root,identifier);
+            const QString& tag=node.tag;
+            bool good = false;
+            if (tag=="Window") good=[window isKindOfClass:NSWindow.class];
+            else if (inPopover) {
+                // Popover children acquire an NSWindow only while the
+                // popover is showing. They are exercised by the interactive
+                // native popover test below.
+                good = true;
+            } else if (tag=="ColumnPanel"||tag=="RowPanel"||tag=="GridPanel"||
+                       tag=="Panel"||tag=="Tab") {
+                good=nativeView && [NSStringFromClass(nativeView.class) isEqualToString:@"HYLayoutView"];
+            } else if (tag=="Tabs") {
+                good=nativeView && nativeView.subviews.count>0 &&
+                    [nativeView.subviews.firstObject isKindOfClass:NSSegmentedControl.class];
+            } else if (tag=="ScrollView")good=[nativeView isKindOfClass:NSScrollView.class];
+            else if (tag=="MenuBar")good=[NSApp.mainMenu isKindOfClass:NSMenu.class];
+            else if (tag=="Menu") {
+                NSString* title=[NSString stringWithUTF8String:node.attributes.value("text").toUtf8().constData()];
+                good=menuHasTitle(NSApp.mainMenu,title);
+            } else if (tag=="MenuItem") {
+                NSString* title=[NSString stringWithUTF8String:node.attributes.value("text").toUtf8().constData()];
+                if(parent && parent->tag=="ContextMenu") {
+                    NSString* target=[NSString stringWithUTF8String:parent->attributes.value("target").toUtf8().constData()];
+                    NSView* anchor=find(root,target);
+                    good=anchor && menuHasTitle(anchor.menu,title);
+                } else good=menuHasTitle(NSApp.mainMenu,title);
+            } else if (tag=="ContextMenu") {
+                NSString* target=[NSString stringWithUTF8String:node.attributes.value("target").toUtf8().constData()];
+                NSView* anchor=find(root,target);
+                good=anchor && [anchor.menu isKindOfClass:NSMenu.class];
+            } else if (tag=="Popover") {
+                NSString* target=[NSString stringWithUTF8String:node.attributes.value("target").toUtf8().constData()];
+                good=find(root,target)!=nil;
+            } else if (tag=="Toolbar")good=[window.toolbar isKindOfClass:NSToolbar.class];
+            else if (tag=="ToolButton")good=[window.toolbar isKindOfClass:NSToolbar.class];
+            else if (tag=="Clipboard")good=document.initialState.contains(node.id+".value");
+            else if (tag=="State")good=document.initialState.contains(node.id+".value");
+            else if (tag=="Timer")good=document.initialState.contains(node.id+".running") &&
+                document.handlers.value(node.attributes.value("onTick")).contains(node.id);
+            else if (tag=="Dialog")good=document.initialState.contains(node.id+".open");
+            else if (tag=="ListBox"||tag=="Table") {
+                if([nativeView isKindOfClass:NSScrollView.class]) {
+                    NSTableView* table=(NSTableView*)((NSScrollView*)nativeView).documentView;
+                    good=[table isKindOfClass:NSTableView.class] &&
+                        (tag=="ListBox" ? table.headerView==nil :
+                         table.tableColumns.count==node.attributes.value("columns").split('|').size());
+                }
+            } else if (tag=="RadioGroup")good=nativeView &&
+                nativeView.subviews.count>0 &&
+                [nativeView.subviews.firstObject isKindOfClass:NSButton.class];
+            else if (tag=="Image")good=[nativeView isKindOfClass:NSImageView.class] &&
+                ((NSImageView*)nativeView).image!=nil;
+            else if (tag=="Label")good=[nativeView isKindOfClass:NSTextField.class] &&
+                ![(NSTextField*)nativeView isEditable];
+            else if (tag=="Button"||tag=="ToolButton"||tag=="FilePicker"||tag=="CheckBox")
+                good=[nativeView isKindOfClass:NSButton.class];
+            else if (tag=="Input")good=[nativeView isKindOfClass:NSTextField.class] &&
+                ![nativeView isKindOfClass:NSSearchField.class] &&
+                ![nativeView isKindOfClass:NSSecureTextField.class];
+            else if (tag=="SearchInput")good=[nativeView isKindOfClass:NSSearchField.class];
+            else if (tag=="PasswordInput")good=[nativeView isKindOfClass:NSSecureTextField.class];
+            else if (tag=="TextArea")good=[nativeView isKindOfClass:NSScrollView.class] &&
+                [((NSScrollView*)nativeView).documentView isKindOfClass:NSTextView.class];
+            else if (tag=="Switch")good=nativeView && nativeView.subviews.count>0 &&
+                [nativeView.subviews.firstObject isKindOfClass:NSSwitch.class];
+            else if (tag=="NumberInput")good=nativeView && nativeView.subviews.count>0 &&
+                [nativeView.subviews.lastObject isKindOfClass:NSStepper.class];
+            else if (tag=="Select")good=[nativeView isKindOfClass:NSPopUpButton.class];
+            else if (tag=="Slider")good=[nativeView isKindOfClass:NSSlider.class];
+            else if (tag=="ProgressBar"||tag=="Spinner") {
+                good=[nativeView isKindOfClass:NSProgressIndicator.class] &&
+                    ((NSProgressIndicator*)nativeView).style==
+                      (tag=="Spinner" ? NSProgressIndicatorStyleSpinning : NSProgressIndicatorStyleBar);
+            } else if (tag=="Separator")good=[nativeView isKindOfClass:NSBox.class];
+            else if (tag=="Spacer")good=nativeView && [nativeView isKindOfClass:NSView.class];
+            if (!good) throw std::runtime_error(("HYUI "+tag+" ("+node.id+
+                ") has no matching native AppKit control").toStdString());
+            for(const auto& child:node.children)inspect(child,&node,inPopover||tag=="Popover");
+        };
+    inspect(document.window,nullptr,false);
+    if(seen!=expected)throw std::runtime_error("AppKit HYUI element inventory does not cover all 39 native elements");
 }
 }
 int main(int argc, char** argv) {
@@ -99,6 +201,7 @@ int main(int argc, char** argv) {
                 require(bridge.apply("HYUI\tSET\tpages\tvalue\t0\n"), "cannot return to workspace");
             }
             require(bridge.apply("HYUI\tSET\tsummary\ttext\t" + QByteArray("A longer summary with enough words to exercise wrapping across responsive column widths. ").repeated(8) + "\n"), "cannot seed wrapping text");
+            verifyNativeAppKitElements(document, NSApp.windows.firstObject);
             NSView* wide = show(1120);
             NSRect settings = rect(wide, @"projectName"), workspace = rect(wide, @"summary");
             CGFloat wideSummaryHeight = rect(wide, @"summary").size.height;
