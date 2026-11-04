@@ -81,6 +81,7 @@ class AppKitView : public NativeView {
     QMap<QString, NSView*> popoverContents;
     QMap<QString, NSView*> popoverFrames;
     bool applying = false;
+    bool positioningSplit = false;
     bool disposing = false;
     bool layoutDirty = true;
     NSSize viewportSize = NSZeroSize;
@@ -152,6 +153,10 @@ class AppKitView : public NativeView {
         if (tag == "SplitView") {
             CGFloat height = node->attributes.value("height", "260").toInt();
             NSSplitView* split = (NSSplitView*)view;
+            // AppKit may fire splitViewDidResizeSubviews when programmatically
+            // reflowing an initially hidden view. That must not overwrite the
+            // requested Hydrogen divider position or dispatch a user callback.
+            positioningSplit = true;
             [split setFrameSize:NSMakeSize(width, height)];
             if (split.subviews.count == 2) {
                 const CGFloat maxDivider = qMax<CGFloat>(0, width - split.dividerThickness);
@@ -169,6 +174,7 @@ class AppKitView : public NativeView {
                 [start setFrame:NSMakeRect(0, 0, startWidth, height)];
                 [end setFrame:NSMakeRect(target + split.dividerThickness, 0, endWidth, height)];
             }
+            positioningSplit = false;
             return height;
         }
         if (tag == "ScrollView") {
@@ -337,6 +343,7 @@ class AppKitView : public NativeView {
             split.dividerStyle = NSSplitViewDividerStyleThin;
             for (const Node& pane : node.children) { NSView* child = build(pane); if (child) { [split addSubview:child]; } }
             split.delegate = action([this, &node](id sender) {
+                if (positioningSplit || applying || bridge.isApplying()) { return; }
                 NSSplitView* pane = (NSSplitView*)sender;
                 if (pane.subviews.count == 2 && pane.bounds.size.width > 0) {
                     handleEvent(node, "value", int(std::round(pane.subviews[0].frame.size.width)), "onChange");
