@@ -452,7 +452,20 @@ struct App {
         gchar *out=nullptr,*err=nullptr;
         bool ok=g_subprocess_communicate_utf8(proc,nullptr,nullptr,&out,&err,&error);
         if(ok)ok=g_subprocess_get_successful(proc);
-        if(!ok)std::cerr<<"Hydrogen UI backend failed: "<<(err?err:(error?error->message:"unknown"))<<"\n";
+        if(!ok) {
+            // A Hydrogen backend can terminate with no stderr (for example, a
+            // runtime abort or fatal signal). Always identify how it ended.
+            std::cerr<<"Hydrogen UI backend failed";
+            if(g_subprocess_get_if_signaled(proc)) {
+                std::cerr<<" (signal "<<g_subprocess_get_term_sig(proc)<<")";
+            } else if(g_subprocess_get_if_exited(proc)) {
+                std::cerr<<" (exit status "<<g_subprocess_get_exit_status(proc)<<")";
+            }
+            if(err && *err)std::cerr<<": "<<err;
+            else if(error && error->message)std::cerr<<": "<<error->message;
+            else std::cerr<<": no diagnostic text was produced by the Hydrogen backend";
+            std::cerr<<"\n";
+        }
         stdoutText=out?out:"";
         g_free(out);g_free(err);
         if(error)g_error_free(error);
