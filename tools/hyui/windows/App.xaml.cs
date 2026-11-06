@@ -48,6 +48,7 @@ public sealed partial class NativeWindow : Window
     readonly Dictionary<string, string> values = new();
     readonly Dictionary<string, DispatcherTimer> timers = new();
     readonly List<Action> layouts = new();
+    readonly Dictionary<string, ColumnDefinition> splitColumns = new();
     readonly Queue<(string Handler, string Sender)> pending = new();
     readonly TextBlock errors = new() { TextWrapping = TextWrapping.Wrap };
     readonly Dictionary<string, ContentDialog> dialogs = new();
@@ -78,9 +79,9 @@ public sealed partial class NativeWindow : Window
     static int Number(XElement n, string key, int fallback) => int.TryParse(Attr(n, key), out int result) ? result : fallback;
     static bool Allowed(XElement node, string property) => property switch {
         "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer" or "ContextMenu" or "Clipboard"),
-        "text" => node.Name.LocalName is "Label" or "ValidationMessage" or "ToggleButton" or "Input" or "SearchInput" or "TextArea" or "Button" or "ToolButton" or "FilePicker" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog" or "Popover",
+        "text" => node.Name.LocalName is "StatusBar" or "Label" or "ValidationMessage" or "ToggleButton" or "Input" or "SearchInput" or "TextArea" or "Button" or "ToolButton" or "FilePicker" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog" or "Popover",
         "path" => node.Name.LocalName == "FilePicker",
-        "value" => node.Name.LocalName is "State" or "Clipboard" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog",
+        "value" => node.Name.LocalName is "SplitView" or "State" or "Clipboard" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog",
         "checked" => node.Name.LocalName is "CheckBox" or "ToggleButton" or "Switch" or "MenuItem",
         "running" => node.Name.LocalName is "Spinner" or "Timer",
         "open" => node.Name.LocalName is "Dialog" or "Popover",
@@ -188,7 +189,7 @@ public sealed partial class NativeWindow : Window
         nodes[id] = node;
         foreach (string prop in new[] { "text", "value", "checked", "running", "indeterminate", "enabled", "visible", "open" }) {
             if (tag == "PasswordInput" && (prop == "text" || prop == "value")) continue;
-            values[id + "." + prop] = Attr(node, prop, prop is "enabled" or "visible" ? "true" : prop == "value" ? "0" : prop == "text" ? "" : prop == "running" && tag == "Spinner" ? "true" : "false");
+            values[id + "." + prop] = Attr(node, prop, prop is "enabled" or "visible" ? "true" : prop == "value" ? (tag == "SplitView" ? "260" : "0") : prop == "text" ? "" : prop == "running" && tag == "Spinner" ? "true" : "false");
         }
         if (tag == "FilePicker") values[id + ".path"] = "";
         if (tag == "Clipboard") values[id + ".value"] = "";
@@ -239,6 +240,32 @@ public sealed partial class NativeWindow : Window
             list.SelectionChanged += (_, _) => { if (list.SelectedIndex >= 0) Changed("value", list.SelectedIndex.ToString()); else list.SelectedIndex = int.Parse(values.GetValueOrDefault(id + ".value", "0")); }; element = list;
         } else if (tag == "Image") {
             element = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(Resource(documentDirectory, Attr(node, "source")))), Height = Number(node, "height", 72), Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform };
+        } else if (tag == "SplitView") {
+            var split = new Grid { Height = Number(node, "height", 260) };
+            var primary = new ColumnDefinition { Width = new GridLength(Number(node, "value", 260), GridUnitType.Pixel) };
+            split.ColumnDefinitions.Add(primary);
+            split.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8, GridUnitType.Pixel) });
+            split.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            int index = 0;
+            foreach (var child in node.Elements()) {
+                var native = Build(child);
+                if (native == null) throw new InvalidDataException("SplitView panes must be visual");
+                Grid.SetColumn(native, index++ == 0 ? 0 : 2);
+                split.Children.Add(native);
+            }
+            var divider = new Thumb {
+                Width = 8, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch,
+                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["DividerStrokeColorDefaultBrush"]
+            };
+            Grid.SetColumn(divider, 1);
+            divider.DragDelta += (_, e) => {
+                double available = Math.Max(0, split.ActualWidth - 8);
+                primary.Width = new GridLength(Math.Clamp(primary.Width.Value + e.HorizontalChange, 0, available), GridUnitType.Pixel);
+            };
+            divider.DragCompleted += (_, _) => Changed("value", ((int)Math.Round(primary.Width.Value)).ToString(CultureInfo.InvariantCulture));
+            split.Children.Add(divider);
+            splitColumns[id] = primary;
+            element = split;
         } else if (tag == "ScrollView") {
             var content = new StackPanel { Spacing = Number(node, "gap", 12) };
             foreach (var child in node.Elements()) { var control = Build(child); if (control != null) content.Children.Add(control); }
@@ -263,8 +290,12 @@ public sealed partial class NativeWindow : Window
             } else {
                 element = tag == "Panel" ? new Border { Child = panel, Padding = new Thickness(Number(node, "padding", 20)), BorderThickness = new Thickness(1), Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"], BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"] } : panel;
             }
-        } else if (tag is "Label" or "ValidationMessage") {
+        } else if (tag is "Label" or "ValidationMessage" or "StatusBar") {
             var label = new TextBlock { Text = Attr(node, "text"), TextWrapping = TextWrapping.Wrap };
+            if (tag == "StatusBar") {
+                label.Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"];
+                label.Opacity = 0.8;
+            }
             if (tag == "ValidationMessage") {
                 var severity = Attr(node, "severity", "error");
                 label.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(severity switch {
@@ -392,7 +423,7 @@ public sealed partial class NativeWindow : Window
             foreach (var pair in nodes) {
                 if (pair.Value.Name.LocalName == "PasswordInput") continue;
                 if (pair.Value.Name.LocalName == "Clipboard" && pair.Key != next.Sender) continue;
-                string property = pair.Value.Name.LocalName == "FilePicker" ? "path" : pair.Value.Name.LocalName is "State" or "Clipboard" or "Select" or "NumberInput" or "ProgressBar" or "Slider" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "ToggleButton" or "Switch" or "MenuItem" ? "checked" : "text";
+                string property = pair.Value.Name.LocalName == "FilePicker" ? "path" : pair.Value.Name.LocalName is "State" or "Clipboard" or "Select" or "SplitView" or "NumberInput" or "ProgressBar" or "Slider" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "ToggleButton" or "Switch" or "MenuItem" ? "checked" : "text";
                 arguments.Add(pair.Key); arguments.Add(values.GetValueOrDefault(pair.Key + "." + property, ""));
             }
             if (arguments.Sum(a => a.Length) > 24000) throw new InvalidOperationException("Value snapshot too large");
@@ -482,7 +513,7 @@ public sealed partial class NativeWindow : Window
             if (prop is "checked" or "running" or "indeterminate" or "enabled" or "visible" or "open") { if (value != "true" && value != "false") throw new InvalidDataException("Invalid boolean"); }
             if (prop == "value" && nodes[id].Name != "State" && nodes[id].Name != "Clipboard") {
                 var n = nodes[id]; string tag = n.Name.LocalName;
-                int maximum = tag is "Select" or "ListBox" or "RadioGroup" ? Attr(n, "items").Split('|').Length - 1 : tag == "Tabs" ? n.Elements().Count() - 1 : tag == "Table" ? Attr(n, "rows").Split('\n').Length - 1 : tag == "Dialog" ? Attr(n, "buttons", "OK").Split('|').Length - 1 : Number(n, "maximum", 100);
+                int maximum = tag is "Select" or "ListBox" or "RadioGroup" ? Attr(n, "items").Split('|').Length - 1 : tag == "Tabs" ? n.Elements().Count() - 1 : tag == "Table" ? Attr(n, "rows").Split('\n').Length - 1 : tag == "Dialog" ? Attr(n, "buttons", "OK").Split('|').Length - 1 : tag == "SplitView" ? 32767 : Number(n, "maximum", 100);
                 if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int number) || number < Number(n, "minimum", 0) || number > maximum) throw new InvalidDataException("Value outside range");
             }
             updates[id + "." + prop] = value;
@@ -492,6 +523,10 @@ public sealed partial class NativeWindow : Window
             string Value(string p) => values.GetValueOrDefault(item.Key + "." + p, "");
             item.Value.Visibility = Value("visible") == "true" ? Visibility.Visible : Visibility.Collapsed;
             if (item.Value is Control control) control.IsEnabled = Value("enabled") == "true";
+            if (splitColumns.TryGetValue(item.Key, out var splitColumn)) {
+                int desired = int.Parse(Value("value"), CultureInfo.InvariantCulture);
+                if (Math.Abs(splitColumn.Width.Value - desired) > 0.5) splitColumn.Width = new GridLength(desired, GridUnitType.Pixel);
+            }
             switch (item.Value) {
                 case MenuBarItem menu: menu.Title = Value("text"); break;
                 case ToggleMenuFlyoutItem menu: menu.Text = Value("text"); menu.IsChecked = Value("checked") == "true"; break;

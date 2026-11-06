@@ -123,6 +123,25 @@ public:
         check(!view.api.call<int>("gtk_toggle_button_get_active", toggle) &&
               QString::fromUtf8(view.api.call<const char*>("gtk_label_get_text", validation)) == "Reset by Hydrogen",
               "Native toggle and validation state did not update");
+        W split = view.controls["ideSplit"]->widget;
+        W status = view.controls["ideStatus"]->widget;
+        check(view.api.call<int>("g_type_check_instance_is_a", split,
+            view.api.call<unsigned long>("gtk_paned_get_type")), "SplitView must use a native GtkPaned");
+        check(view.api.call<int>("g_type_check_instance_is_a", status,
+            view.api.call<unsigned long>("gtk_label_get_type")), "StatusBar must use a native GtkLabel");
+        check(view.api.call<W>("gtk_paned_get_start_child", split) != nullptr &&
+              view.api.call<W>("gtk_paned_get_end_child", split) != nullptr,
+              "SplitView must hold both panes");
+        check(bridge.apply("HYUI\tSET\tideSplit\tvisible\ttrue\nHYUI\tSET\tideStatus\tvisible\ttrue\nHYUI\tSET\tideSplit\tvalue\t300\nHYUI\tSET\tideStatus\ttext\tStatus updated\n"),
+              "Cannot update SplitView or StatusBar from Hydrogen");
+        settle();
+        check(view.api.call<int>("gtk_paned_get_position", split) == 300 &&
+              QString::fromUtf8(view.api.call<const char*>("gtk_label_get_text", status)) == "Status updated",
+              "Native split divider or status text did not update");
+        view.api.call("gtk_paned_set_position", split, 325); idle();
+        check(bridge.state()["ideSplit.value"].toInt() == 325 &&
+              bridge.state()["ideStatus.text"] == "Navigator width: 325 px",
+              "Native split drag did not propagate through Hydrogen");
         W logo = view.api.call<W>("gtk_picture_get_paintable", view.controls["logo"]->widget);
         check(logo != nullptr && view.api.call<int>("gdk_paintable_get_intrinsic_height", logo) == 80, "Bundled image must decode at its declared display size");
         view.api.call("gtk_check_button_set_active", view.controls["channel"]->choices[1], 1); idle();
