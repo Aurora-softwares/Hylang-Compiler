@@ -8,6 +8,12 @@ trap 'rm -rf "$build_dir"' EXIT
 cmake -S "$source_dir" -B "$build_dir/bootstrap" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$build_dir/bootstrap" --target hy --parallel 2
 
+# An Intel Mac can cross-compile an Apple Silicon application with its SDK.
+"$build_dir/bootstrap/hy" build "$source_dir/tests/macos/Hello.hy" \
+    --target macos-arm64 -o "$build_dir/hello-arm64" \
+    --hide-progress --hide-spinner --hide-log
+test "$(lipo -archs "$build_dir/hello-arm64")" = arm64
+
 # Stage 0 emits host C only to seed Hydrogen's self-hosted compiler.
 "$build_dir/bootstrap/hy" build \
     "$source_dir/src/Hydrogen.Compiler.Cli/Hydrogen.Compiler.Cli.hyproj" \
