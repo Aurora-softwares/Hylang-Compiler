@@ -372,6 +372,23 @@ jobs:
             --hide-progress --hide-spinner --hide-log
           lipo -archs "$GITHUB_WORKSPACE/build/apple-silicon/installed-hello" | grep -qx arm64
           test "$("$GITHUB_WORKSPACE/build/apple-silicon/installed-hello")" = 'Hello from Hydrogen on macOS!'
+      - name: Build native AppKit runtime and Hydrogen UI application
+        run: |
+          brew install qtbase
+          cmake -S . -B build/apple-silicon -DCMAKE_BUILD_TYPE=Release \
+            -DHYDROGEN_BUILD_UI=ON -DCMAKE_PREFIX_PATH="$(brew --prefix qtbase)"
+          cmake --build build/apple-silicon --target hyui hyui_appkit_tests hydrogen-ui-sdk --parallel 3
+          test -f build/apple-silicon/native-sdk/macos-arm64.app/Contents/hyui-runtime.json
+          lipo -archs build/apple-silicon/native-sdk/macos-arm64.app/Contents/MacOS/hyui | grep -qx arm64
+          build/apple-silicon/tools/hyui/hyui_appkit_tests \
+            samples/ui_studio/Studio.hyui build/apple-silicon/hy
+          build/apple-silicon/hyui --package samples/ui_studio/Studio.hyproj \
+            --output build/apple-silicon/StudioArm --target macos-arm64 \
+            --compiler build/apple-silicon/hy \
+            --runtime build/apple-silicon/native-sdk/macos-arm64.app
+          lipo -archs build/apple-silicon/StudioArm.app/Contents/Resources/app/__hyui_backend | grep -qx arm64
+          lipo -archs build/apple-silicon/StudioArm.app/Contents/MacOS/hyui | grep -qx arm64
+          plutil -lint build/apple-silicon/StudioArm.app/Contents/Info.plist
 
   windows-ui:
     name: WinUI interactions and appearance

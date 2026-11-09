@@ -62,7 +62,11 @@ QString nativeTarget() {
 #ifdef Q_OS_WIN
     return "windows-x64";
 #elif defined(Q_OS_MACOS)
+#if defined(Q_PROCESSOR_ARM_64)
+    return "macos-arm64";
+#else
     return "macos-x64";
+#endif
 #else
     return "linux-x64";
 #endif
@@ -71,7 +75,14 @@ QString targetName(QString target) {
     if (target.isEmpty() || target == "exe") { return nativeTarget(); }
     if (target == "linux" || target == "linux-x64") { return "linux-x64"; }
     if (target == "windows" || target == "windows-x64") { return "windows-x64"; }
-    if (target == "mac" || target == "macos" || target == "macos-x64") { return "macos-x64"; }
+    if (target == "mac" || target == "macos") {
+#ifdef Q_OS_MACOS
+        return nativeTarget();
+#else
+        return "macos-x64";
+#endif
+    }
+    if (target == "macos-x64" || target == "macos-arm64") { return target; }
     require(false, "unsupported UI target: " + target);
     return {};
 }
@@ -151,9 +162,9 @@ void deployLinux(const QString& runtime) {
 
 void exportRuntime(const QString& destination, const QString& target) {
     require(target == nativeTarget(), "runtime export must run on the target system");
-    require(QSysInfo::currentCpuArchitecture() == "x86_64", "the current Hydrogen desktop backend requires an x86-64 native runtime");
+    require(target == nativeTarget(), "the native UI runtime must match this host architecture");
     QString suffix = target == "windows-x64" ? ".exe" : "";
-    const bool mac = target == "macos-x64";
+    const bool mac = target == "macos-x64" || target == "macos-arm64";
     QString executableDirectory = destination + (mac ? "/MacOS" : "");
     copy(QCoreApplication::applicationDirPath() + "/hyui-launcher" + suffix, executableDirectory + "/hyui-launcher" + suffix);
     QTemporaryDir imports;
@@ -187,16 +198,22 @@ void exportRuntime(const QString& destination, const QString& target) {
 void validateRuntime(const QString& path, const QString& target) {
     QJsonObject manifest = QJsonDocument::fromJson(read(path + "/hyui-runtime.json")).object();
     require(manifest.value("format").toInt() == 1 && manifest.value("target").toString() == target, "native UI runtime does not match target " + target);
-    QString renderer = target == "macos-x64" ? "appkit" : target == "windows-x64" ? "winui3" : "gtk4";
+    QString renderer = (target == "macos-x64" || target == "macos-arm64") ? "appkit" : target == "windows-x64" ? "winui3" : "gtk4";
     require(manifest.value("renderer").toString() == renderer, "the target runtime must use real " + renderer + " controls; Qt style replicas are not accepted");
-    const QString prefix = target == "macos-x64" ? "/MacOS/" : "/";
+    const QString prefix = (target == "macos-x64" || target == "macos-arm64") ? "/MacOS/" : "/";
     const QString suffix = target == "windows-x64" ? ".exe" : "";
     require(QFileInfo::exists(path + prefix + "hyui" + suffix) && QFileInfo::exists(path + prefix + "hyui-launcher" + suffix), "target runtime is missing its desktop host or launcher");
-    QByteArray magic = read(path + prefix + "hyui" + suffix).left(4);
+    QByteArray header = read(path + prefix + "hyui" + suffix).left(8);
+    QByteArray magic = header.left(4);
     require((target == "linux-x64" && magic == QByteArray::fromHex("7f454c46")) ||
             (target == "windows-x64" && magic.startsWith("MZ")) ||
-            (target == "macos-x64" && (magic == QByteArray::fromHex("cffaedfe") || magic == QByteArray::fromHex("cafebabe"))),
+            (target == "macos-x64" && (magic == QByteArray::fromHex("cffaedfe") || magic == QByteArray::fromHex("cafebabe"))) ||
+            (target == "macos-arm64" && header == QByteArray::fromHex("cffaedfe0c000001")),
             "desktop host binary does not match the requested target");
+    if (target == "macos-arm64") {
+        require(read(path + prefix + "hyui-launcher").left(8) == QByteArray::fromHex("cffaedfe0c000001"),
+                "desktop launcher binary does not match macos-arm64");
+    }
 }
 
 // Publish only complete packages. Existing outputs are restored on a failed
@@ -208,7 +225,7 @@ void publish(const QList<QPair<QString, QString>>& paths, const QString& target)
         const QFileInfo old(entry.second);
         require(!old.isSymLink(), "refusing to replace a symlink output");
         if (old.isDir()) {
-            QString marker = entry.second + (target == "macos-x64" ? "/Contents" : "") + "/hyui-runtime.json";
+            QString marker = entry.second + ((target == "macos-x64" || target == "macos-arm64") ? "/Contents" : "") + "/hyui-runtime.json";
             require(QFileInfo::exists(marker), "output directory is not an existing Hydrogen UI package: " + entry.second);
         }
     }
@@ -241,7 +258,7 @@ int packageMain(int argc, char** argv) {
     parser.addHelpOption();
     parser.addOption({"package", "Build a double-clickable UI application", "project.hyproj"});
     parser.addOption({"output", "Application output path", "path"});
-    parser.addOption({"target", "linux, windows, macos (x86-64)", "name"});
+    parser.addOption({"target", "linux, windows, macos, macos-x64, or macos-arm64", "name"});
     parser.addOption({"compiler", "Hydrogen compiler executable", "path"});
     parser.addOption({"runtime", "Exported native UI runtime for the target platform", "directory"});
     parser.addOption({"export-runtime", "Export a deployable native UI runtime", "directory"});
@@ -254,8 +271,8 @@ int packageMain(int argc, char** argv) {
             require(QDir().mkpath(QFileInfo(output).absolutePath()), "cannot create runtime export parent");
             QTemporaryDir stage(QFileInfo(output).absolutePath() + "/.hyui-runtime-XXXXXX");
             require(stage.isValid(), "cannot stage runtime export");
-            QString staged = stage.path() + (target == "macos-x64" ? "/Runtime.app" : "/runtime");
-            if (target == "macos-x64") {
+            QString staged = stage.path() + ((target == "macos-x64" || target == "macos-arm64") ? "/Runtime.app" : "/runtime");
+            if (target == "macos-x64" || target == "macos-arm64") {
                 require(output.endsWith(".app"), "macOS runtime export output must end in .app");
                 exportRuntime(staged + "/Contents", target);
             } else { exportRuntime(staged, target); }
@@ -270,7 +287,7 @@ int packageMain(int argc, char** argv) {
         QString type = stringField(projectFields, "type");
         require(QStringList{"exe", "windows", "macos"}.contains(type), "UI projects require a desktop executable type");
         QString target = targetName(parser.isSet("target") ? parser.value("target") : type);
-        const bool mac = target == "macos-x64", windows = target == "windows-x64";
+        const bool mac = target == "macos-x64" || target == "macos-arm64", windows = target == "windows-x64";
         QString output = QFileInfo(parser.value("output")).absoluteFilePath();
         if (mac && !output.endsWith(".app")) { output += ".app"; }
         if (windows && !output.endsWith(".exe", Qt::CaseInsensitive)) { output += ".exe"; }
@@ -315,7 +332,8 @@ int packageMain(int argc, char** argv) {
         QString appDirectory = runtime + (mac ? "/Resources/app" : "/app");
         require(QDir().mkpath(appDirectory), "cannot create app resource directory");
         QString backend = appDirectory + "/__hyui_backend" + (windows ? ".exe" : "");
-        QString buildTarget = target == "linux-x64" ? "exe" : windows ? "windows" : "macos";
+        QString buildTarget = target == "linux-x64" ? "exe" : windows ? "windows" :
+            target == "macos-arm64" ? "macos-arm64" : "macos";
         run(compilerPath(parser.value("compiler")), {"build", project, "-o", backend, "--target", buildTarget, "--ui-backend"});
         require(QFileInfo::exists(backend), "compiler did not produce the UI backend");
         require(QFile::setPermissions(backend, QFile::permissions(backend) | QFile::ExeOwner | QFile::ExeGroup | QFile::ExeOther), "cannot make the backend executable");
