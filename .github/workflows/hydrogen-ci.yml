@@ -389,6 +389,19 @@ jobs:
           lipo -archs build/apple-silicon/StudioArm.app/Contents/Resources/app/__hyui_backend | grep -qx arm64
           lipo -archs build/apple-silicon/StudioArm.app/Contents/MacOS/hyui | grep -qx arm64
           plutil -lint build/apple-silicon/StudioArm.app/Contents/Info.plist
+          python3 - <<'PY'
+          import os, signal, subprocess, time
+          launcher = 'build/apple-silicon/StudioArm.app/Contents/MacOS/hyui-launcher'
+          app = subprocess.Popen([launcher], stderr=subprocess.PIPE, start_new_session=True)
+          try:
+              time.sleep(4)
+              if app.poll() is not None:
+                  raise AssertionError(f'arm64 Studio exited early ({app.returncode}): {app.stderr.read().decode()}')
+          finally:
+              if app.poll() is None:
+                  os.killpg(app.pid, signal.SIGTERM)
+                  app.wait(timeout=10)
+          PY
 
   windows-ui:
     name: WinUI interactions and appearance
