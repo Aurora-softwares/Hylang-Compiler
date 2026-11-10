@@ -13,6 +13,8 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"ScrollView", {"height", "gap"}},
     {"GridPanel", {"gap", "columns", "minItemWidth"}},
     {"Panel", {"title", "padding", "gap"}},
+    {"SplitView", {"value", "height", "onChange"}},
+    {"StatusBar", {"text"}},
     {"MenuBar", {}}, {"Menu", {"text"}}, {"MenuItem", {"text", "onClick", "checked", "shortcut"}},
     {"ContextMenu", {"target"}},
     {"Popover", {"target", "text", "open", "onClose"}},
@@ -25,7 +27,9 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"Image", {"source", "height"}},
     {"Dialog", {"title", "text", "buttons", "open", "value", "onClose"}},
     {"Label", {"text", "role", "tone"}},
+    {"ValidationMessage", {"text", "severity"}},
     {"Button", {"text", "onClick", "primary"}},
+    {"ToggleButton", {"text", "checked", "onChange"}},
     {"Input", {"text", "placeholder", "onChange", "onSubmit"}},
     {"SearchInput", {"text", "placeholder", "onChange", "onSubmit"}},
     {"PasswordInput", {"placeholder", "onChange", "onSubmit"}},
@@ -46,7 +50,7 @@ static const QSet<QString> numbers = {"width", "height", "padding", "gap", "brea
                                       "preferredWidth", "minimum", "maximum", "interval"};
 QStringList Document::supportedElements() { return attributes.keys(); }
 static bool container(const QString& tag) {
-    return tag == "Tabs" || tag == "Tab" || tag == "MenuBar" || tag == "Menu" || tag == "ContextMenu" || tag == "Popover" || tag == "Toolbar" || tag == "Window" || tag == "Panel" || tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel" || tag == "ScrollView";
+    return tag == "SplitView" || tag == "Tabs" || tag == "Tab" || tag == "MenuBar" || tag == "Menu" || tag == "ContextMenu" || tag == "Popover" || tag == "Toolbar" || tag == "Window" || tag == "Panel" || tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel" || tag == "ScrollView";
 }
 
 QString Document::resourcePath(const QString& relative) const {
@@ -112,6 +116,10 @@ bool Document::parse(const QByteArray& xml) {
         if (node.attributes.contains("tone") && !QStringList{"normal", "muted", "accent"}.contains(node.attributes["tone"])) {
             return invalid("unknown Label tone");
         }
+        if (node.tag == "ValidationMessage" &&
+            !QStringList{"error", "warning", "info", "success"}.contains(node.attributes.value("severity", "error"))) {
+            return invalid("ValidationMessage severity must be error, warning, info, or success");
+        }
         if (node.tag == "FilePicker" && !QStringList{"open", "save", "folder"}.contains(node.attributes.value("mode"))) {
             return invalid("FilePicker mode must be open, save, or folder");
         }
@@ -149,7 +157,7 @@ bool Document::parse(const QByteArray& xml) {
         if (node.tag == "Clipboard") { props.insert("value"); }
         properties.insert(node.id, props);
         for (const auto& prop : props) {
-            QString value = node.attributes.value(prop);
+            QString value = node.attributes.value(prop, node.tag == "SplitView" && prop == "value" ? "260" : "");
             if (prop == "enabled" || prop == "visible") { value = node.attributes.value(prop, "true"); }
             if (prop == "running") { value = node.attributes.value(prop, node.tag == "Spinner" ? "true" : "false"); }
             QVariant typed = value;
@@ -169,7 +177,7 @@ bool Document::parse(const QByteArray& xml) {
             if (node.tag == "Select" || node.tag == "ListBox" || node.tag == "RadioGroup") { maximum = node.attributes.value("items").split('|').size() - 1; }
             if (node.tag == "Table") { maximum = node.attributes.value("rows").split('\n').size() - 1; }
             if (node.tag == "Dialog") { maximum = node.attributes.value("buttons", "OK").split('|').size() - 1; }
-            if (node.tag == "Tabs") { maximum = 32767; } // Child count is checked after parsing.
+            if (node.tag == "Tabs" || node.tag == "SplitView") { maximum = 32767; } // Child count is checked after parsing.
             int value = initialState[node.id + ".value"].toInt();
             if (value < minimum || value > maximum) { return invalid("value is outside the control's range"); }
             ranges[node.id] = qMakePair(minimum, maximum);
@@ -187,6 +195,8 @@ bool Document::parse(const QByteArray& xml) {
                     (childTag == "Dialog" && node.tag != "Window") || (childTag == "ContextMenu" && node.tag != "Window") ||
                     (childTag == "Clipboard" && node.tag != "Window") || (childTag == "Popover" && node.tag != "Window") ||
                     (childTag == "Toolbar" && node.tag != "Window") || (childTag == "ToolButton" && node.tag != "Toolbar") ||
+                    (node.tag == "SplitView" && (childTag == "MenuBar" || childTag == "Toolbar" || childTag == "ContextMenu" ||
+                        childTag == "Popover" || childTag == "Clipboard" || childTag == "Dialog" || childTag == "State" || childTag == "Timer")) ||
                     (node.tag == "ContextMenu" && childTag != "MenuItem") || (node.tag == "Toolbar" && childTag != "ToolButton")) { return invalid("invalid placement of " + childTag); }
                 Node child;
                 if (!read(child, depth + 1)) { return false; }
@@ -214,6 +224,9 @@ bool Document::parse(const QByteArray& xml) {
                             return invalid("Popover target must name a Button");
                         }
                     }
+                }
+                if (node.tag == "SplitView" && node.children.size() != 2) {
+                    return invalid("SplitView requires exactly two visual child panes");
                 }
                 if (node.tag == "ContextMenu" && node.children.empty()) { return invalid("ContextMenu requires MenuItem children"); }
                 if (node.tag == "Toolbar" && node.children.empty()) { return invalid("Toolbar requires ToolButton children"); }

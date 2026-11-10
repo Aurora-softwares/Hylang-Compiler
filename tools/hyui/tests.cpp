@@ -11,7 +11,7 @@ class HyuiTests : public QObject {
     Q_OBJECT
 private slots:
 
-    // Each of the 39 public HYUI elements is a separate named QtTest row.
+    // Each of the 43 public HYUI elements is a separate named QtTest row.
     // The inventory comparison fails if a renderer/schema grows a new tag
     // without acquiring a corresponding contract case.
     void everyElementHasContract_data() {
@@ -50,10 +50,10 @@ private slots:
     }
 
     void everyElementHasInventoryCoverage() {
-        const QSet<QString> expected = { "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "Table", "RadioGroup", "Image", "Dialog", "Label", "Button", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer" };
+        const QSet<QString> expected = { "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "SplitView", "StatusBar", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "Table", "RadioGroup", "Image", "Dialog", "Label", "ValidationMessage", "Button", "ToggleButton", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer" };
         QSet<QString> actual;
         for (const QString& tag : hyui::Document::supportedElements()) { actual.insert(tag); }
-        QCOMPARE(expected.size(), 39);
+        QCOMPARE(expected.size(), 43);
         QCOMPARE(actual, expected);
     }
 
@@ -98,6 +98,48 @@ private slots:
         for (int i = 0; i < 34; ++i) { nested += "</Panel>"; }
         nested += "</Window>";
         QVERIFY(!d.parse(nested));
+    }
+
+    void toggleButtonAndValidationMessageContract() {
+        hyui::Document document;
+        QVERIFY(document.parse(R"(<Window version="1"><ToggleButton id="flag" text="Enable" checked="true" onChange="Flip"/><ValidationMessage id="error" text="Required field" severity="warning"/></Window>)"));
+        QCOMPARE(document.initialState["flag.checked"].toBool(), true);
+        QCOMPARE(document.initialState["error.text"].toString(), QString("Required field"));
+        QVERIFY(document.properties["flag"].contains("checked"));
+        QVERIFY(document.properties["error"].contains("text"));
+        QVERIFY(document.handlers["Flip"].contains("flag"));
+        const QList<QByteArray> invalid = {
+            R"(<Window version="1"><ToggleButton checked="yes"/></Window>)",
+            R"(<Window version="1"><ValidationMessage severity="critical"/></Window>)",
+            R"(<Window version="1"><ToggleButton onClick="Wrong"/></Window>)",
+            R"(<Window version="1"><ValidationMessage checked="true"/></Window>)"
+        };
+        for (const QByteArray& xml : invalid) {
+            hyui::Document malformed;
+            QVERIFY2(!malformed.parse(xml), xml.constData());
+        }
+    }
+
+    void splitViewAndStatusBarContract() {
+        hyui::Document document;
+        QVERIFY(document.parse(R"(<Window version="1"><SplitView id="split" height="240" value="260" onChange="Resize"><Panel id="left"><Label text="files"/></Panel><Panel id="right"><Label text="editor"/></Panel></SplitView><StatusBar id="status" text="Ready"/></Window>)"));
+        QCOMPARE(document.window.children[0].children.size(), size_t(2));
+        QCOMPARE(document.initialState["split.value"].toInt(), 260);
+        QCOMPARE(document.initialState["status.text"].toString(), QString("Ready"));
+        QVERIFY(document.properties["split"].contains("value"));
+        QVERIFY(document.properties["status"].contains("text"));
+        QVERIFY(document.handlers["Resize"].contains("split"));
+        const QList<QByteArray> invalid = {
+            R"(<Window version="1"><SplitView><Panel/></SplitView></Window>)",
+            R"(<Window version="1"><SplitView><Panel/><Panel/><Panel/></SplitView></Window>)",
+            R"(<Window version="1"><SplitView><State value="secret"/><Panel/></SplitView></Window>)",
+            R"(<Window version="1"><SplitView value="50000"><Panel/><Panel/></SplitView></Window>)",
+            R"(<Window version="1"><StatusBar checked="true"/></Window>)"
+        };
+        for (const QByteArray& xml : invalid) {
+            hyui::Document malformed;
+            QVERIFY2(!malformed.parse(xml), xml.constData());
+        }
     }
 
     void responseIsTypedAndAtomic() {

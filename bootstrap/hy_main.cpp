@@ -812,7 +812,7 @@ int scaffold_project(const string& kind, const fs::path& destination) {
 
 int handle_build(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "usage: hy build <file.hy|project.hyproj> [--target exe|lib|uefi-x64] [-o output] [--debug] [--hide-progress] [--hide-spinner] [--hide-log]\n";
+        std::cerr << "usage: hy build <file.hy|project.hyproj> [--target exe|lib|uefi-x64|macos-arm64] [-o output] [--debug] [--hide-progress] [--hide-spinner] [--hide-log]\n";
         return 1;
     }
 
@@ -1570,7 +1570,7 @@ int handle_lsp() {
 void print_usage() {
     std::cerr << "usage:\n";
     std::cerr << "  hy new app|lib|tool|test|workspace <name>\n";
-    std::cerr << "  hy build <file.hy|project.hyproj> [--target exe|lib|uefi-x64] [-o output] [--debug] [--hide-progress] [--hide-spinner] [--hide-log]\n";
+    std::cerr << "  hy build <file.hy|project.hyproj> [--target exe|lib|uefi-x64|macos-arm64] [-o output] [--debug] [--hide-progress] [--hide-spinner] [--hide-log]\n";
     std::cerr << "  hy run <file.hy|project.hyproj> [-- args...]\n";
     std::cerr << "  hy ui <file.hy|project.hyproj> (requires the optional hyui desktop host)\n";
     std::cerr << "  hy test [project.hyproj]\n";

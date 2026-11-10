@@ -7,7 +7,7 @@
 
 int main(int argc, char** argv) {
     if (argc < 3 || std::string(argv[1]) != "build") {
-        std::cerr << "usage: hyc build <file.hy|project.hyproj> [--target exe|lib] [-o output] [--hide-progress] [--hide-spinner] [--hide-log]\n";
+        std::cerr << "usage: hyc build <file.hy|project.hyproj> [--target exe|lib|macos-arm64] [-o output] [--hide-progress] [--hide-spinner] [--hide-log]\n";
         return 1;
     }
 

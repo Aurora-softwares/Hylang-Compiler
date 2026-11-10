@@ -1,0 +1,4 @@
+format = 2
+name = "MacOSArm64Runtime"
+type = "exe"
+sources = ["FullRuntime.hy"]

@@ -21,6 +21,12 @@ inline void addHyuiElementContractRows() {
         QTest::newRow("Panel") << QStringLiteral("Panel")
             << QByteArray(R"HYUI(<Window version="1"><Panel id="subject" title="Settings"><Label text="Inside"/></Panel></Window>)HYUI")
             << QStringLiteral("subject.visible") << QStringLiteral("");
+        QTest::newRow("SplitView") << QStringLiteral("SplitView")
+            << QByteArray(R"HYUI(<Window version="1"><SplitView id="subject" value="260" onChange="Touched"><Panel/><Panel/></SplitView></Window>)HYUI")
+            << QStringLiteral("subject.value") << QStringLiteral("Touched");
+        QTest::newRow("StatusBar") << QStringLiteral("StatusBar")
+            << QByteArray(R"HYUI(<Window version="1"><StatusBar id="subject" text="Ready"/></Window>)HYUI")
+            << QStringLiteral("subject.text") << QStringLiteral("");
         QTest::newRow("MenuBar") << QStringLiteral("MenuBar")
             << QByteArray(R"HYUI(<Window version="1"><MenuBar id="subject"><Menu text="File"><MenuItem text="Save" onClick="Save"/></Menu></MenuBar></Window>)HYUI")
             << QStringLiteral("subject.visible") << QStringLiteral("");
@@ -69,9 +75,15 @@ inline void addHyuiElementContractRows() {
         QTest::newRow("Label") << QStringLiteral("Label")
             << QByteArray(R"HYUI(<Window version="1"><Label id="subject" text="Hello" role="heading"/></Window>)HYUI")
             << QStringLiteral("subject.text") << QStringLiteral("");
+        QTest::newRow("ValidationMessage") << QStringLiteral("ValidationMessage")
+            << QByteArray(R"HYUI(<Window version="1"><ValidationMessage id="subject" text="Check this" severity="warning"/></Window>)HYUI")
+            << QStringLiteral("subject.text") << QStringLiteral("");
         QTest::newRow("Button") << QStringLiteral("Button")
             << QByteArray(R"HYUI(<Window version="1"><Button id="subject" text="Save" primary="true" onClick="Touched"/></Window>)HYUI")
             << QStringLiteral("subject.text") << QStringLiteral("Touched");
+        QTest::newRow("ToggleButton") << QStringLiteral("ToggleButton")
+            << QByteArray(R"HYUI(<Window version="1"><ToggleButton id="subject" text="Enable" checked="true" onChange="Touched"/></Window>)HYUI")
+            << QStringLiteral("subject.checked") << QStringLiteral("Touched");
         QTest::newRow("Input") << QStringLiteral("Input")
             << QByteArray(R"HYUI(<Window version="1"><Input id="subject" text="Draft" onChange="Touched" onSubmit="Submit"/></Window>)HYUI")
             << QStringLiteral("subject.text") << QStringLiteral("Touched");

@@ -14,7 +14,7 @@
 - (BOOL)isFlipped { return YES; }
 @end
 
-@interface HYAction : NSObject<NSTextFieldDelegate, NSTextViewDelegate, NSWindowDelegate, NSTableViewDelegate, NSTableViewDataSource, NSToolbarDelegate, NSPopoverDelegate> {
+@interface HYAction : NSObject<NSTextFieldDelegate, NSTextViewDelegate, NSWindowDelegate, NSTableViewDelegate, NSTableViewDataSource, NSToolbarDelegate, NSPopoverDelegate, NSSplitViewDelegate> {
 @public
     std::function<void(id)> callback;
     NSArray* tableRows;
@@ -34,6 +34,7 @@
 - (void)tableViewSelectionDidChange:(NSNotification*)note { [self fire:note.object]; }
 - (BOOL)windowShouldClose:(NSWindow*)window { QCoreApplication::quit(); return YES; }
 - (void)popoverDidClose:(NSNotification*)note { [self fire:note.object]; }
+- (void)splitViewDidResizeSubviews:(NSNotification*)note { [self fire:note.object]; }
 - (NSArray<NSString*>*)toolbarAllowedItemIdentifiers:(NSToolbar*)toolbar { return toolbarIdentifiers; }
 - (NSArray<NSString*>*)toolbarDefaultItemIdentifiers:(NSToolbar*)toolbar { return toolbarIdentifiers; }
 - (NSToolbarItem*)toolbar:(NSToolbar*)toolbar itemForItemIdentifier:(NSToolbarItemIdentifier)identifier willBeInsertedIntoToolbar:(BOOL)flag {
@@ -80,6 +81,7 @@ class AppKitView : public NativeView {
     QMap<QString, NSView*> popoverContents;
     QMap<QString, NSView*> popoverFrames;
     bool applying = false;
+    bool positioningSplit = false;
     bool disposing = false;
     bool layoutDirty = true;
     NSSize viewportSize = NSZeroSize;
@@ -148,6 +150,33 @@ class AppKitView : public NativeView {
         }
         const Node* node = nodes.value(view, nullptr);
         QString tag = node ? node->tag : "Label";
+        if (tag == "SplitView") {
+            CGFloat height = node->attributes.value("height", "260").toInt();
+            NSSplitView* split = (NSSplitView*)view;
+            // AppKit may fire splitViewDidResizeSubviews when programmatically
+            // reflowing an initially hidden view. That must not overwrite the
+            // requested Hydrogen divider position or dispatch a user callback.
+            positioningSplit = true;
+            [split setFrameSize:NSMakeSize(width, height)];
+            if (split.subviews.count == 2) {
+                const CGFloat maxDivider = qMax<CGFloat>(0, width - split.dividerThickness);
+                const CGFloat target = qBound<CGFloat>(0, bridge.state().value(node->id + ".value").toInt(), maxDivider);
+                // NSSplitView adjusts divider frames from its children's previous
+                // zero-sized layout when embedded in the Hydrogen scroll document.
+                // Assign both pane frames explicitly before handing drag handling
+                // back to the native splitter.
+                const CGFloat startWidth = qMax<CGFloat>(1, target);
+                const CGFloat endWidth = qMax<CGFloat>(1, width - target - split.dividerThickness);
+                NSView* start = split.subviews[0];
+                NSView* end = split.subviews[1];
+                arrange(start, startWidth);
+                arrange(end, endWidth);
+                [start setFrame:NSMakeRect(0, 0, startWidth, height)];
+                [end setFrame:NSMakeRect(target + split.dividerThickness, 0, endWidth, height)];
+            }
+            positioningSplit = false;
+            return height;
+        }
         if (tag == "ScrollView") {
             CGFloat height = node->attributes.value("height", "200").toInt();
             [view setFrameSize:NSMakeSize(width, height)];
@@ -167,7 +196,7 @@ class AppKitView : public NativeView {
                 attributes:@{NSFontAttributeName:label.font}];
             height = label.stringValue.length ? std::ceil(bounds.size.height) + 4 : 0;
         } else if (tag == "TextArea") { height = node->attributes.value("height", "100").toInt(); }
-        else if (tag == "Button" || tag == "Select") { height = 32; }
+        else if (tag == "Button" || tag == "ToggleButton" || tag == "Select") { height = 32; }
         else if (tag == "Switch") { height = 28; }
         else if (tag == "Spinner") { height = 20; }
         else if (tag == "ProgressBar") { height = 8; }
@@ -308,7 +337,20 @@ class AppKitView : public NativeView {
             QObject::connect(timer, &QTimer::timeout, &signalScope, [this, &node] { bridge.dispatch(node.attributes["onTick"], node.id); }); timers.append(timer); return nil;
         }
         NSView* view = nil; id control = nil; id extra = nil;
-        if (tag == "Tabs") {
+        if (tag == "SplitView") {
+            NSSplitView* split = [[[NSSplitView alloc] init] autorelease];
+            split.vertical = YES;
+            split.dividerStyle = NSSplitViewDividerStyleThin;
+            for (const Node& pane : node.children) { NSView* child = build(pane); if (child) { [split addSubview:child]; } }
+            split.delegate = action([this, &node](id sender) {
+                if (positioningSplit || applying || bridge.isApplying()) { return; }
+                NSSplitView* pane = (NSSplitView*)sender;
+                if (pane.subviews.count == 2 && pane.bounds.size.width > 0) {
+                    handleEvent(node, "value", int(std::round(pane.subviews[0].frame.size.width)), "onChange");
+                }
+            });
+            view = split; control = split;
+        } else if (tag == "Tabs") {
             view = stack(); NSSegmentedControl* tabs = [[[NSSegmentedControl alloc] init] autorelease];
             tabs.segmentCount = node.children.size(); tabs.segmentDistribution = NSSegmentDistributionFill;
             tabs.trackingMode = NSSegmentSwitchTrackingSelectOne; int index = 0;
@@ -366,10 +408,17 @@ class AppKitView : public NativeView {
             }
             for (const auto& child : node.children) { add(contents, build(child)); }
             view = contents;
-        } else if (tag == "Label") {
+        } else if (tag == "Label" || tag == "ValidationMessage" || tag == "StatusBar") {
             NSTextField* label = [NSTextField wrappingLabelWithString:@""]; label.maximumNumberOfLines = 0;
+            if (tag == "StatusBar") { label.font = [NSFont systemFontOfSize:11]; label.textColor = NSColor.secondaryLabelColor; }
             if (a.value("tone") == "muted") { label.textColor = NSColor.secondaryLabelColor; }
             if (a.value("tone") == "accent") { label.textColor = NSColor.controlAccentColor; }
+            if (tag == "ValidationMessage") {
+                QString severity = a.value("severity", "error");
+                label.textColor = severity == "warning" ? NSColor.systemOrangeColor :
+                    severity == "success" ? NSColor.systemGreenColor :
+                    severity == "info" ? NSColor.controlAccentColor : NSColor.systemRedColor;
+            }
             if (a.value("role") == "title") { label.font = [NSFont boldSystemFontOfSize:28]; }
             else if (a.value("role") == "heading") { label.font = [NSFont boldSystemFontOfSize:15]; }
             else if (a.value("role") == "caption") { label.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium]; }
@@ -399,7 +448,7 @@ class AppKitView : public NativeView {
                     [retained removeObject:panel];
                 }];
             }); view = button; control = button;
-        } else if (tag == "Button" || tag == "ToolButton" || tag == "CheckBox" || tag == "Switch") {
+        } else if (tag == "Button" || tag == "ToolButton" || tag == "CheckBox" || tag == "Switch" || tag == "ToggleButton") {
             if (tag == "Switch") {
                 NSSwitch* toggle = [[[NSSwitch alloc] init] autorelease];
                 HYAction* target = action([this, &node](id sender) { handleEvent(node, "checked", [(NSSwitch*)sender state] == NSControlStateValueOn, "onChange"); });
@@ -409,9 +458,10 @@ class AppKitView : public NativeView {
             } else {
                 NSButton* button = [NSButton buttonWithTitle:@"" target:nil action:@selector(fire:)];
                 if (tag == "CheckBox") { [button setButtonType:NSButtonTypeSwitch]; }
+                else if (tag == "ToggleButton") { [button setButtonType:NSButtonTypePushOnPushOff]; button.bezelStyle = NSBezelStyleRounded; }
                 else { button.bezelStyle = NSBezelStyleRounded; if (a.value("primary") == "true") { button.keyEquivalent = @"\r"; } }
                 button.target = action([this, &node, tag](id sender) {
-                    if (tag == "CheckBox") { handleEvent(node, "checked", [(NSButton*)sender state] == NSControlStateValueOn, "onChange"); }
+                    if (tag == "CheckBox" || tag == "ToggleButton") { handleEvent(node, "checked", [(NSButton*)sender state] == NSControlStateValueOn, "onChange"); }
                     else if (node.attributes.contains("onClick")) { bridge.dispatch(node.attributes["onClick"], node.id); }
                 }); view = button; control = button;
             }
@@ -477,10 +527,18 @@ class AppKitView : public NativeView {
                 for (const Node& parent : doc.window.children) { if (parent.tag == "Toolbar") { enabled = enabled && state.value(parent.id + ".enabled").toBool(); break; } }
             }
             if ([c.control respondsToSelector:@selector(setEnabled:)]) { [c.control setEnabled:enabled]; }
-            if (tag == "Label" || tag == "Input" || tag == "SearchInput") { if (string([c.control stringValue]) != value("text").toString()) { [c.control setStringValue:text(value("text").toString())]; } }
+            if (tag == "Label" || tag == "ValidationMessage" || tag == "StatusBar" || tag == "Input" || tag == "SearchInput") { if (string([c.control stringValue]) != value("text").toString()) { [c.control setStringValue:text(value("text").toString())]; } }
             if (tag == "TextArea") { if (string([(NSTextView*)c.control string]) != value("text").toString()) { [(NSTextView*)c.control setString:text(value("text").toString())]; } }
-            if (tag == "Button" || tag == "ToolButton" || tag == "FilePicker" || tag == "CheckBox") { [(NSButton*)c.control setTitle:text(value("text").toString())]; }
-            if (tag == "CheckBox" || tag == "Switch") { [c.control setState:value("checked").toBool() ? NSControlStateValueOn : NSControlStateValueOff]; }
+            if (tag == "Button" || tag == "ToolButton" || tag == "ToggleButton" || tag == "FilePicker" || tag == "CheckBox") { [(NSButton*)c.control setTitle:text(value("text").toString())]; }
+            if (tag == "CheckBox" || tag == "ToggleButton" || tag == "Switch") { [c.control setState:value("checked").toBool() ? NSControlStateValueOn : NSControlStateValueOff]; }
+            if (tag == "SplitView" && c.view.bounds.size.width > 0) {
+                NSSplitView* split = (NSSplitView*)c.view;
+                CGFloat target = qBound<CGFloat>(0, value("value").toInt(),
+                    qMax<CGFloat>(0, split.bounds.size.width - split.dividerThickness));
+                if (split.subviews.count == 2 && std::abs(split.subviews[0].frame.size.width - target) > 1) {
+                    [split setPosition:target ofDividerAtIndex:0];
+                }
+            }
             if (tag == "Tabs") {
                 [(NSSegmentedControl*)c.control setSelectedSegment:value("value").toInt()]; int index = 0;
                 for (const Node& page : c.node->children) { items[page.id].view.hidden = index++ != value("value").toInt() || !state.value(page.id + ".visible").toBool(); }

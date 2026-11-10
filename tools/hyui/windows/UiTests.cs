@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Media;
@@ -96,9 +97,9 @@ public sealed partial class NativeWindow
     // Validate every HYUI tag against the native WinUI 3 control family.
     // A generic placeholder is not enough: a new schema control must receive
     // an explicit native mapping here before it can be considered implemented.
-    void CheckAll39NativeElements() {
+    void CheckAll43NativeElements() {
         var expected = new HashSet<string>(StringComparer.Ordinal) {
-            "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "Table", "RadioGroup", "Image", "Dialog", "Label", "Button", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer"
+            "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "SplitView", "StatusBar", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "Table", "RadioGroup", "Image", "Dialog", "Label", "ValidationMessage", "Button", "ToggleButton", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer"
         };
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var entry in nodes) {
@@ -112,6 +113,8 @@ public sealed partial class NativeWindow
                 "ScrollView" => control is ScrollViewer,
                 "GridPanel" => control is Grid,
                 "Panel" => control is Border,
+                "SplitView" => control is Grid split && split.Children.OfType<Thumb>().Any(),
+                "StatusBar" => control is TextBlock,
                 "MenuBar" => control is MenuBar,
                 "Menu" => control is MenuBarItem,
                 "MenuItem" => control is MenuFlyoutItemBase,
@@ -128,7 +131,9 @@ public sealed partial class NativeWindow
                 "Image" => control is Microsoft.UI.Xaml.Controls.Image,
                 "Dialog" => values.ContainsKey(entry.Key + ".open"),
                 "Label" => control is TextBlock,
+                "ValidationMessage" => control is TextBlock,
                 "Button" => control is Button,
+                "ToggleButton" => control is ToggleButton,
                 "Input" => control is TextBox && !((TextBox)control).AcceptsReturn,
                 "SearchInput" => control is AutoSuggestBox,
                 "PasswordInput" => control is PasswordBox,
@@ -158,7 +163,7 @@ public sealed partial class NativeWindow
     public async Task RunUiTests(string output) {
         Directory.CreateDirectory(output); Root.RequestedTheme = ElementTheme.Light; ((ScrollViewer)Root).Background = new SolidColorBrush(Microsoft.UI.Colors.White);
         await Until(() => Root.IsLoaded && Root.ActualWidth > 0, "WinUI window did not load");
-        CheckAll39NativeElements();
+        CheckAll43NativeElements();
         var shots = new List<string>(); var captures = new List<object>();
         var tabs = (TabView)controls["pages"];
         foreach (int page in new[] { 0, 1 }) {
@@ -188,6 +193,30 @@ public sealed partial class NativeWindow
         }
         Root.Width = 1120; AppWindow.Resize(new Windows.Graphics.SizeInt32(1136, 640)); await Task.Delay(200);
         await Until(() => ((BitmapImage)((Image)controls["logo"]).Source).PixelWidth > 0, "Bundled image did not decode");
+        Check(controls["featureToggle"] is ToggleButton, "ToggleButton must use native WinUI ToggleButton");
+        Check(controls["validationHint"] is TextBlock, "ValidationMessage must use native WinUI TextBlock");
+        var featureToggle = (ToggleButton)controls["featureToggle"];
+        featureToggle.IsChecked = true; await Idle();
+        Check(values["featureToggle.checked"] == "true" &&
+              values["validationHint.text"] == "Optional features enabled.",
+              "WinUI toggle event did not reach Hydrogen");
+        Apply("HYUI\tSET\tfeatureToggle\tchecked\tfalse\nHYUI\tSET\tvalidationHint\ttext\tReset by Hydrogen\n");
+        Check(featureToggle.IsChecked == false &&
+              ((TextBlock)controls["validationHint"]).Text == "Reset by Hydrogen",
+              "WinUI toggle or validation feedback did not update");
+        Check(controls["ideSplit"] is Grid, "SplitView must use a native WinUI Grid");
+        var split = (Grid)controls["ideSplit"];
+        Check(split.ColumnDefinitions.Count == 3 && split.Children.OfType<Microsoft.UI.Xaml.Controls.Primitives.Thumb>().Count() == 1,
+              "SplitView must have two panes and a draggable native Thumb");
+        Check(controls["ideStatus"] is TextBlock, "StatusBar must use a native WinUI TextBlock");
+        Apply("HYUI\tSET\tideSplit\tvisible\ttrue\nHYUI\tSET\tideStatus\tvisible\ttrue\nHYUI\tSET\tideSplit\tvalue\t300\nHYUI\tSET\tideStatus\ttext\tStatus updated\n");
+        Check(split.ColumnDefinitions[0].Width.Value == 300 &&
+              ((TextBlock)controls["ideStatus"]).Text == "Status updated",
+              "WinUI SplitView divider or StatusBar did not respond to Hydrogen state");
+        values["ideSplit.value"] = "325";
+        Dispatch("ResizeIdePane", "ideSplit"); await Idle();
+        Check(values["ideStatus.text"] == "Navigator width: 325 px",
+              "WinUI split callback did not reach Hydrogen");
         ((RadioButtons)controls["channel"]).SelectedIndex = 1; await Idle(); Check(values["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         ((ListView)controls["templates"]).SelectedIndex = 2; await Idle(); Check(values["selectionText.text"] == "Template index: 2", "List event did not reach Hydrogen");
         var toolbar = controls["studioToolbar"] as CommandBar;

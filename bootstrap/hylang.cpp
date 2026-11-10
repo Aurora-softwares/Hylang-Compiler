@@ -13218,11 +13218,13 @@ BuildResult build_target(const BuildOptions& options) {
     if (target_type == "test") {
         target_type = "exe";
     }
-    if (target_type != "exe" && target_type != "lib" && target_type != "uefi-x64") {
+    if (target_type != "exe" && target_type != "lib" && target_type != "uefi-x64" &&
+        target_type != "macos-arm64") {
         diagnostics.add(options.input_path, 1, 1, "Unsupported build target '" + target_type + "'");
         return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
-    if ((target_type == "exe" || target_type == "uefi-x64") && !locate_entry_point(*program, diagnostics)) {
+    if ((target_type == "exe" || target_type == "uefi-x64" || target_type == "macos-arm64") &&
+        !locate_entry_point(*program, diagnostics)) {
         return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
     }
 
@@ -13270,6 +13272,15 @@ BuildResult build_target(const BuildOptions& options) {
         return built;
     }
 
+    // Apple's clang supplies the macOS SDK and the arm64 ABI, including when
+    // this command runs on an Intel Mac. A non-Darwin host has no system SDK.
+#ifndef __APPLE__
+    if (target_type == "macos-arm64") {
+        diagnostics.add(options.input_path, 1, 1,
+            "macos-arm64 requires macOS with Xcode Command Line Tools");
+        return BuildResult{false, std::move(diagnostics.items), {}, {}, false};
+    }
+#endif
     const auto toolchain = detect_host_toolchain();
     if (!toolchain.has_value()) {
         diagnostics.add(options.input_path, 1, 1, "Could not find a host C compiler");
@@ -13297,8 +13308,11 @@ BuildResult build_target(const BuildOptions& options) {
 
     int result = 0;
     status("Compiling native output");
-    if (target_type == "exe") {
-        vector<string> command = toolchain->c_compiler;
+    if (target_type == "exe" || target_type == "macos-arm64") {
+        vector<string> command = target_type == "macos-arm64"
+            ? vector<string>{"xcrun", "--sdk", "macosx", "clang", "-arch", "arm64",
+                             "-mmacosx-version-min=11.0"}
+            : toolchain->c_compiler;
         if (toolchain->uses_msvc) {
             command.insert(command.end(), {"/nologo", "/std:c11", options.debug ? "/Od" : "/O2",
                                            generated_c.string(), "/Fe:" + output_path.string()});

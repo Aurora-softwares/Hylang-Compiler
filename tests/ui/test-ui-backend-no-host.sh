@@ -65,13 +65,39 @@ for compiler in "${stages[@]}"; do
         exit 1
     fi
 
-    if "$compiler" build "$work/Broken.hyproj" \
-        -o "$work/invalid-$index" --ui-backend --ui-sdk "$sdk" \
-        --hide-progress --hide-spinner --hide-log; then
-        echo "Compiler accepted malformed HYUI markup: $compiler" >&2
-        exit 1
-    fi
-    echo "HYUI native-free backend compile passed: $compiler"
+    # Every stage must reject malformed UI before trying to compile the
+    # deliberately missing source file. Match the parser diagnostic, not
+    # merely a nonzero exit status.
+    check_invalid() {
+        local source="$1" expected="$2"
+        printf '%s\n' "$source" >"$work/Broken.hyui"
+        if "$compiler" build "$work/Broken.hyproj" \
+            -o "$work/invalid-$index" --ui-backend --ui-sdk "$sdk" \
+            --hide-progress --hide-spinner --hide-log >"$work/invalid.log" 2>&1; then
+            echo "Compiler accepted invalid HYUI: $compiler: $source" >&2
+            exit 1
+        fi
+        if ! grep -Fq -- "$expected" "$work/invalid.log"; then
+            echo "Expected UI preflight error '$expected', got:" >&2
+            cat "$work/invalid.log" >&2
+            exit 1
+        fi
+    }
+    check_invalid '<Window version="1"><Label id="test"></Window>' 'mismatched closing element'
+    check_invalid '<Window version="1"><Mystery/></Window>' 'unsupported UI element'
+    check_invalid '<Window version="1"><Label id="duplicate"/><Label id="duplicate"/></Window>' 'duplicate UI element id'
+    check_invalid '<Window version="1"><Button onClicked="Clicked"/></Window>' 'unsupported or oversized attribute'
+    check_invalid '<Window version="1"><Tabs><Button text="Bad"/></Tabs></Window>' 'invalid placement'
+    check_invalid '<Window version="1"><Button onClick="Run()"/></Window>' 'invalid handler name'
+    check_invalid '<Window version="1"><Button visible="maybe"/></Window>' 'must be true or false'
+    check_invalid '<Window><Label text="Missing version"/></Window>' 'Window requires version'
+    check_invalid '<Window version="1"><FilePicker mode="read" text="Open" onPick="Pick"/></Window>' 'FilePicker requires mode'
+    check_invalid '<Window version="1"><Timer interval="10" onTick="Tick"/></Window>' 'invalid numeric'
+    check_invalid '<Window version="1"><Toolbar><ToolButton text="No handler"/></Toolbar></Window>' 'ToolButton requires text and onClick'
+    check_invalid '<Window version="1"><SplitView><Panel/></SplitView></Window>' 'SplitView requires exactly two visual panes'
+    check_invalid '<Window version="1"><SplitView><Panel/><Panel/><Panel/></SplitView></Window>' 'SplitView requires exactly two visual panes'
+    check_invalid '<Window version="1"><Panel><Window version="1"/></Panel></Window>' 'invalid placement'
+    echo "HYUI native-free schema and backend passed: $compiler"
 done
 
 echo "Hydrogen UI backend compilation passed without hyui-native."

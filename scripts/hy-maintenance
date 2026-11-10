@@ -34,10 +34,15 @@ case $(uname -s):$(uname -m) in
     Linux:x86_64) platform=linux-x86_64 ;;
     Darwin:x86_64) platform=macos-x86_64 ;;
     Darwin:arm64)
-        /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1 ||
-            error 'Rosetta 2 is required for the macOS x64 compiler'
-        platform=macos-x86_64 ;;
-    *) error 'this release supports Linux and macOS x86-64' ;;
+        installed_platform=$(sed -n 's/^Platform: //p' "$root/BUILD-INFO.txt")
+        if [[ $installed_platform == macos-x86_64 ]]; then
+            /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1 ||
+                error 'Rosetta 2 is required for the installed macOS x64 compiler'
+            platform=macos-x86_64
+        else
+            platform=macos-arm64
+        fi ;;
+    *) error 'this release supports Linux x86-64 and macOS x86-64/arm64' ;;
 esac
 [[ $(sed -n 's/^Platform: //p' "$root/BUILD-INFO.txt") == "$platform" ]] || error 'release platform does not match this host'
 
@@ -336,7 +341,7 @@ if ! newer_available "$current" "$latest_version"; then
 fi
 confirm "Replace Hydrogen $current with $latest_version at $root?"
 need tar; need mktemp
-if [[ $platform == macos-x86_64 ]]; then need shasum; else need sha256sum; fi
+if [[ $platform == macos-x86_64 || $platform == macos-arm64 ]]; then need shasum; else need sha256sum; fi
 [[ -w "$(dirname "$root")" ]] || error 'no write access to installation parent; run with appropriate permissions'
 parent=$(dirname "$root")
 workdir=$(mktemp -d -- "$parent/.hydrogen-update.XXXXXXXX") || error 'cannot create staging directory'
