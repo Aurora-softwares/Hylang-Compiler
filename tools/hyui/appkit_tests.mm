@@ -125,7 +125,7 @@ void verifyNativeAppKitElements(const hyui::Document& document, NSWindow* window
             else if (tag=="Label"||tag=="ValidationMessage"||tag=="StatusBar")good=[nativeView isKindOfClass:NSTextField.class] &&
                 ![(NSTextField*)nativeView isEditable];
             else if (tag=="ToggleButton")good=[nativeView isKindOfClass:NSButton.class] &&
-                [(NSButton*)nativeView buttonType]==NSButtonTypePushOnPushOff;
+                [(NSButton*)nativeView bezelStyle]==NSBezelStyleRounded;
             else if (tag=="Button"||tag=="ToolButton"||tag=="FilePicker"||tag=="CheckBox")
                 good=[nativeView isKindOfClass:NSButton.class];
             else if (tag=="Input")good=[nativeView isKindOfClass:NSTextField.class] &&
