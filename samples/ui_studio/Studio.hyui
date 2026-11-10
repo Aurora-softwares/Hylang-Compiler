@@ -132,4 +132,5 @@
   <StatusBar id="ideStatus" text="Navigator ready" visible="false" accessibleName="IDE status" />
   <State id="sessionState" value="ready" />
   <Timer id="buildTimer" interval="350" running="false" onTick="Tick" />
+  <Spacer id="coverageSpacer" height="12" visible="false" />
 </Window>

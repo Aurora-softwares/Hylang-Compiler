@@ -98,6 +98,11 @@ import json,sys
 with open(sys.argv[1],encoding="utf-8") as stream:
     state=json.load(stream)
 assert state["__hyui.native_controls_checked"] is True, state
+elements = ["Window","ColumnPanel","RowPanel","ScrollView","GridPanel","Panel","SplitView","StatusBar","MenuBar","Menu","MenuItem","ContextMenu","Popover","Toolbar","ToolButton","Clipboard","Tabs","Tab","ListBox","Table","RadioGroup","Image","Dialog","Label","ValidationMessage","Button","ToggleButton","Input","SearchInput","PasswordInput","FilePicker","TextArea","CheckBox","Switch","Select","Slider","NumberInput","ProgressBar","Spinner","Separator","Spacer","State","Timer"]
+assert len(elements) == 43
+for element in elements:
+    key = "__hyui.native." + element
+    assert state.get(key) is True, f"{element}: {state.get(key)}"
 PY
 # Exercise the same window-manager close request as the title-bar button.
 # GTK's teardown emits change notifications; these must never dispatch an

@@ -93,9 +93,77 @@ public sealed partial class NativeWindow
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) { var found = DialogButton(VisualTreeHelper.GetChild(root, i), label); if (found != null) return found; }
         return null;
     }
+
+    // Validate every HYUI tag against the native WinUI 3 control family.
+    // A generic placeholder is not enough: a new schema control must receive
+    // an explicit native mapping here before it can be considered implemented.
+    void CheckAll43NativeElements() {
+        var expected = new HashSet<string>(StringComparer.Ordinal) {
+            "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "SplitView", "StatusBar", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "Table", "RadioGroup", "Image", "Dialog", "Label", "ValidationMessage", "Button", "ToggleButton", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer"
+        };
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in nodes) {
+            string tag = entry.Value.Name.LocalName;
+            seen.Add(tag);
+            FrameworkElement? control = controls.GetValueOrDefault(entry.Key);
+            bool native = tag switch {
+                "Window" => Content is ScrollViewer && AppWindow != null,
+                "ColumnPanel" => control is StackPanel,
+                "RowPanel" => control is Grid,
+                "ScrollView" => control is ScrollViewer,
+                "GridPanel" => control is Grid,
+                "Panel" => control is Border,
+                "SplitView" => control is Grid split && split.Children.OfType<Thumb>().Any(),
+                "StatusBar" => control is TextBlock,
+                "MenuBar" => control is MenuBar,
+                "Menu" => control is MenuBarItem,
+                "MenuItem" => control is MenuFlyoutItemBase,
+                "ContextMenu" => controls.TryGetValue(Attr(entry.Value, "target"), out var target) && target.ContextFlyout is MenuFlyout,
+                "Popover" => popovers.ContainsKey(entry.Key) && popovers[entry.Key].Flyout is Flyout,
+                "Toolbar" => control is CommandBar,
+                "ToolButton" => control is AppBarButton,
+                "Clipboard" => values.ContainsKey(entry.Key + ".value"),
+                "Tabs" => control is TabView,
+                "Tab" => control is StackPanel,
+                "ListBox" => control is ListView,
+                "Table" => control is ListView && ((ListView)control).Header is Grid,
+                "RadioGroup" => control is RadioButtons,
+                "Image" => control is Microsoft.UI.Xaml.Controls.Image,
+                "Dialog" => values.ContainsKey(entry.Key + ".open"),
+                "Label" => control is TextBlock,
+                "ValidationMessage" => control is TextBlock,
+                "Button" => control is Button,
+                "ToggleButton" => control is ToggleButton,
+                "Input" => control is TextBox && !((TextBox)control).AcceptsReturn,
+                "SearchInput" => control is AutoSuggestBox,
+                "PasswordInput" => control is PasswordBox,
+                "FilePicker" => control is Button,
+                "TextArea" => control is TextBox && ((TextBox)control).AcceptsReturn,
+                "CheckBox" => control is CheckBox,
+                "Switch" => control is ToggleSwitch,
+                "Select" => control is ComboBox,
+                "Slider" => control is Slider,
+                "NumberInput" => control is NumberBox,
+                "ProgressBar" => control is ProgressBar,
+                "Spinner" => control is ProgressRing,
+                "Separator" => control is Border,
+                "Spacer" => control is Grid,
+                "State" => values.ContainsKey(entry.Key + ".value"),
+                "Timer" => timers.ContainsKey(entry.Key),
+                _ => false
+            };
+            Check(native, $"HYUI {tag} ({entry.Key}) does not use the required native WinUI control");
+        }
+        Check(seen.SetEquals(expected),
+            "HYUI element inventory mismatch. Missing: " +
+            string.Join(", ", expected.Except(seen)) + "; unexpected: " +
+            string.Join(", ", seen.Except(expected)));
+    }
+
     public async Task RunUiTests(string output) {
         Directory.CreateDirectory(output); Root.RequestedTheme = ElementTheme.Light; ((ScrollViewer)Root).Background = new SolidColorBrush(Microsoft.UI.Colors.White);
         await Until(() => Root.IsLoaded && Root.ActualWidth > 0, "WinUI window did not load");
+        CheckAll43NativeElements();
         var shots = new List<string>(); var captures = new List<object>();
         var tabs = (TabView)controls["pages"];
         foreach (int page in new[] { 0, 1 }) {

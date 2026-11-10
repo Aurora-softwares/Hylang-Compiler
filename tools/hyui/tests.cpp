@@ -4,10 +4,77 @@
 #include <QFile>
 #include <QtTest>
 #include <iostream>
+#include <functional>
+#include "element_contract_cases.hpp"
 
 class HyuiTests : public QObject {
     Q_OBJECT
 private slots:
+
+    // Each of the 43 public HYUI elements is a separate named QtTest row.
+    // The inventory comparison fails if a renderer/schema grows a new tag
+    // without acquiring a corresponding contract case.
+    void everyElementHasContract_data() {
+        QTest::addColumn<QString>("tag");
+        QTest::addColumn<QByteArray>("xml");
+        QTest::addColumn<QString>("stateKey");
+        QTest::addColumn<QString>("handler");
+        addHyuiElementContractRows();
+    }
+
+    void everyElementHasContract() {
+        QFETCH(QString, tag);
+        QFETCH(QByteArray, xml);
+        QFETCH(QString, stateKey);
+        QFETCH(QString, handler);
+        hyui::Document d;
+        QVERIFY2(d.parse(xml), qPrintable(tag + ": " + d.error));
+        int matches = 0;
+        const std::function<void(const hyui::Node&)> visit = [&](const hyui::Node& node) {
+            if (node.tag == tag) { ++matches; }
+            for (const auto& child : node.children) { visit(child); }
+        };
+        visit(d.window);
+        QCOMPARE(matches, 1);
+        if (!stateKey.isEmpty()) {
+            QVERIFY2(d.initialState.contains(stateKey), qPrintable(tag + ": missing state " + stateKey));
+        }
+        if (!handler.isEmpty()) {
+            QVERIFY2(d.handlers.value(handler).contains("subject"), qPrintable(tag + ": missing callback"));
+        }
+        if (tag == "PasswordInput") {
+            QVERIFY(d.secretInputs.contains("subject"));
+            QVERIFY(!d.initialState.contains("subject.text"));
+            QVERIFY(!d.initialState.contains("subject.value"));
+        }
+    }
+
+    void everyElementHasInventoryCoverage() {
+        const QSet<QString> expected = { "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "SplitView", "StatusBar", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "Table", "RadioGroup", "Image", "Dialog", "Label", "ValidationMessage", "Button", "ToggleButton", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer" };
+        QSet<QString> actual;
+        for (const QString& tag : hyui::Document::supportedElements()) { actual.insert(tag); }
+        QCOMPARE(expected.size(), 43);
+        QCOMPARE(actual, expected);
+    }
+
+    void dialogWithNativeMultiChoiceButtons() {
+        hyui::Document d;
+        QVERIFY2(d.parse(R"HYUI(<Window version="1">
+            <Dialog id="choice" title="Choose" text="Select an action"
+                    buttons="Open|Save|Export|Cancel" open="false" onClose="Chosen"/>
+        </Window>)HYUI"), qPrintable(d.error));
+        QCOMPARE(d.ranges.value("choice").first, 0);
+        QCOMPARE(d.ranges.value("choice").second, 3);
+        hyui::Bridge bridge(d, {}, {});
+        QVERIFY(bridge.apply("HYUI\tSET\tchoice\topen\ttrue\n"
+                             "HYUI\tSET\tchoice\tvalue\t3\n"));
+        QCOMPARE(bridge.state().value("choice.value").toInt(), 3);
+        QVERIFY(!bridge.apply("HYUI\tSET\tchoice\tvalue\t4\n"));
+        QVERIFY(!d.parse(R"HYUI(<Window version="1">
+            <Dialog title="Too many" buttons="1|2|3|4|5|6|7|8|9"/>
+        </Window>)HYUI"));
+    }
+
     void validatesDataAndRejectsCode() {
         hyui::Document d;
         QVERIFY(d.parse("<Window version=\"1\"><Label id=\"greeting\" text=\"Hello &amp; goodbye\" /></Window>"));
@@ -112,7 +179,7 @@ private slots:
             "<Window version=\"1\"><ListBox/></Window>",
             "<Window version=\"1\"><RadioGroup items=\"One\" value=\"1\"/></Window>",
             "<Window version=\"1\"><Table columns=\"A|B\" rows=\"One\"/></Window>",
-            "<Window version=\"1\"><Dialog buttons=\"1|2|3|4\"/></Window>",
+            "<Window version=\"1\"><Dialog buttons=\"1|2|3|4|5|6|7|8|9\"/></Window>",
             "<Window version=\"1\"><Image source=\"../secret.png\"/></Window>",
             "<Window version=\"1\"><Image source=\"https://example.com/image.png\"/></Window>"
         };
