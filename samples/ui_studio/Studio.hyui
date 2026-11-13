@@ -84,6 +84,7 @@
       <Panel title="Collections" preferredWidth="580" gap="12">
         <Label text="LIST BOX" role="caption" tone="muted" />
         <ListBox id="templates" items="Notes application|Project tracker|Photo library" value="0" height="120" onChange="ChooseTemplate" accessibleName="Application templates" />
+        <TreeView id="projectTree" items="0:Project|1:src|2:Program.hy|1:assets" value="0" height="120" onChange="ChooseTree" visible="false" accessibleName="Project files" />
         <SearchInput id="templateSearch" text="" placeholder="Search templates" onChange="SearchTemplates" onSubmit="SubmitSearch" accessibleName="Search application templates" tooltip="Enter a template search term" visible="false" />
         <PasswordInput id="templatePassword" placeholder="Enter a private gallery code" onChange="PasswordEdited" onSubmit="CheckPassword" accessibleName="Private gallery code" visible="false" />
         <FilePicker id="openDocument" mode="open" text="Open a file" onPick="PickedDocument" onCancel="PickerCancelled" accessibleName="Open a file" visible="false" />

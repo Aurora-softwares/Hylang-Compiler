@@ -52,6 +52,7 @@ namespace Hydrogen.UI {
         public static void Exit() { System.Console.WriteLine("HYUI\tEXIT"); }
 
         public static void SetText(string id, string text) { Set(id, "text", text); }
+        public static void SetItems(string id, string items) { Set(id, "items", items); }
         public static void SetPath(string id, string path) { Set(id, "path", path); }
         public static void SetValue(string id, int value) { Set(id, "value", "" + value); }
         public static void SetChecked(string id, bool value) { Set(id, "checked", "" + value); }

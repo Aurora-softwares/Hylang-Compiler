@@ -68,6 +68,7 @@ bool Bridge::storeSecret(const QString& id, const QString& value) {
 bool Bridge::apply(const QByteArray& response) {
     if (response.size() > 1024 * 1024) { fail("Hydrogen response exceeds 1 MiB"); return false; }
     QVariantMap updated = values;
+    QSet<QString> explicitSelections;
     struct ClipboardRequest { QString id, operation, text; };
     QVector<ClipboardRequest> clipboard;
     for (QByteArray raw : response.split('\n')) {
@@ -96,6 +97,14 @@ bool Bridge::apply(const QByteArray& response) {
         if (!document.properties.value(id).contains(property)) { fail("Backend tried to update an unknown control or property: " + id + "." + property); return false; }
         if (document.clipboardIds.contains(id) && text.toUtf8().size() > 16384) { fail("Clipboard text exceeds 16 KiB"); return false; }
         const QString key = id + "." + property;
+        if (property == "items" && document.listBoxIds.contains(id) &&
+            (text.isEmpty() || text.size() > 16384)) {
+            fail("ListBox items must contain 1..16384 characters"); return false;
+        }
+        if (property == "items" && document.treeViewIds.contains(id)) {
+            QVector<TreeEntry> entries;
+            if (!parseTreeItems(text, entries)) { fail("Invalid TreeView items"); return false; }
+        }
         QVariant typed = text;
         if (document.initialState[key].metaType().id() == QMetaType::Bool) {
             if (text != "true" && text != "false") { fail("Backend boolean must be true or false"); return false; }
@@ -105,10 +114,29 @@ bool Bridge::apply(const QByteArray& response) {
             bool ok = false; int number = text.toInt(&ok);
             if (!ok || number < 0 || number > 32767) { fail("Backend number must be in 0..32767"); return false; }
             const auto range = document.ranges.value(id, qMakePair(0, 32767));
-            if (number < range.first || number > range.second) { fail("Backend value is outside the control's range"); return false; }
+            if (!document.listBoxIds.contains(id) && !document.treeViewIds.contains(id) && (number < range.first || number > range.second)) { fail("Backend value is outside the control's range"); return false; }
+            if (property == "value" && (document.listBoxIds.contains(id) || document.treeViewIds.contains(id))) { explicitSelections.insert(id); }
             typed = number;
         }
         updated[key] = typed;
+    }
+    for (const QString& id : document.listBoxIds) {
+        const int maximum = updated.value(id + ".items").toString().count('|');
+        const int selection = updated.value(id + ".value").toInt();
+        if (selection > maximum) {
+            if (explicitSelections.contains(id)) { fail("Backend value is outside the ListBox range"); return false; }
+            updated[id + ".value"] = maximum;
+        }
+    }
+    for (const QString& id : document.treeViewIds) {
+        QVector<TreeEntry> entries;
+        if (!parseTreeItems(updated.value(id + ".items").toString(), entries)) { fail("Invalid TreeView items"); return false; }
+        const int maximum = entries.size() - 1;
+        const int selection = updated.value(id + ".value").toInt();
+        if (selection > maximum) {
+            if (explicitSelections.contains(id)) { fail("Backend value is outside the TreeView range"); return false; }
+            updated[id + ".value"] = maximum;
+        }
     }
     values = std::move(updated);
     // A stopped timer must not leave an already queued tick behind a cancel

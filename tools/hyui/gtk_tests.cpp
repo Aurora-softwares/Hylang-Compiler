@@ -148,6 +148,37 @@ public:
         check(bridge.state()["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         view.api.call("gtk_list_box_select_row", view.controls["templates"]->widget, view.api.call<W>("gtk_list_box_get_row_at_index", view.controls["templates"]->widget, 2)); idle();
         check(bridge.state()["selectionText.text"] == "Template index: 2", "List selection did not reach Hydrogen");
+        W templates = view.controls["templates"]->widget;
+        check(bridge.apply("HYUI\tSET\ttemplates\tvalue\t3\nHYUI\tSET\ttemplates\titems\tFirst|Second|Third|Fourth\n"), "Cannot replace native ListBox items");
+        W fourth = view.api.call<W>("gtk_list_box_get_row_at_index", templates, 3);
+        check(fourth && !view.api.call<W>("gtk_list_box_get_row_at_index", templates, 4) &&
+              QString::fromUtf8(view.api.call<const char*>("gtk_label_get_text", view.api.call<W>("gtk_list_box_row_get_child", fourth))) == "Fourth" &&
+              view.api.call<int>("gtk_list_box_row_get_index", view.api.call<W>("gtk_list_box_get_selected_row", templates)) == 3,
+              "GTK ListBox did not render the replacement model and selection");
+        view.api.call("gtk_list_box_select_row", templates, view.api.call<W>("gtk_list_box_get_row_at_index", templates, 1)); idle();
+        check(bridge.state()["selectionText.text"] == "Template index: 1", "Replacement ListBox selection did not reach Hydrogen");
+        check(bridge.apply("HYUI\tSET\ttemplates\titems\t" + view.controls["templates"]->node->attributes.value("items").toUtf8() +
+              "\nHYUI\tSET\ttemplates\tvalue\t2\n"), "Cannot restore native ListBox items");
+        auto* tree = view.controls["projectTree"];
+        check(view.api.call<int>("g_type_check_instance_is_a", tree->widget,
+              view.api.call<unsigned long>("gtk_tree_view_get_type")), "TreeView must use a native GtkTreeView");
+        check(bridge.apply("HYUI\tSET\tprojectTree\tvisible\ttrue\n"), "Cannot show native TreeView");
+        W treeModel = view.api.call<W>("gtk_tree_view_get_model", tree->widget);
+        check(view.api.call<int>("gtk_tree_model_iter_n_children", treeModel, nullptr) == 1,
+              "GTK TreeView root hierarchy is missing");
+        TreeIter rootIter;
+        check(view.api.call<int>("gtk_tree_model_get_iter_first", treeModel, &rootIter) &&
+              view.api.call<int>("gtk_tree_model_iter_n_children", treeModel, &rootIter) == 2,
+              "GTK TreeView child hierarchy is missing");
+        W childPath = view.api.call<W>("gtk_tree_path_new_from_string", "0:0:0");
+        view.api.call("gtk_tree_selection_select_path", tree->buffer, childPath);
+        view.api.call("gtk_tree_path_free", childPath); idle();
+        check(bridge.state()["selectionText.text"] == "Tree index: 2", "Native TreeView selection did not reach Hydrogen");
+        check(bridge.apply("HYUI\tSET\tprojectTree\tvalue\t3\nHYUI\tSET\tprojectTree\titems\t0:Workspace|1:src|2:Main.hy|1:assets\n"),
+              "Cannot replace native TreeView hierarchy");
+        check(tree->treePaths.size() == 4 && tree->treePaths[3] == "0:1" && bridge.state()["projectTree.value"].toInt() == 3,
+              "GTK TreeView replacement lost hierarchy or selection");
+        check(bridge.apply("HYUI\tSET\tprojectTree\tvisible\tfalse\n"), "Cannot hide native TreeView");
         W toolbarCommand = view.controls["toolbarWorkspace"]->widget;
         check(view.api.call<int>("gtk_widget_get_visible", toolbarCommand) &&
               view.api.call<W>("gtk_widget_get_ancestor", toolbarCommand, view.api.call<unsigned long>("adw_header_bar_get_type")) != nullptr,

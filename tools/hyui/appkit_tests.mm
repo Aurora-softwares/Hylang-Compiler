@@ -51,7 +51,7 @@ void checkSiblings(NSView* root) {
 }
 
 void verifyNativeAppKitElements(const hyui::Document& document, NSWindow* window) {
-    const QSet<QString> expected = { "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "SplitView", "StatusBar", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "Table", "RadioGroup", "Image", "Dialog", "Label", "ValidationMessage", "Button", "ToggleButton", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer" };
+    const QSet<QString> expected = { "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "SplitView", "StatusBar", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "TreeView", "Table", "RadioGroup", "Image", "Dialog", "Label", "ValidationMessage", "Button", "ToggleButton", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer" };
     QSet<QString> seen;
     NSView* root = window.contentView;
     const std::function<bool(NSMenu*, NSString*)> menuHasTitle =
@@ -110,6 +110,10 @@ void verifyNativeAppKitElements(const hyui::Document& document, NSWindow* window
             else if (tag=="Timer")good=document.initialState.contains(node.id+".running") &&
                 document.handlers.value(node.attributes.value("onTick")).contains(node.id);
             else if (tag=="Dialog")good=document.initialState.contains(node.id+".open");
+            else if (tag=="TreeView") {
+                good=[nativeView isKindOfClass:NSScrollView.class] &&
+                    [((NSScrollView*)nativeView).documentView isKindOfClass:NSOutlineView.class];
+            }
             else if (tag=="ListBox"||tag=="Table") {
                 if([nativeView isKindOfClass:NSScrollView.class]) {
                     NSTableView* table=(NSTableView*)((NSScrollView*)nativeView).documentView;
@@ -152,7 +156,7 @@ void verifyNativeAppKitElements(const hyui::Document& document, NSWindow* window
             for(const auto& child:node.children)inspect(child,&node,inPopover||tag=="Popover");
         };
     inspect(document.window,nullptr,false);
-    if(seen!=expected)throw std::runtime_error("AppKit HYUI element inventory does not cover all 43 native elements");
+    if(seen!=expected)throw std::runtime_error("AppKit HYUI element inventory does not cover all 44 native elements");
 }
 }
 int main(int argc, char** argv) {
@@ -267,6 +271,24 @@ int main(int argc, char** argv) {
             NSSize sizeBeforeToolbar = NSApp.windows.firstObject.contentView.bounds.size;
             [table selectRowIndexes:[NSIndexSet indexSetWithIndex:2] byExtendingSelection:NO]; finish();
             require(bridge.state()["selectionText.text"].toString() == "Template index: 2", "list event failed");
+            require(bridge.apply("HYUI\tSET\ttemplates\tvalue\t3\nHYUI\tSET\ttemplates\titems\tFirst|Second|Third|Fourth\n"), "cannot replace AppKit ListBox items");
+            require(table.numberOfRows == 4 && [[(NSTextField*)[table viewAtColumn:0 row:3 makeIfNecessary:YES] stringValue] isEqualToString:@"Fourth"] &&
+                    table.selectedRow == 3, "AppKit ListBox did not render replacement items and selection");
+            [table selectRowIndexes:[NSIndexSet indexSetWithIndex:1] byExtendingSelection:NO]; finish();
+            require(bridge.state()["selectionText.text"].toString() == "Template index: 1", "replacement AppKit ListBox selection failed");
+            require(bridge.apply("HYUI\tSET\ttemplates\titems\t" + document.initialState["templates.items"].toString().toUtf8() + "\nHYUI\tSET\ttemplates\tvalue\t2\n"), "cannot restore AppKit ListBox items");
+            NSScrollView* treeScroll=(NSScrollView*)find(gallery, @"projectTree");
+            NSOutlineView* tree=(NSOutlineView*)treeScroll.documentView;
+            require([tree isKindOfClass:NSOutlineView.class] && tree.numberOfRows==4,
+                    "AppKit TreeView must render a native outline hierarchy");
+            require(bridge.apply("HYUI\tSET\tprojectTree\tvisible\ttrue\n"), "cannot show AppKit TreeView");
+            [tree selectRowIndexes:[NSIndexSet indexSetWithIndex:2] byExtendingSelection:NO]; finish();
+            require(bridge.state()["selectionText.text"].toString()=="Tree index: 2", "AppKit TreeView selection failed");
+            require(bridge.apply("HYUI\tSET\tprojectTree\tvalue\t3\nHYUI\tSET\tprojectTree\titems\t0:Workspace|1:src|2:Main.hy|1:assets\n"),
+                    "cannot replace AppKit TreeView hierarchy");
+            require(tree.numberOfRows==4 && tree.selectedRow==3,
+                    "AppKit TreeView replacement lost native rows or selection");
+            require(bridge.apply("HYUI\tSET\tprojectTree\tvisible\tfalse\n"), "cannot hide AppKit TreeView");
             require(qAbs(NSApp.windows.firstObject.contentView.bounds.size.height - sizeBeforeToolbar.height) <= 1,
                     "showing the native toolbar changed the window content height");
             NSToolbar* nativeToolbar = NSApp.windows.firstObject.toolbar;
