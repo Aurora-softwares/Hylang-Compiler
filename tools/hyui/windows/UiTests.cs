@@ -97,9 +97,9 @@ public sealed partial class NativeWindow
     // Validate every HYUI tag against the native WinUI 3 control family.
     // A generic placeholder is not enough: a new schema control must receive
     // an explicit native mapping here before it can be considered implemented.
-    void CheckAll43NativeElements() {
+    void CheckAll44NativeElements() {
         var expected = new HashSet<string>(StringComparer.Ordinal) {
-            "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "SplitView", "StatusBar", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "Table", "RadioGroup", "Image", "Dialog", "Label", "ValidationMessage", "Button", "ToggleButton", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer"
+            "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "SplitView", "StatusBar", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "TreeView", "Table", "RadioGroup", "Image", "Dialog", "Label", "ValidationMessage", "Button", "ToggleButton", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer"
         };
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var entry in nodes) {
@@ -126,6 +126,7 @@ public sealed partial class NativeWindow
                 "Tabs" => control is TabView,
                 "Tab" => control is StackPanel,
                 "ListBox" => control is ListView,
+                "TreeView" => control is TreeView,
                 "Table" => control is ListView && ((ListView)control).Header is Grid,
                 "RadioGroup" => control is RadioButtons,
                 "Image" => control is Microsoft.UI.Xaml.Controls.Image,
@@ -163,7 +164,7 @@ public sealed partial class NativeWindow
     public async Task RunUiTests(string output) {
         Directory.CreateDirectory(output); Root.RequestedTheme = ElementTheme.Light; ((ScrollViewer)Root).Background = new SolidColorBrush(Microsoft.UI.Colors.White);
         await Until(() => Root.IsLoaded && Root.ActualWidth > 0, "WinUI window did not load");
-        CheckAll43NativeElements();
+        CheckAll44NativeElements();
         var shots = new List<string>(); var captures = new List<object>();
         var tabs = (TabView)controls["pages"];
         foreach (int page in new[] { 0, 1 }) {
@@ -219,6 +220,24 @@ public sealed partial class NativeWindow
               "WinUI split callback did not reach Hydrogen");
         ((RadioButtons)controls["channel"]).SelectedIndex = 1; await Idle(); Check(values["channelText.text"] == "Preview channel selected.", "Radio event did not reach Hydrogen");
         ((ListView)controls["templates"]).SelectedIndex = 2; await Idle(); Check(values["selectionText.text"] == "Template index: 2", "List event did not reach Hydrogen");
+        var templates = (ListView)controls["templates"];
+        string originalItems = values["templates.items"];
+        Apply("HYUI\tSET\ttemplates\tvalue\t3\nHYUI\tSET\ttemplates\titems\tFirst|Second|Third|Fourth\n");
+        Check(templates.ItemsSource is string[] replaced && replaced.Length == 4 && replaced[3] == "Fourth" && templates.SelectedIndex == 3,
+              "WinUI ListBox did not render replacement items and selection");
+        templates.SelectedIndex = 1; await Idle();
+        Check(values["selectionText.text"] == "Template index: 1", "Replacement WinUI ListBox selection did not reach Hydrogen");
+        Apply("HYUI\tSET\ttemplates\titems\t" + originalItems + "\nHYUI\tSET\ttemplates\tvalue\t2\n");
+        var tree = controls["projectTree"] as TreeView;
+        Check(tree != null && tree.RootNodes.Count == 1 && tree.RootNodes[0].Children.Count == 2,
+              "WinUI TreeView must render a native hierarchy");
+        Apply("HYUI\tSET\tprojectTree\tvisible\ttrue\n");
+        tree!.SelectedNode = tree.RootNodes[0].Children[0].Children[0]; await Idle();
+        Check(values["selectionText.text"] == "Tree index: 2", "WinUI TreeView selection did not reach Hydrogen");
+        Apply("HYUI\tSET\tprojectTree\tvalue\t3\nHYUI\tSET\tprojectTree\titems\t0:Workspace|1:src|2:Main.hy|1:assets\n");
+        Check(tree.SelectedNode == tree.RootNodes[0].Children[1] && values["projectTree.value"] == "3",
+              "WinUI TreeView replacement lost hierarchy or selection");
+        Apply("HYUI\tSET\tprojectTree\tvisible\tfalse\n");
         var toolbar = controls["studioToolbar"] as CommandBar;
         Check(toolbar != null && toolbar.Visibility == Visibility.Visible && toolbar.PrimaryCommands.Count == 2 &&
               ReferenceEquals(toolbar.PrimaryCommands[0], controls["toolbarWorkspace"]), "Native WinUI toolbar is missing");

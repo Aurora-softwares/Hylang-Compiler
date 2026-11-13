@@ -60,6 +60,9 @@ inline void addHyuiElementContractRows() {
         QTest::newRow("ListBox") << QStringLiteral("ListBox")
             << QByteArray(R"HYUI(<Window version="1"><ListBox id="subject" items="One|Two" value="1" onChange="Touched"/></Window>)HYUI")
             << QStringLiteral("subject.value") << QStringLiteral("Touched");
+        QTest::newRow("TreeView") << QStringLiteral("TreeView")
+            << QByteArray(R"HYUI(<Window version="1"><TreeView id="subject" items="0:Root|1:Child" value="1" onChange="Touched"/></Window>)HYUI")
+            << QStringLiteral("subject.value") << QStringLiteral("Touched");
         QTest::newRow("Table") << QStringLiteral("Table")
             << QByteArray(R"HYUI(<Window version="1"><Table id="subject" columns="Title|Status" rows="A|Ready&#10;B|Waiting" value="1" onChange="Touched"/></Window>)HYUI")
             << QStringLiteral("subject.value") << QStringLiteral("Touched");

@@ -93,6 +93,38 @@ static std::vector<std::string> parts(const std::string& s, char sep) {
     while (std::getline(in,x,sep)) result.push_back(x);
     return result;
 }
+static std::vector<std::string> listLabels(const std::string& value) {
+    std::vector<std::string> labels;
+    std::size_t start=0;
+    while(start<=value.size()) {
+        const auto end=value.find('|',start);
+        if(end==std::string::npos) {labels.push_back(value.substr(start));break;}
+        labels.push_back(value.substr(start,end-start));start=end+1;
+    }
+    return labels;
+}
+struct TreeRow { std::string label; int parent; };
+static bool treeRows(const std::string& text,std::vector<TreeRow>& rows) {
+    rows.clear();
+    if(text.empty()||text.size()>16384||!g_utf8_validate(text.c_str(),text.size(),nullptr))return false;
+    std::vector<int> previous(33,-1);
+    for(const auto& token:listLabels(text)) {
+        const auto colon=token.find(':');
+        if(colon==std::string::npos||colon==0||colon>2||colon+1==token.size()||rows.size()>=512)return false;
+        const std::string depthText=token.substr(0,colon);
+        if(!std::all_of(depthText.begin(),depthText.end(),[](unsigned char c){return c>='0'&&c<='9';}))return false;
+        const int depth=std::stoi(depthText);
+        if(depth>32)return false;
+        const std::string label=token.substr(colon+1);
+        if(label.find_first_of("\n\r\t")!=std::string::npos)return false;
+        const int parent=depth?previous[depth-1]:-1;
+        if(depth&&parent<0)return false;
+        rows.push_back({label,parent});
+        previous[depth]=int(rows.size())-1;
+        for(int i=depth+1;i<=32;++i)previous[i]=-1;
+    }
+    return !rows.empty();
+}
 static std::string escapeJson(const std::string& s) {
     std::string out;
     for(unsigned char ch:s) {
@@ -164,6 +196,7 @@ struct App {
     GtkApplication* application=nullptr;
     GtkWidget* window=nullptr;
     std::map<std::string,Control> controls;
+    std::map<std::string,std::vector<std::string>> treePaths;
     // Explicit GtkOverlay parents for controls targeted by HYUI popovers.
     // GtkListBox and other controls do not support arbitrary popover children.
     std::map<std::string,GtkWidget*> popoverHosts;
@@ -233,7 +266,7 @@ struct App {
         replaceControlWidget(control,widget);
         control.node=n;
         control.kind=kind;
-        for(auto key:{"text","value","checked","enabled","visible","running","open","path","indeterminate"}) {
+        for(auto key:{"text","items","value","checked","enabled","visible","running","open","path","indeterminate"}) {
             if(n->attrs.count(key)) state[name+"."+key]=attr(n,key);
         }
         if(!n->attrs.count("visible"))state[name+".visible"]="true";
@@ -253,6 +286,33 @@ struct App {
             if(!accessible.empty())gtk_accessible_update_property(GTK_ACCESSIBLE(widget),
                 GTK_ACCESSIBLE_PROPERTY_LABEL,accessible.c_str(),-1);
         }
+    }
+    GtkTreeStore* makeTree(const std::string& name,const std::string& items) {
+        std::vector<TreeRow> rows;
+        if(!treeRows(items,rows))throw std::runtime_error("invalid TreeView items");
+        auto* store=gtk_tree_store_new(2,G_TYPE_STRING,G_TYPE_INT);
+        std::vector<GtkTreeIter> iters(rows.size());
+        std::vector<int> childCounts(rows.size(),0);
+        auto& paths=treePaths[name];paths.resize(rows.size());
+        int roots=0;
+        for(std::size_t i=0;i<rows.size();++i) {
+            const int parent=rows[i].parent;
+            const int position=parent<0?roots++:childCounts[parent]++;
+            paths[i]=parent<0?std::to_string(position):paths[parent]+":"+std::to_string(position);
+            gtk_tree_store_append(store,&iters[i],parent<0?nullptr:&iters[parent]);
+            gtk_tree_store_set(store,&iters[i],0,rows[i].label.c_str(),1,int(i),-1);
+        }
+        return store;
+    }
+    void selectTree(const std::string& name,int index) {
+        auto it=controls.find(name);
+        if(it==controls.end()||!it->second.widget||index<0||
+           index>=int(treePaths[name].size()))return;
+        auto* view=GTK_TREE_VIEW(gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(it->second.widget)));
+        auto* path=gtk_tree_path_new_from_string(treePaths[name][index].c_str());
+        gtk_tree_view_expand_to_path(view,path);
+        gtk_tree_selection_select_path(gtk_tree_view_get_selection(view),path);
+        gtk_tree_path_free(path);
     }
     Hook* hook(Node* n,const char* key) {
         auto handler=attr(n,key);
@@ -316,6 +376,7 @@ struct App {
     }
     static void changedSimple(GtkWidget*,gpointer data) { clicked(nullptr,data); }
     static void listSelected(GtkListBox*,GtkListBoxRow*,gpointer data) { clicked(nullptr,data); }
+    static void treeSelected(GtkTreeSelection*,gpointer data) { clicked(nullptr,data); }
     static void switchChanged(GObject*,GParamSpec*,gpointer data) { clicked(nullptr,data); }
     static void radioToggled(GtkCheckButton* button,gpointer data) {
         auto* h=static_cast<Hook*>(data);
@@ -515,6 +576,13 @@ struct App {
             auto* row=gtk_list_box_get_selected_row(GTK_LIST_BOX(w));
             return std::to_string(row?gtk_list_box_row_get_index(row):0);
         }
+        if(tag=="TreeView") {
+            auto* view=GTK_TREE_VIEW(gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(w)));
+            GtkTreeModel* model=nullptr;GtkTreeIter iter;
+            if(!gtk_tree_selection_get_selected(gtk_tree_view_get_selection(view),&model,&iter))return cached("value");
+            int index=0;gtk_tree_model_get(model,&iter,1,&index,-1);
+            return std::to_string(index);
+        }
         if(tag=="Table") {
             if(!GTK_IS_COLUMN_VIEW(w))return cached("value");
             auto* model=gtk_column_view_get_model(GTK_COLUMN_VIEW(w));
@@ -548,7 +616,7 @@ struct App {
             else if(tag=="PasswordInput")continue;
             else if(tag=="CheckBox"||tag=="Switch"||
                 (tag=="MenuItem"&&c.node->attrs.count("checked")))prop="checked";
-            else if(tag=="Select"||tag=="ListBox"||tag=="Table"||tag=="Slider"||
+            else if(tag=="Select"||tag=="ListBox"||tag=="TreeView"||tag=="Table"||tag=="Slider"||
                     tag=="NumberInput"||tag=="Tabs"||tag=="SplitView"||tag=="RadioGroup")prop="value";
             if(!prop.empty())state[name+"."+prop]=value(c);
         }
@@ -609,6 +677,52 @@ struct App {
         return ok;
     }
     void apply(const std::string& output) {
+        // Validate collection model and selection changes before touching GTK.
+        // A handler may emit SET value before SET items in the same response.
+        std::map<std::string,std::string> replacementItems,replacementValues;
+        for(const auto& line:parts(output,'\n')) {
+            if(line.compare(0,9,"HYUI\tSET\t")!=0)continue;
+            const auto fields=parts(line,'\t');
+            if(fields.size()<4)continue;
+            const std::string name=decode(fields[2]),prop=decode(fields[3]);
+            auto it=controls.find(name);
+            if(it==controls.end() || (it->second.node->tag!="ListBox" && it->second.node->tag!="TreeView") ||
+               (prop!="items" && prop!="value"))continue;
+            if(fields.size()!=5) {
+                std::cerr<<"Invalid collection update from Hydrogen backend\n";
+                return;
+            }
+            if(prop=="items")replacementItems[name]=decode(fields[4]);
+            else replacementValues[name]=decode(fields[4]);
+        }
+        std::map<std::string,std::pair<std::string,int>> lists;
+        for(const auto& [name,control]:controls) {
+            if((control.node->tag!="ListBox" && control.node->tag!="TreeView") ||
+               (!replacementItems.count(name) && !replacementValues.count(name)))continue;
+            const std::string items=replacementItems.count(name)?replacementItems[name]:state[name+".items"];
+            const std::string selected=replacementValues.count(name)?replacementValues[name]:
+                state.count(name+".value")?state[name+".value"]:"0";
+            if(items.empty() || !g_utf8_validate(items.c_str(),items.size(),nullptr) ||
+               g_utf8_strlen(items.c_str(),items.size())>16384 || selected.empty() ||
+               !std::all_of(selected.begin(),selected.end(),[](unsigned char c){return c>='0'&&c<='9';}) ||
+               selected.size()>5) {
+                std::cerr<<"Invalid collection model or selection from Hydrogen backend\n";
+                return;
+            }
+            std::vector<TreeRow> tree;
+            if(control.node->tag=="TreeView" && !treeRows(items,tree)) {
+                std::cerr<<"Invalid TreeView hierarchy from Hydrogen backend\n";
+                return;
+            }
+            const int maximum=control.node->tag=="TreeView"?int(tree.size())-1:
+                std::count(items.begin(),items.end(),'|');
+            int index=std::stoi(selected);
+            if(index>32767 || (replacementValues.count(name) && index>maximum)) {
+                std::cerr<<"Collection selection is outside the updated model\n";
+                return;
+            }
+            lists[name]={items,std::min(index,maximum)};
+        }
         applying=true;
         for(auto& line:parts(output,'\n')) {
             if(line.compare(0,5,"HYUI\t")!=0)continue;
@@ -640,6 +754,7 @@ struct App {
             auto it=controls.find(name);
             if(it==controls.end())continue;
             Node* n=it->second.node;GtkWidget* w=it->second.widget;
+            if((n->tag=="ListBox" || n->tag=="TreeView") && (prop=="items" || prop=="value"))continue;
             state[name+"."+prop]=v;
             if(prop=="open" && n->tag=="Dialog") {
                 if(truth(v))showDialog(n);
@@ -721,6 +836,35 @@ struct App {
                 else gtk_spinner_stop(GTK_SPINNER(w));
             }
         }
+        for(const auto& [name,update]:lists) {
+            auto& control=controls[name];
+            if(control.node->tag=="TreeView") {
+                auto* view=GTK_TREE_VIEW(gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(control.widget)));
+                if(state[name+".items"]!=update.first) {
+                    auto* store=makeTree(name,update.first);
+                    gtk_tree_view_set_model(view,GTK_TREE_MODEL(store));
+                    g_object_unref(store);
+                    gtk_tree_view_expand_all(view);
+                }
+                state[name+".items"]=update.first;
+                state[name+".value"]=std::to_string(update.second);
+                selectTree(name,update.second);
+                continue;
+            }
+            auto* list=GTK_LIST_BOX(control.widget);
+            if(state[name+".items"]!=update.first) {
+                GtkListBoxRow* row=nullptr;
+                while((row=gtk_list_box_get_row_at_index(list,0)))gtk_list_box_remove(list,GTK_WIDGET(row));
+                for(const auto& label:listLabels(update.first)) {
+                    auto* child=gtk_label_new(label.c_str());
+                    gtk_label_set_xalign(GTK_LABEL(child),0);
+                    gtk_list_box_append(list,child);
+                }
+            }
+            state[name+".items"]=update.first;
+            state[name+".value"]=std::to_string(update.second);
+            gtk_list_box_select_row(list,gtk_list_box_get_row_at_index(list,update.second));
+        }
         applying=false;
     }
     void dispatch(const std::string& handler,const std::string& sender) {
@@ -740,7 +884,7 @@ struct App {
             else if(tag=="Input"||tag=="SearchInput"||tag=="TextArea"||tag=="Label"||tag=="StatusBar")prop="text";
             else if(tag=="CheckBox"||tag=="Switch"||
                 (tag=="MenuItem"&&c.node->attrs.count("checked")))prop="checked";
-            else if(tag=="Select"||tag=="ListBox"||tag=="Table"||tag=="Slider"||
+            else if(tag=="Select"||tag=="ListBox"||tag=="TreeView"||tag=="Table"||tag=="Slider"||
                 tag=="NumberInput"||tag=="Tabs"||tag=="SplitView"||tag=="RadioGroup"||tag=="ProgressBar")prop="value";
             if(prop.empty())continue;
             auto val=state[name+"."+prop];
@@ -991,7 +1135,7 @@ struct App {
             gtk_widget_set_size_request(w,-1,number(attr(n,"height"),80));
         } else if(tag=="ListBox") {
             w=gtk_list_box_new();
-            for(const auto& entry:parts(attr(n,"items"),'|')) {
+            for(const auto& entry:listLabels(attr(n,"items"))) {
                 auto* row=gtk_label_new(entry.c_str());gtk_label_set_xalign(GTK_LABEL(row),0);
                 gtk_list_box_append(GTK_LIST_BOX(w),row);
             }
@@ -999,6 +1143,26 @@ struct App {
                 gtk_list_box_get_row_at_index(GTK_LIST_BOX(w),number(attr(n,"value"))));
             bind(w,"row-selected",n,"onChange");
             gtk_widget_set_size_request(w,-1,number(attr(n,"height"),120));
+        } else if(tag=="TreeView") {
+            const auto name=id(n);
+            auto* store=makeTree(name,attr(n,"items"));
+            auto* view=gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
+            g_object_unref(store);
+            gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(view),FALSE);
+            auto* renderer=gtk_cell_renderer_text_new();
+            auto* column=gtk_tree_view_column_new_with_attributes("",renderer,"text",0,nullptr);
+            gtk_tree_view_append_column(GTK_TREE_VIEW(view),column);
+            auto* selection=gtk_tree_view_get_selection(GTK_TREE_VIEW(view));
+            gtk_tree_selection_set_mode(selection,GTK_SELECTION_SINGLE);
+            auto* scroll=gtk_scrolled_window_new();
+            gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll),view);
+            gtk_widget_set_size_request(scroll,-1,number(attr(n,"height"),160));
+            w=scroll;
+            registerControl(n,w,"TreeView");
+            gtk_tree_view_expand_all(GTK_TREE_VIEW(view));
+            selectTree(name,number(attr(n,"value")));
+            if(auto* h=hook(n,"onChange"))g_signal_connect(selection,"changed",G_CALLBACK(treeSelected),h);
+            return withPopoverHost(n,w);
         } else if(tag=="Table") {
             // A real, accessible GTK4 multi-column view, not a list of
             // unparsed pipe-separated row labels.
@@ -1241,7 +1405,41 @@ struct App {
                     else if(tag=="Clipboard")correct=w==nullptr;
                     else if(tag=="Tabs")correct=GTK_IS_STACK(w);
                     else if(tag=="Tab")correct=GTK_IS_BOX(w);
-                    else if(tag=="ListBox")correct=GTK_IS_LIST_BOX(w);
+                    else if(tag=="ListBox") {
+                        correct=GTK_IS_LIST_BOX(w);
+                        if(correct) {
+                            auto* list=GTK_LIST_BOX(w);
+                            const auto labels=listLabels(self->state[name+".items"]);
+                            for(std::size_t i=0;i<labels.size();++i) {
+                                auto* row=gtk_list_box_get_row_at_index(list,int(i));
+                                auto* label=row?gtk_list_box_row_get_child(row):nullptr;
+                                correct=correct&&GTK_IS_LABEL(label)&&
+                                    labels[i]==gtk_label_get_text(GTK_LABEL(label));
+                            }
+                            correct=correct&&gtk_list_box_get_row_at_index(list,int(labels.size()))==nullptr;
+                            auto* row=gtk_list_box_get_selected_row(list);
+                            correct=correct&&row&&gtk_list_box_row_get_index(row)==
+                                number(self->state[name+".value"]);
+                        }
+                    }
+                    else if(tag=="TreeView") {
+                        correct=GTK_IS_SCROLLED_WINDOW(w);
+                        auto* view=correct?gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(w)):nullptr;
+                        correct=correct&&GTK_IS_TREE_VIEW(view);
+                        if(correct) {
+                            std::vector<TreeRow> rows;
+                            correct=treeRows(self->state[name+".items"],rows);
+                            auto* model=gtk_tree_view_get_model(GTK_TREE_VIEW(view));
+                            correct=correct&&gtk_tree_model_iter_n_children(model,nullptr)>0;
+                            GtkTreeModel* selectedModel=nullptr;GtkTreeIter selected;
+                            correct=correct&&gtk_tree_selection_get_selected(
+                                gtk_tree_view_get_selection(GTK_TREE_VIEW(view)),&selectedModel,&selected);
+                            if(correct) {
+                                int index=-1;gtk_tree_model_get(selectedModel,&selected,1,&index,-1);
+                                correct=index==number(self->state[name+".value"]);
+                            }
+                        }
+                    }
                     else if(tag=="Table")correct=GTK_IS_COLUMN_VIEW(w);
                     else if(tag=="RadioGroup")correct=GTK_IS_BOX(w);
                     else if(tag=="Image")correct=GTK_IS_PICTURE(w);
@@ -1272,7 +1470,7 @@ struct App {
                     else found->second=found->second&&correct;
                 }
                 const std::vector<std::string> requiredTags={
-                    "Window","ColumnPanel","RowPanel","ScrollView","GridPanel","Panel","SplitView","StatusBar","MenuBar","Menu","MenuItem","ContextMenu","Popover","Toolbar","ToolButton","Clipboard","Tabs","Tab","ListBox","Table","RadioGroup","Image","Dialog","Label","ValidationMessage","Button","ToggleButton","Input","SearchInput","PasswordInput","FilePicker","TextArea","CheckBox","Switch","Select","Slider","NumberInput","ProgressBar","Spinner","Separator","Spacer","State","Timer"
+                    "Window","ColumnPanel","RowPanel","ScrollView","GridPanel","Panel","SplitView","StatusBar","MenuBar","Menu","MenuItem","ContextMenu","Popover","Toolbar","ToolButton","Clipboard","Tabs","Tab","ListBox","TreeView","Table","RadioGroup","Image","Dialog","Label","ValidationMessage","Button","ToggleButton","Input","SearchInput","PasswordInput","FilePicker","TextArea","CheckBox","Switch","Select","Slider","NumberInput","ProgressBar","Spinner","Separator","Spacer","State","Timer"
                 };
                 for(const auto& tag:requiredTags) {
                     bool ok=nativeTypes.count(tag)&&nativeTypes[tag];

@@ -141,7 +141,7 @@ namespace Hydrogen.Compiler.UI {
         }
 
         private static bool KnownElement(string name) {
-            return Token("Window|ColumnPanel|RowPanel|ScrollView|GridPanel|Panel|SplitView|StatusBar|MenuBar|Menu|MenuItem|ContextMenu|Popover|Toolbar|ToolButton|Clipboard|Tabs|Tab|ListBox|Table|RadioGroup|Image|Dialog|Label|ValidationMessage|Button|ToggleButton|Input|SearchInput|PasswordInput|FilePicker|TextArea|CheckBox|Switch|Select|Slider|NumberInput|ProgressBar|Spinner|Separator|Spacer|State|Timer", name);
+            return Token("Window|ColumnPanel|RowPanel|ScrollView|GridPanel|Panel|SplitView|StatusBar|MenuBar|Menu|MenuItem|ContextMenu|Popover|Toolbar|ToolButton|Clipboard|Tabs|Tab|ListBox|TreeView|Table|RadioGroup|Image|Dialog|Label|ValidationMessage|Button|ToggleButton|Input|SearchInput|PasswordInput|FilePicker|TextArea|CheckBox|Switch|Select|Slider|NumberInput|ProgressBar|Spinner|Separator|Spacer|State|Timer", name);
         }
 
         private static bool Container(string tag) {
@@ -185,6 +185,7 @@ namespace Hydrogen.Compiler.UI {
             if (tag == "Clipboard") { return key == "onRead"; }
             if (tag == "Tabs") { return Token("value|onChange", key); }
             if (tag == "ListBox") { return Token("items|value|height|onChange", key); }
+            if (tag == "TreeView") { return Token("items|value|height|onChange", key); }
             if (tag == "Table") { return Token("columns|rows|value|height|onChange", key); }
             if (tag == "RadioGroup") { return Token("items|value|onChange", key); }
             if (tag == "Image") { return Token("source|height", key); }

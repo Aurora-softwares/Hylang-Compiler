@@ -46,6 +46,8 @@ public sealed partial class NativeWindow : Window
     readonly Dictionary<string, XElement> nodes = new();
     readonly Dictionary<string, FrameworkElement> controls = new();
     readonly Dictionary<string, string> values = new();
+    readonly Dictionary<string, List<TreeViewNode>> treeNodes = new();
+    readonly Dictionary<string, string> treeItems = new();
     readonly Dictionary<string, DispatcherTimer> timers = new();
     readonly List<Action> layouts = new();
     readonly Dictionary<string, ColumnDefinition> splitColumns = new();
@@ -77,11 +79,48 @@ public sealed partial class NativeWindow : Window
         });
     }
     static int Number(XElement n, string key, int fallback) => int.TryParse(Attr(n, key), out int result) ? result : fallback;
+    static List<(int Parent, string Label)> ParseTreeItems(string items)
+    {
+        if (items.Length == 0 || items.Length > 16384) throw new InvalidDataException("Invalid TreeView items length");
+        string[] lines = items.Split('|');
+        if (lines.Length > 512) throw new InvalidDataException("TreeView exceeds 512 items");
+        var result = new List<(int Parent, string Label)>();
+        int[] lastAtDepth = Enumerable.Repeat(-1, 33).ToArray();
+        foreach (string line in lines) {
+            int colon = line.IndexOf(':');
+            if (colon < 1 || colon > 2 || colon == line.Length - 1 ||
+                !int.TryParse(line[..colon], NumberStyles.None, CultureInfo.InvariantCulture, out int depth) ||
+                depth > 32 || (depth > 0 && lastAtDepth[depth - 1] < 0))
+                throw new InvalidDataException("TreeView items must be preorder depth:label rows");
+            string label = line[(colon + 1)..];
+            if (label.IndexOfAny(['\n', '\r', '\t']) >= 0) throw new InvalidDataException("Invalid TreeView label");
+            int parent = depth == 0 ? -1 : lastAtDepth[depth - 1];
+            result.Add((parent, label));
+            lastAtDepth[depth] = result.Count - 1;
+            for (int i = depth + 1; i < lastAtDepth.Length; ++i) lastAtDepth[i] = -1;
+        }
+        return result;
+    }
+    void PopulateTree(TreeView tree, string id, string items)
+    {
+        var rows = ParseTreeItems(items);
+        tree.RootNodes.Clear();
+        var native = new List<TreeViewNode>();
+        foreach (var row in rows) {
+            var node = new TreeViewNode { Content = row.Label, IsExpanded = true };
+            if (row.Parent < 0) tree.RootNodes.Add(node);
+            else native[row.Parent].Children.Add(node);
+            native.Add(node);
+        }
+        treeNodes[id] = native;
+        treeItems[id] = items;
+    }
     static bool Allowed(XElement node, string property) => property switch {
         "enabled" or "visible" => node.Name.LocalName is not ("Window" or "State" or "Timer" or "ContextMenu" or "Clipboard"),
         "text" => node.Name.LocalName is "StatusBar" or "Label" or "ValidationMessage" or "ToggleButton" or "Input" or "SearchInput" or "TextArea" or "Button" or "ToolButton" or "FilePicker" or "CheckBox" or "Switch" or "Menu" or "MenuItem" or "Dialog" or "Popover",
         "path" => node.Name.LocalName == "FilePicker",
-        "value" => node.Name.LocalName is "SplitView" or "State" or "Clipboard" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog",
+        "items" => node.Name.LocalName is "ListBox" or "TreeView",
+        "value" => node.Name.LocalName is "SplitView" or "State" or "Clipboard" or "Select" or "Slider" or "NumberInput" or "ProgressBar" or "Tabs" or "ListBox" or "TreeView" or "Table" or "RadioGroup" or "Dialog",
         "checked" => node.Name.LocalName is "CheckBox" or "ToggleButton" or "Switch" or "MenuItem",
         "running" => node.Name.LocalName is "Spinner" or "Timer",
         "open" => node.Name.LocalName is "Dialog" or "Popover",
@@ -193,6 +232,7 @@ public sealed partial class NativeWindow : Window
         }
         if (tag == "FilePicker") values[id + ".path"] = "";
         if (tag == "Clipboard") values[id + ".value"] = "";
+        if (tag is "ListBox" or "TreeView") values[id + ".items"] = Attr(node, "items");
         FrameworkElement? element;
         void Changed(string property, string value, string action = "onChange") { if (applying || (property == "value" && value == "-1") || values.GetValueOrDefault(id + "." + property) == value) return; values[id + "." + property] = value; if (node.Attribute(action) != null) Dispatch(Attr(node, action), id); }
         if (tag is "State" or "Dialog" or "ContextMenu" or "Popover" or "Clipboard") return null;
@@ -237,7 +277,17 @@ public sealed partial class NativeWindow : Window
                 list.Header = Row(columns, true); foreach (string row in Attr(node, "rows").Split('\n')) list.Items.Add(Row(row.Split('|'), false));
                 list.ItemContainerStyle = new Style(typeof(ListViewItem)); list.ItemContainerStyle.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
             }
-            list.SelectionChanged += (_, _) => { if (list.SelectedIndex >= 0) Changed("value", list.SelectedIndex.ToString()); else list.SelectedIndex = int.Parse(values.GetValueOrDefault(id + ".value", "0")); }; element = list;
+            list.SelectionChanged += (_, _) => { if (applying) return; if (list.SelectedIndex >= 0) Changed("value", list.SelectedIndex.ToString()); else list.SelectedIndex = int.Parse(values.GetValueOrDefault(id + ".value", "0")); }; element = list;
+        } else if (tag == "TreeView") {
+            var tree = new TreeView { Height = Number(node, "height", 160), SelectionMode = TreeViewSelectionMode.Single };
+            PopulateTree(tree, id, Attr(node, "items"));
+            tree.SelectedNode = treeNodes[id][Number(node, "value", 0)];
+            tree.SelectionChanged += (_, _) => {
+                if (applying || tree.SelectedNode == null) return;
+                int index = treeNodes[id].IndexOf(tree.SelectedNode);
+                if (index >= 0) Changed("value", index.ToString(CultureInfo.InvariantCulture));
+            };
+            element = tree;
         } else if (tag == "Image") {
             element = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(Resource(documentDirectory, Attr(node, "source")))), Height = Number(node, "height", 72), Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform };
         } else if (tag == "SplitView") {
@@ -423,7 +473,7 @@ public sealed partial class NativeWindow : Window
             foreach (var pair in nodes) {
                 if (pair.Value.Name.LocalName == "PasswordInput") continue;
                 if (pair.Value.Name.LocalName == "Clipboard" && pair.Key != next.Sender) continue;
-                string property = pair.Value.Name.LocalName == "FilePicker" ? "path" : pair.Value.Name.LocalName is "State" or "Clipboard" or "Select" or "SplitView" or "NumberInput" or "ProgressBar" or "Slider" or "Tabs" or "ListBox" or "Table" or "RadioGroup" or "Dialog" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "ToggleButton" or "Switch" or "MenuItem" ? "checked" : "text";
+                string property = pair.Value.Name.LocalName == "FilePicker" ? "path" : pair.Value.Name.LocalName is "State" or "Clipboard" or "Select" or "SplitView" or "NumberInput" or "ProgressBar" or "Slider" or "Tabs" or "ListBox" or "TreeView" or "Table" or "RadioGroup" or "Dialog" ? "value" : pair.Value.Name.LocalName is "CheckBox" or "ToggleButton" or "Switch" or "MenuItem" ? "checked" : "text";
                 arguments.Add(pair.Key); arguments.Add(values.GetValueOrDefault(pair.Key + "." + property, ""));
             }
             if (arguments.Sum(a => a.Length) > 24000) throw new InvalidOperationException("Value snapshot too large");
@@ -488,6 +538,7 @@ public sealed partial class NativeWindow : Window
     void Apply(string output)
     {
         var updates = new Dictionary<string, string>(values);
+        var explicitSelections = new HashSet<string>();
         var clipboard = new List<(string Id, string Operation, string Text)>();
         foreach (string line in output.Split('\n')) {
             string[] parts = line.TrimEnd('\r').Split('\t'); if (parts.Length == 0 || parts[0] != "HYUI") continue;
@@ -509,14 +560,26 @@ public sealed partial class NativeWindow : Window
             if (parts.Length != 5 || parts[1] != "SET" || !nodes.ContainsKey(Decode(parts[2]))) throw new InvalidDataException("Invalid Hydrogen response");
             string id = Decode(parts[2]), prop = Decode(parts[3]), value = Decode(parts[4]);
             if (!Allowed(nodes[id], prop)) throw new InvalidDataException("Unknown control property");
+            if (prop == "items" && (value.Length == 0 || value.Length > 16384)) throw new InvalidDataException("Collection items must contain 1..16384 characters");
+            if (prop == "items" && nodes[id].Name.LocalName == "TreeView") ParseTreeItems(value);
             if (nodes[id].Name == "Clipboard" && System.Text.Encoding.UTF8.GetByteCount(value) > 16384) throw new InvalidDataException("Clipboard text exceeds 16 KiB");
             if (prop is "checked" or "running" or "indeterminate" or "enabled" or "visible" or "open") { if (value != "true" && value != "false") throw new InvalidDataException("Invalid boolean"); }
             if (prop == "value" && nodes[id].Name != "State" && nodes[id].Name != "Clipboard") {
                 var n = nodes[id]; string tag = n.Name.LocalName;
-                int maximum = tag is "Select" or "ListBox" or "RadioGroup" ? Attr(n, "items").Split('|').Length - 1 : tag == "Tabs" ? n.Elements().Count() - 1 : tag == "Table" ? Attr(n, "rows").Split('\n').Length - 1 : tag == "Dialog" ? Attr(n, "buttons", "OK").Split('|').Length - 1 : tag == "SplitView" ? 32767 : Number(n, "maximum", 100);
-                if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int number) || number < Number(n, "minimum", 0) || number > maximum) throw new InvalidDataException("Value outside range");
+                int maximum = tag is "Select" or "ListBox" or "TreeView" or "RadioGroup" ? Attr(n, "items").Split('|').Length - 1 : tag == "Tabs" ? n.Elements().Count() - 1 : tag == "Table" ? Attr(n, "rows").Split('\n').Length - 1 : tag == "Dialog" ? Attr(n, "buttons", "OK").Split('|').Length - 1 : tag == "SplitView" ? 32767 : Number(n, "maximum", 100);
+                if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int number) || number < Number(n, "minimum", 0) || number > (tag is "ListBox" or "TreeView" ? 32767 : maximum)) throw new InvalidDataException("Value outside range");
+                if (tag is "ListBox" or "TreeView") explicitSelections.Add(id);
             }
             updates[id + "." + prop] = value;
+        }
+        foreach (var pair in nodes) {
+            if (pair.Value.Name.LocalName is not ("ListBox" or "TreeView")) continue;
+            if (pair.Value.Name.LocalName == "TreeView") ParseTreeItems(updates[pair.Key + ".items"]);
+            int maximum = updates[pair.Key + ".items"].Count(c => c == '|');
+            int selected = int.Parse(updates[pair.Key + ".value"], CultureInfo.InvariantCulture);
+            if (selected <= maximum) continue;
+            if (explicitSelections.Contains(pair.Key)) throw new InvalidDataException("Value outside collection range");
+            updates[pair.Key + ".value"] = maximum.ToString(CultureInfo.InvariantCulture);
         }
         applying = true; values.Clear(); foreach (var item in updates) values[item.Key] = item.Value;
         foreach (var item in controls) {
@@ -534,7 +597,19 @@ public sealed partial class NativeWindow : Window
                 case AppBarButton command: command.Label = Value("text"); break;
                 case TabView tabs: tabs.SelectedIndex = int.Parse(Value("value")); break;
                 case RadioButtons group: group.SelectedIndex = int.Parse(Value("value")); break;
-                case ListView list: list.SelectedIndex = int.Parse(Value("value")); break;
+                case ListView list:
+                    if (nodes[item.Key].Name.LocalName == "ListBox" &&
+                        (list.ItemsSource is not string[] current || string.Join("|", current) != Value("items"))) {
+                        list.ItemsSource = Value("items").Split('|');
+                    }
+                    list.SelectedIndex = int.Parse(Value("value"), CultureInfo.InvariantCulture);
+                    break;
+                case TreeView tree:
+                    if (treeItems[item.Key] != Value("items")) PopulateTree(tree, item.Key, Value("items"));
+                    var selectedNode = treeNodes[item.Key][int.Parse(Value("value"), CultureInfo.InvariantCulture)];
+                    for (var parent = selectedNode.Parent; parent != null; parent = parent.Parent) parent.IsExpanded = true;
+                    tree.SelectedNode = selectedNode;
+                    break;
                 case TextBlock label: label.Text = Value("text"); break;
                 case TextBox input: if (input.Text != Value("text")) input.Text = Value("text"); break;
                 case AutoSuggestBox search: if (search.Text != Value("text")) search.Text = Value("text"); break;

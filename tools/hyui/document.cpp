@@ -22,6 +22,7 @@ static const QMap<QString, QSet<QString>> attributes = {
     {"Clipboard", {"onRead"}},
     {"Tabs", {"value", "onChange"}}, {"Tab", {"title", "gap"}},
     {"ListBox", {"items", "value", "height", "onChange"}},
+    {"TreeView", {"items", "value", "height", "onChange"}},
     {"Table", {"columns", "rows", "value", "height", "onChange"}},
     {"RadioGroup", {"items", "value", "onChange"}},
     {"Image", {"source", "height"}},
@@ -53,6 +54,31 @@ static bool container(const QString& tag) {
     return tag == "SplitView" || tag == "Tabs" || tag == "Tab" || tag == "MenuBar" || tag == "Menu" || tag == "ContextMenu" || tag == "Popover" || tag == "Toolbar" || tag == "Window" || tag == "Panel" || tag == "ColumnPanel" || tag == "RowPanel" || tag == "GridPanel" || tag == "ScrollView";
 }
 
+bool parseTreeItems(const QString& items, QVector<TreeEntry>& entries) {
+    entries.clear();
+    if (items.isEmpty() || items.size() > 16384) { return false; }
+    const QStringList rows = items.split('|');
+    if (rows.size() > 512) { return false; }
+    QVector<int> lastAtDepth(33, -1);
+    for (const QString& row : rows) {
+        const int colon = row.indexOf(':');
+        if (colon < 1 || colon > 2 || colon == row.size() - 1) { return false; }
+        const QString depthText = row.left(colon);
+        for (QChar ch : depthText) { if (ch < '0' || ch > '9') { return false; } }
+        const int depth = depthText.toInt();
+        if (depth > 32 || (depth && lastAtDepth[depth - 1] < 0)) { return false; }
+        const QString label = row.mid(colon + 1);
+        if (label.contains('\n') || label.contains('\r') || label.contains('\t')) { return false; }
+        const int parent = depth ? lastAtDepth[depth - 1] : -1;
+        const int index = entries.size();
+        entries.append({label, depth, parent, {}});
+        if (parent >= 0) { entries[parent].children.append(index); }
+        lastAtDepth[depth] = index;
+        for (int i = depth + 1; i < lastAtDepth.size(); ++i) { lastAtDepth[i] = -1; }
+    }
+    return true;
+}
+
 QString Document::resourcePath(const QString& relative) const {
     const QString root = QFileInfo(sourcePath).absoluteDir().canonicalPath();
     const QString file = QFileInfo(QDir(root).filePath(relative)).canonicalFilePath();
@@ -61,7 +87,7 @@ QString Document::resourcePath(const QString& relative) const {
 }
 
 bool Document::parse(const QByteArray& xml) {
-    error.clear(); initialState.clear(); properties.clear(); handlers.clear(); secretInputs.clear(); clipboardIds.clear(); ranges.clear(); window = {};
+    error.clear(); initialState.clear(); properties.clear(); handlers.clear(); secretInputs.clear(); clipboardIds.clear(); listBoxIds.clear(); treeViewIds.clear(); ranges.clear(); window = {};
     if (xml.size() > 1024 * 1024) { error = "HYUI documents are limited to 1 MiB"; return false; }
     QXmlStreamReader reader(xml);
     QSet<QString> ids;
@@ -148,6 +174,12 @@ bool Document::parse(const QByteArray& xml) {
         if (node.tag == "Clipboard" && (!node.attributes.contains("id") || !node.attributes.contains("onRead"))) { return invalid("Clipboard requires id and onRead"); }
         if (node.tag == "PasswordInput") { secretInputs.insert(node.id); }
         if (node.tag == "Clipboard") { clipboardIds.insert(node.id); }
+        if (node.tag == "ListBox") { listBoxIds.insert(node.id); }
+        if (node.tag == "TreeView") {
+            QVector<TreeEntry> entries;
+            if (!parseTreeItems(node.attributes.value("items"), entries)) { return invalid("TreeView requires 1..512 preorder depth:label items, starting at depth 0"); }
+            treeViewIds.insert(node.id);
+        }
         QSet<QString> props;
         if (node.tag != "Window" && node.tag != "Timer" && node.tag != "State" && node.tag != "ContextMenu" && node.tag != "Popover" && node.tag != "Clipboard") { props = {"visible", "enabled"}; }
         for (const QString& prop : {"text", "value", "checked", "running", "indeterminate", "open"}) {
@@ -155,6 +187,7 @@ bool Document::parse(const QByteArray& xml) {
         }
         if (node.tag == "FilePicker") { props.insert("path"); }
         if (node.tag == "Clipboard") { props.insert("value"); }
+        if (node.tag == "ListBox" || node.tag == "TreeView") { props.insert("items"); }
         properties.insert(node.id, props);
         for (const auto& prop : props) {
             QString value = node.attributes.value(prop, node.tag == "SplitView" && prop == "value" ? "260" : "");
@@ -174,7 +207,7 @@ bool Document::parse(const QByteArray& xml) {
         if (props.contains("value") && node.tag != "State" && node.tag != "Clipboard") {
             int minimum = node.attributes.value("minimum", "0").toInt();
             int maximum = node.attributes.value("maximum", "100").toInt();
-            if (node.tag == "Select" || node.tag == "ListBox" || node.tag == "RadioGroup") { maximum = node.attributes.value("items").split('|').size() - 1; }
+            if (node.tag == "Select" || node.tag == "ListBox" || node.tag == "TreeView" || node.tag == "RadioGroup") { maximum = node.attributes.value("items").split('|').size() - 1; }
             if (node.tag == "Table") { maximum = node.attributes.value("rows").split('\n').size() - 1; }
             if (node.tag == "Dialog") { maximum = node.attributes.value("buttons", "OK").split('|').size() - 1; }
             if (node.tag == "Tabs" || node.tag == "SplitView") { maximum = 32767; } // Child count is checked after parsing.

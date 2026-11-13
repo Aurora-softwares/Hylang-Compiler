@@ -25,6 +25,7 @@
 namespace hyui {
 namespace {
 using W = void*;
+struct TreeIter { int stamp = 0; W data = nullptr, data2 = nullptr, data3 = nullptr; };
 class Api {
     QLibrary gtk{"libgtk-4.so.1"}, adw{"libadwaita-1.so.0"}, object{"libgobject-2.0.so.0"}, glib{"libglib-2.0.so.0"}, gio{"libgio-2.0.so.0"}, pixbuf{"libgdk_pixbuf-2.0.so.0"};
 public:
@@ -79,6 +80,9 @@ struct Control {
     QVector<W> choices;
     W dialog = nullptr;
     W anchor = nullptr;
+    QString listItems;
+    QString treeItems;
+    QVector<QString> treePaths;
     bool popped = false;
 };
 void factoryThunk(W, W item, W data) { static_cast<Control*>(data)->itemAction(item); }
@@ -179,6 +183,31 @@ public:
         auto thunk = notify ? reinterpret_cast<void(*)()>(notifyThunk) : reinterpret_cast<void(*)()>(signalThunk);
         api.call<unsigned long>("g_signal_connect_data", object, signal, thunk, hook.get(), nullptr, 0);
         owned.push_back(std::move(hook));
+    }
+    W treeStore(Control* control, const QString& items) {
+        QVector<TreeEntry> entries;
+        if (!parseTreeItems(items, entries)) { throw std::runtime_error("invalid TreeView items"); }
+        W store = api.call<W>("gtk_tree_store_new", 2, 64ul, 24ul);
+        QVector<TreeIter> iters(entries.size());
+        QVector<int> childCounts(entries.size(), 0);
+        control->treePaths.resize(entries.size());
+        int roots = 0;
+        for (int i = 0; i < entries.size(); ++i) {
+            const int parent = entries[i].parent;
+            const int position = parent < 0 ? roots++ : childCounts[parent]++;
+            control->treePaths[i] = parent < 0 ? QString::number(position) :
+                control->treePaths[parent] + ':' + QString::number(position);
+            api.call("gtk_tree_store_append", store, &iters[i], parent < 0 ? nullptr : &iters[parent]);
+            api.call("gtk_tree_store_set", store, &iters[i], 0, entries[i].label.toUtf8().constData(), 1, i, -1);
+        }
+        return store;
+    }
+    void selectTree(Control* control, int index) {
+        if (index < 0 || index >= control->treePaths.size()) { return; }
+        W path = api.call<W>("gtk_tree_path_new_from_string", control->treePaths[index].toUtf8().constData());
+        api.call("gtk_tree_view_expand_to_path", control->widget, path);
+        api.call("gtk_tree_selection_select_path", control->buffer, path);
+        api.call("gtk_tree_path_free", path);
     }
     void attachContextMenus() {
         for (const Node& node : document.window.children) {
@@ -302,9 +331,37 @@ public:
             }
         } else if (tag == "ListBox") {
             w = api.call<W>("gtk_list_box_new"); c->widget = w; api.call("gtk_list_box_set_selection_mode", w, 2);
+            c->listItems = a.value("items");
             for (const QString& label : a.value("items").split('|')) { W text = api.call<W>("gtk_label_new", label.toUtf8().constData()); api.call("gtk_label_set_xalign", text, 0.0f); api.margin(text, 8); api.call("gtk_list_box_append", w, text); }
             connect(c, "row-selected", [this, c, event] { W row = api.call<W>("gtk_list_box_get_selected_row", c->widget); if (row) { event("value", api.call<int>("gtk_list_box_row_get_index", row), "onChange"); } }, true);
             W scroll = api.call<W>("gtk_scrolled_window_new"); api.call("gtk_scrolled_window_set_child", scroll, w); api.call("gtk_widget_set_size_request", scroll, -1, a.value("height", "160").toInt());
+            if (a.contains("tooltip")) { api.text(scroll, "gtk_widget_set_tooltip_text", a["tooltip"]); }
+            if (a.contains("accessibleName")) { api.call("gtk_accessible_update_property", w, 4, a["accessibleName"].toUtf8().constData(), -1); }
+            c->container = scroll; return scroll;
+        } else if (tag == "TreeView") {
+            W store = treeStore(c, a.value("items"));
+            w = api.call<W>("gtk_tree_view_new_with_model", store); c->widget = w;
+            api.call("g_object_unref", store);
+            api.call("gtk_tree_view_set_headers_visible", w, 0);
+            W renderer = api.call<W>("gtk_cell_renderer_text_new");
+            W column = api.call<W>("gtk_tree_view_column_new_with_attributes", "", renderer, "text", 0, static_cast<const char*>(nullptr));
+            api.call("gtk_tree_view_append_column", w, column);
+            c->buffer = api.call<W>("gtk_tree_view_get_selection", w);
+            api.call("gtk_tree_selection_set_mode", c->buffer, 1);
+            c->treeItems = a.value("items");
+            api.call("gtk_tree_view_expand_all", w);
+            selectTree(c, a.value("value", "0").toInt());
+            connect(c, "changed", [this, c, event] {
+                W model = nullptr; TreeIter iter;
+                if (api.call<int>("gtk_tree_selection_get_selected", c->buffer, &model, &iter)) {
+                    int index = -1;
+                    api.call("gtk_tree_model_get", model, &iter, 1, &index, -1);
+                    if (index >= 0) { event("value", index, "onChange"); }
+                }
+            });
+            W scroll = api.call<W>("gtk_scrolled_window_new");
+            api.call("gtk_scrolled_window_set_child", scroll, w);
+            api.call("gtk_widget_set_size_request", scroll, -1, a.value("height", "160").toInt());
             if (a.contains("tooltip")) { api.text(scroll, "gtk_widget_set_tooltip_text", a["tooltip"]); }
             if (a.contains("accessibleName")) { api.call("gtk_accessible_update_property", w, 4, a["accessibleName"].toUtf8().constData(), -1); }
             c->container = scroll; return scroll;
@@ -642,7 +699,31 @@ public:
             if (tag == "Switch") { api.call("gtk_switch_set_active", c->widget, value("checked").toBool() ? 1 : 0); if (c->label) { api.text(c->label, "gtk_label_set_text", value("text").toString()); } }
             if (tag == "Menu") { api.text(c->widget, "gtk_menu_button_set_label", value("text").toString()); }
             if (tag == "Tabs") { api.text(c->buffer, "gtk_stack_set_visible_child_name", QString::number(value("value").toInt())); }
-            if (tag == "ListBox") { api.call("gtk_list_box_select_row", c->widget, api.call<W>("gtk_list_box_get_row_at_index", c->widget, value("value").toInt())); }
+            if (tag == "ListBox") {
+                const QString items = value("items").toString();
+                if (c->listItems != items) {
+                    W row = nullptr;
+                    while ((row = api.call<W>("gtk_list_box_get_row_at_index", c->widget, 0))) { api.call("gtk_list_box_remove", c->widget, row); }
+                    for (const QString& label : items.split('|')) {
+                        W item = api.call<W>("gtk_label_new", label.toUtf8().constData());
+                        api.call("gtk_label_set_xalign", item, 0.0f); api.margin(item, 8);
+                        api.call("gtk_list_box_append", c->widget, item);
+                    }
+                    c->listItems = items;
+                }
+                api.call("gtk_list_box_select_row", c->widget, api.call<W>("gtk_list_box_get_row_at_index", c->widget, value("value").toInt()));
+            }
+            if (tag == "TreeView") {
+                const QString items = value("items").toString();
+                if (c->treeItems != items) {
+                    W store = treeStore(c, items);
+                    api.call("gtk_tree_view_set_model", c->widget, store);
+                    api.call("g_object_unref", store);
+                    api.call("gtk_tree_view_expand_all", c->widget);
+                    c->treeItems = items;
+                }
+                selectTree(c, value("value").toInt());
+            }
             if (tag == "Table") { api.call("gtk_single_selection_set_selected", c->buffer, value("value").toUInt()); }
             if (tag == "RadioGroup") { for (int index = 0; index < c->choices.size(); ++index) { api.call("gtk_check_button_set_active", c->choices[index], index == value("value").toInt() ? 1 : 0); } }
             if (tag == "Select") { api.call("gtk_drop_down_set_selected", c->widget, value("value").toUInt()); }

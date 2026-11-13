@@ -98,11 +98,49 @@ import json,sys
 with open(sys.argv[1],encoding="utf-8") as stream:
     state=json.load(stream)
 assert state["__hyui.native_controls_checked"] is True, state
-elements = ["Window","ColumnPanel","RowPanel","ScrollView","GridPanel","Panel","SplitView","StatusBar","MenuBar","Menu","MenuItem","ContextMenu","Popover","Toolbar","ToolButton","Clipboard","Tabs","Tab","ListBox","Table","RadioGroup","Image","Dialog","Label","ValidationMessage","Button","ToggleButton","Input","SearchInput","PasswordInput","FilePicker","TextArea","CheckBox","Switch","Select","Slider","NumberInput","ProgressBar","Spinner","Separator","Spacer","State","Timer"]
-assert len(elements) == 43
+elements = ["Window","ColumnPanel","RowPanel","ScrollView","GridPanel","Panel","SplitView","StatusBar","MenuBar","Menu","MenuItem","ContextMenu","Popover","Toolbar","ToolButton","Clipboard","Tabs","Tab","ListBox","TreeView","Table","RadioGroup","Image","Dialog","Label","ValidationMessage","Button","ToggleButton","Input","SearchInput","PasswordInput","FilePicker","TextArea","CheckBox","Switch","Select","Slider","NumberInput","ProgressBar","Spinner","Separator","Spacer","State","Timer"]
+assert len(elements) == 44
 for element in elements:
     key = "__hyui.native." + element
     assert state.get(key) is True, f"{element}: {state.get(key)}"
+PY
+"$output" --event RefreshTemplates:templates --verify-native-controls --state-output "$work/replaced-list.json"
+python3 - "$work/replaced-list.json" <<'PY'
+import json,sys
+with open(sys.argv[1],encoding="utf-8") as stream:
+    state=json.load(stream)
+assert state["templates.items"] == "Notes|Tasks|Photos|Calendar", state
+assert state["templates.value"] == 3, state
+assert state["__hyui.native.ListBox"] is True, state
+assert state["__hyui.native_controls_checked"] is True, state
+PY
+"$output" --event RefreshTree:projectTree --verify-native-controls --state-output "$work/replaced-tree.json"
+python3 - "$work/replaced-tree.json" <<'PY'
+import json,sys
+with open(sys.argv[1],encoding="utf-8") as stream:
+    state=json.load(stream)
+assert state["projectTree.items"] == "0:Workspace|1:src|2:Main.hy|1:assets", state
+assert state["projectTree.value"] == 3, state
+assert state["__hyui.native.TreeView"] is True, state
+PY
+"$output" --event RejectTree:projectTree --verify-native-controls --state-output "$work/rejected-tree.json"
+python3 - "$work/rejected-tree.json" <<'PY'
+import json,sys
+with open(sys.argv[1],encoding="utf-8") as stream:
+    state=json.load(stream)
+assert state["projectTree.items"] == "0:Project|1:src|2:Program.hy|1:assets", state
+assert state["selectionText.text"] != "Invalid tree replacement was applied", state
+assert state["__hyui.native.TreeView"] is True, state
+PY
+"$output" --event RejectTemplates:templates --verify-native-controls --state-output "$work/rejected-list.json"
+python3 - "$work/rejected-list.json" <<'PY'
+import json,sys
+with open(sys.argv[1],encoding="utf-8") as stream:
+    state=json.load(stream)
+assert state["templates.items"] == "Notes application|Project tracker|Photo library", state
+assert state["templates.value"] == 0, state
+assert state["selectionText.text"] != "Invalid replacement was applied", state
+assert state["__hyui.native.ListBox"] is True, state
 PY
 # Exercise the same window-manager close request as the title-bar button.
 # GTK's teardown emits change notifications; these must never dispatch an

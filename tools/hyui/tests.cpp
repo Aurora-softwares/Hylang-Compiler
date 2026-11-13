@@ -11,7 +11,7 @@ class HyuiTests : public QObject {
     Q_OBJECT
 private slots:
 
-    // Each of the 43 public HYUI elements is a separate named QtTest row.
+    // Each of the 44 public HYUI elements is a separate named QtTest row.
     // The inventory comparison fails if a renderer/schema grows a new tag
     // without acquiring a corresponding contract case.
     void everyElementHasContract_data() {
@@ -50,11 +50,56 @@ private slots:
     }
 
     void everyElementHasInventoryCoverage() {
-        const QSet<QString> expected = { "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "SplitView", "StatusBar", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "Table", "RadioGroup", "Image", "Dialog", "Label", "ValidationMessage", "Button", "ToggleButton", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer" };
+        const QSet<QString> expected = { "Window", "ColumnPanel", "RowPanel", "ScrollView", "GridPanel", "Panel", "SplitView", "StatusBar", "MenuBar", "Menu", "MenuItem", "ContextMenu", "Popover", "Toolbar", "ToolButton", "Clipboard", "Tabs", "Tab", "ListBox", "TreeView", "Table", "RadioGroup", "Image", "Dialog", "Label", "ValidationMessage", "Button", "ToggleButton", "Input", "SearchInput", "PasswordInput", "FilePicker", "TextArea", "CheckBox", "Switch", "Select", "Slider", "NumberInput", "ProgressBar", "Spinner", "Separator", "Spacer", "State", "Timer" };
         QSet<QString> actual;
         for (const QString& tag : hyui::Document::supportedElements()) { actual.insert(tag); }
-        QCOMPARE(expected.size(), 43);
+        QCOMPARE(expected.size(), 44);
         QCOMPARE(actual, expected);
+    }
+
+    void listBoxItemsUpdateAtomically() {
+        hyui::Document d;
+        QVERIFY2(d.parse(R"(<Window version="1"><ListBox id="choices" items="First|Second|Third" value="2" onChange="Choose"/></Window>)"), qPrintable(d.error));
+        QVERIFY(d.properties["choices"].contains("items"));
+        QCOMPARE(d.initialState["choices.items"].toString(), "First|Second|Third");
+        hyui::Bridge bridge(d, {}, {});
+        QVERIFY(bridge.apply("HYUI\tSET\tchoices\tvalue\t3\nHYUI\tSET\tchoices\titems\tOne|Two|Three|Four\n"));
+        QCOMPARE(bridge.state()["choices.value"].toInt(), 3);
+        QCOMPARE(bridge.state()["choices.items"].toString(), "One|Two|Three|Four");
+        QVERIFY(bridge.apply("HYUI\tSET\tchoices\titems\tNew|Last\n"));
+        QCOMPARE(bridge.state()["choices.value"].toInt(), 1);
+        const QVariantMap before = bridge.state();
+        QVERIFY(!bridge.apply("HYUI\tSET\tchoices\titems\tOnly\nHYUI\tSET\tchoices\tvalue\t1\n"));
+        QCOMPARE(bridge.state(), before);
+        QVERIFY(!bridge.apply("HYUI\tSET\tchoices\titems\t\n"));
+        QCOMPARE(bridge.state(), before);
+        QVERIFY(!bridge.apply("HYUI\tSET\tchoices\titems\t" + QByteArray(16385, 'x') + "\n"));
+        QCOMPARE(bridge.state(), before);
+        QVERIFY(!bridge.apply("HYUI\tSET\tchoices\tvalue\t-1\n"));
+        QCOMPARE(bridge.state(), before);
+    }
+
+    void treeViewHierarchyAndAtomicUpdates() {
+        hyui::Document d;
+        QVERIFY2(d.parse(R"(<Window version="1"><TreeView id="tree" items="0:Root|1:src|2:Main.hy|1:assets" value="2" onChange="Choose"/></Window>)"), qPrintable(d.error));
+        QCOMPARE(d.initialState["tree.value"].toInt(), 2);
+        QVERIFY(d.treeViewIds.contains("tree"));
+        QVector<hyui::TreeEntry> entries;
+        QVERIFY(hyui::parseTreeItems(d.initialState["tree.items"].toString(), entries));
+        QCOMPARE(entries.size(), 4);
+        QCOMPARE(entries[2].parent, 1);
+        QCOMPARE(entries[0].children, QVector<int>({1, 3}));
+        hyui::Bridge bridge(d, {}, {});
+        QVERIFY(bridge.apply("HYUI\tSET\ttree\tvalue\t3\nHYUI\tSET\ttree\titems\t0:Root|1:A|2:B|3:C\n"));
+        QCOMPARE(bridge.state()["tree.value"].toInt(), 3);
+        QVERIFY(bridge.apply("HYUI\tSET\ttree\titems\t0:Only\n"));
+        QCOMPARE(bridge.state()["tree.value"].toInt(), 0);
+        const QVariantMap before = bridge.state();
+        QVERIFY(!bridge.apply("HYUI\tSET\ttree\titems\t0:Root|2:Orphan\n"));
+        QVERIFY(!bridge.apply("HYUI\tSET\ttree\titems\t0:Root\nHYUI\tSET\ttree\tvalue\t1\n"));
+        QVERIFY(!bridge.apply("HYUI\tSET\ttree\titems\t0:\n"));
+        QCOMPARE(bridge.state(), before);
+        QVERIFY(!d.parse(R"(<Window version="1"><TreeView items="0:Root|2:Orphan"/></Window>)"));
     }
 
     void dialogWithNativeMultiChoiceButtons() {

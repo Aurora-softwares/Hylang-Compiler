@@ -14,10 +14,12 @@
 - (BOOL)isFlipped { return YES; }
 @end
 
-@interface HYAction : NSObject<NSTextFieldDelegate, NSTextViewDelegate, NSWindowDelegate, NSTableViewDelegate, NSTableViewDataSource, NSToolbarDelegate, NSPopoverDelegate, NSSplitViewDelegate> {
+@interface HYAction : NSObject<NSTextFieldDelegate, NSTextViewDelegate, NSWindowDelegate, NSTableViewDelegate, NSTableViewDataSource, NSOutlineViewDelegate, NSOutlineViewDataSource, NSToolbarDelegate, NSPopoverDelegate, NSSplitViewDelegate> {
 @public
     std::function<void(id)> callback;
     NSArray* tableRows;
+    NSArray* outlineRoots;
+    NSArray* outlineRows;
     NSArray<NSString*>* toolbarIdentifiers;
     NSDictionary<NSString*, NSButton*>* toolbarButtons;
 }
@@ -32,6 +34,21 @@
     return [NSTextField labelWithString:tableRows[row][column.identifier.integerValue]];
 }
 - (void)tableViewSelectionDidChange:(NSNotification*)note { [self fire:note.object]; }
+- (NSInteger)outlineView:(NSOutlineView*)outline numberOfChildrenOfItem:(id)item {
+    NSArray* children = item ? [(NSDictionary*)item objectForKey:@"children"] : outlineRoots;
+    return children.count;
+}
+- (id)outlineView:(NSOutlineView*)outline child:(NSInteger)index ofItem:(id)item {
+    NSArray* children = item ? [(NSDictionary*)item objectForKey:@"children"] : outlineRoots;
+    return children[index];
+}
+- (BOOL)outlineView:(NSOutlineView*)outline isItemExpandable:(id)item {
+    return [[(NSDictionary*)item objectForKey:@"children"] count] > 0;
+}
+- (NSView*)outlineView:(NSOutlineView*)outline viewForTableColumn:(NSTableColumn*)column item:(id)item {
+    return [NSTextField labelWithString:[(NSDictionary*)item objectForKey:@"label"]];
+}
+- (void)outlineViewSelectionDidChange:(NSNotification*)note { [self fire:note.object]; }
 - (BOOL)windowShouldClose:(NSWindow*)window { QCoreApplication::quit(); return YES; }
 - (void)popoverDidClose:(NSNotification*)note { [self fire:note.object]; }
 - (void)splitViewDidResizeSubviews:(NSNotification*)note { [self fire:note.object]; }
@@ -66,6 +83,8 @@ class AppKitView : public NativeView {
     NSWindow* window;
     NSMutableArray* retained = [NSMutableArray new];
     QMap<QString, Item> items;
+    QMap<QString, QString> listItems;
+    QMap<QString, QString> treeItems;
     QMap<NSView*, Layout> layouts;
     QMap<NSView*, NSView*> scrollContents;
     QMap<NSView*, NSBox*> panelBorders;
@@ -88,6 +107,21 @@ class AppKitView : public NativeView {
     NSTextField* error;
     HYAction* action(std::function<void(id)> fn) {
         HYAction* target = [[[HYAction alloc] init] autorelease]; target->callback = std::move(fn); [retained addObject:target]; return target;
+    }
+    void setOutlineRows(HYAction* delegate, const QString& encoded) {
+        QVector<TreeEntry> entries;
+        if (!parseTreeItems(encoded, entries)) { throw std::runtime_error("invalid TreeView items"); }
+        NSMutableArray* roots = [NSMutableArray array];
+        NSMutableArray* all = [NSMutableArray array];
+        for (int i = 0; i < entries.size(); ++i) {
+            NSMutableDictionary* row = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+                text(entries[i].label), @"label", @(i), @"index", [NSMutableArray array], @"children", nil];
+            [all addObject:row];
+            if (entries[i].parent < 0) { [roots addObject:row]; }
+            else { [[(NSDictionary*)all[entries[i].parent] objectForKey:@"children"] addObject:row]; }
+        }
+        [retained addObject:roots]; [retained addObject:all];
+        delegate->outlineRoots = roots; delegate->outlineRows = all;
     }
     NSView* stack() {
         NSView* result = [[[HYLayoutView alloc] init] autorelease];
@@ -201,7 +235,7 @@ class AppKitView : public NativeView {
         else if (tag == "Spinner") { height = 20; }
         else if (tag == "ProgressBar") { height = 8; }
         else if (tag == "Separator") { height = 1; }
-        else if (tag == "ListBox" || tag == "Table") { height = node->attributes.value("height", "160").toInt(); }
+        else if (tag == "ListBox" || tag == "TreeView" || tag == "Table") { height = node->attributes.value("height", "160").toInt(); }
         else if (tag == "Image") { height = node->attributes.value("height", "72").toInt(); }
         else if (tag == "Spacer") { height = node->attributes.value("height", "12").toInt(); }
         [view setFrameSize:NSMakeSize(width, height)];
@@ -379,8 +413,28 @@ class AppKitView : public NativeView {
             [retained addObject:rows]; HYAction* delegate = action([this, &node](id sender) {
                 NSInteger selection = [(NSTableView*)sender selectedRow]; if (selection >= 0) { handleEvent(node, "value", int(selection), "onChange"); }
             }); delegate->tableRows = rows; table.delegate = delegate; table.dataSource = delegate;
+            if (tag == "ListBox") { listItems.insert(node.id, a.value("items")); extra = delegate; }
             NSScrollView* area = [[[NSScrollView alloc] init] autorelease]; area.documentView = table; area.hasVerticalScroller = YES; area.hasHorizontalScroller = YES;
             area.borderType = NSBezelBorder; view = area; control = table;
+        } else if (tag == "TreeView") {
+            NSOutlineView* outline = [[[NSOutlineView alloc] init] autorelease];
+            outline.allowsEmptySelection = NO;
+            NSTableColumn* column = [[[NSTableColumn alloc] initWithIdentifier:@"tree"] autorelease];
+            [outline addTableColumn:column]; outline.outlineTableColumn = column; outline.headerView = nil;
+            HYAction* delegate = action([this, &node](id sender) {
+                NSOutlineView* tree = (NSOutlineView*)sender;
+                if (tree.selectedRow >= 0) {
+                    NSDictionary* item = [tree itemAtRow:tree.selectedRow];
+                    handleEvent(node, "value", [item[@"index"] intValue], "onChange");
+                }
+            });
+            setOutlineRows(delegate, a.value("items"));
+            outline.delegate = delegate; outline.dataSource = delegate;
+            [outline reloadData]; [outline expandItem:nil expandChildren:YES];
+            treeItems[node.id] = a.value("items");
+            NSScrollView* area = [[[NSScrollView alloc] init] autorelease];
+            area.documentView = outline; area.hasVerticalScroller = YES;
+            area.borderType = NSBezelBorder; view = area; control = outline; extra = delegate;
         } else if (tag == "Image") {
             NSImageView* image = [[[NSImageView alloc] init] autorelease]; image.image = [[[NSImage alloc] initWithContentsOfFile:text(doc.resourcePath(a.value("source")))] autorelease];
             if (!image.image) { throw std::runtime_error("cannot decode image asset"); }
@@ -543,7 +597,45 @@ class AppKitView : public NativeView {
                 [(NSSegmentedControl*)c.control setSelectedSegment:value("value").toInt()]; int index = 0;
                 for (const Node& page : c.node->children) { items[page.id].view.hidden = index++ != value("value").toInt() || !state.value(page.id + ".visible").toBool(); }
             }
-            if (tag == "ListBox" || tag == "Table") { [(NSTableView*)c.control selectRowIndexes:[NSIndexSet indexSetWithIndex:value("value").toUInt()] byExtendingSelection:NO]; }
+            if (tag == "ListBox" || tag == "Table") {
+                NSTableView* table = (NSTableView*)c.control;
+                if (tag == "ListBox" && listItems.value(it.key()) != value("items").toString()) {
+                    NSMutableArray* rows = [NSMutableArray array];
+                    for (const QString& label : value("items").toString().split('|')) {
+                        [rows addObject:[NSMutableArray arrayWithObject:text(label)]];
+                    }
+                    HYAction* delegate = (HYAction*)c.extra;
+                    [retained addObject:rows];
+                    [retained removeObject:delegate->tableRows];
+                    delegate->tableRows = rows;
+                    [table reloadData];
+                    listItems[it.key()] = value("items").toString();
+                }
+                [table selectRowIndexes:[NSIndexSet indexSetWithIndex:value("value").toUInt()] byExtendingSelection:NO];
+            }
+            if (tag == "TreeView") {
+                NSOutlineView* outline = (NSOutlineView*)c.control;
+                HYAction* delegate = (HYAction*)c.extra;
+                const QString encoded = value("items").toString();
+                if (treeItems.value(it.key()) != encoded) {
+                    NSArray* oldRoots = delegate->outlineRoots;
+                    NSArray* oldRows = delegate->outlineRows;
+                    setOutlineRows(delegate, encoded);
+                    [outline reloadData]; [outline expandItem:nil expandChildren:YES];
+                    [retained removeObject:oldRoots]; [retained removeObject:oldRows];
+                    treeItems[it.key()] = encoded;
+                }
+                const int selected = value("value").toInt();
+                NSDictionary* current = outline.selectedRow >= 0 ? [outline itemAtRow:outline.selectedRow] : nil;
+                if (!current || [current[@"index"] intValue] != selected) {
+                    NSInteger row = [outline rowForItem:delegate->outlineRows[selected]];
+                    if (row < 0) {
+                        [outline expandItem:nil expandChildren:YES];
+                        row = [outline rowForItem:delegate->outlineRows[selected]];
+                    }
+                    if (row >= 0) { [outline selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO]; }
+                }
+            }
             if (tag == "RadioGroup") { for (NSButton* button in layouts[c.view].children) { button.enabled = value("enabled").toBool(); button.state = button.tag == value("value").toInt() ? NSControlStateValueOn : NSControlStateValueOff; } }
             if (tag == "Select") { [(NSPopUpButton*)c.control selectItemAtIndex:value("value").toInt()]; }
             if (tag == "Slider" || tag == "NumberInput" || tag == "ProgressBar") { [c.control setDoubleValue:value("value").toDouble()]; if (c.extra) { [c.extra setDoubleValue:value("value").toDouble()]; } }

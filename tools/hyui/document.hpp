@@ -5,6 +5,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
+#include <QVector>
 #include <vector>
 
 namespace hyui {
@@ -14,6 +15,15 @@ struct Node {
     std::vector<Node> children;
     QString id;
 };
+
+// TreeView items are preorder rows: depth:label|depth:label.
+struct TreeEntry {
+    QString label;
+    int depth = 0;
+    int parent = -1;
+    QVector<int> children;
+};
+bool parseTreeItems(const QString& items, QVector<TreeEntry>& entries);
 
 // HYUI v1 is data, never executable QML or JavaScript.
 class Document {
@@ -29,6 +39,8 @@ public:
     QMap<QString, QSet<QString>> handlers;
     QSet<QString> secretInputs;
     QSet<QString> clipboardIds;
+    QSet<QString> listBoxIds;
+    QSet<QString> treeViewIds;
     QMap<QString, QPair<int, int>> ranges;
 };
 }

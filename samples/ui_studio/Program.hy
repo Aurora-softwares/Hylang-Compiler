@@ -12,6 +12,26 @@ namespace HydrogenStudio {
             string handler = Application.Handler(args);
             if (handler == "ShowControls") { Application.SetValue("pages", 1); }
             if (handler == "ShowWorkspace") { Application.SetValue("pages", 0); }
+            if (handler == "RefreshTemplates") {
+                Application.SetValue("templates", 3);
+                Application.SetItems("templates", "Notes|Tasks|Photos|Calendar");
+            }
+            if (handler == "RefreshTree") {
+                Application.SetValue("projectTree", 3);
+                Application.SetItems("projectTree", "0:Workspace|1:src|2:Main.hy|1:assets");
+            }
+            if (handler == "RejectTree") {
+                Application.SetItems("projectTree", "0:Workspace|2:Orphan");
+                Application.SetText("selectionText", "Invalid tree replacement was applied");
+            }
+            if (handler == "ChooseTree") {
+                Application.SetText("selectionText", "Tree index: " + Application.Value(args, "projectTree"));
+            }
+            if (handler == "RejectTemplates") {
+                Application.SetItems("templates", "Notes|Tasks");
+                Application.SetValue("templates", 3);
+                Application.SetText("selectionText", "Invalid replacement was applied");
+            }
             if (handler == "About") { Application.SetOpen("about", true); }
             if (handler == "ChooseTemplate") {
                 Application.SetText("selectionText", "Template index: " + Application.Value(args, "templates"));
