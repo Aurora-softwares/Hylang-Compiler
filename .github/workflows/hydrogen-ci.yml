@@ -26,7 +26,8 @@ permissions:
 jobs:
   linux-gtk-single-file:
     name: Single-file GTK4 application without Qt or hyui-native
-    runs-on: ubuntu-24.04
+    # Keep fork pull requests off the self-hosted Cerberus machine.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64"]') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -198,7 +199,8 @@ jobs:
 
   linux-ui:
     name: GTK UI interactions and appearance
-    runs-on: ubuntu-24.04
+    # Keep fork pull requests off the self-hosted Cerberus machine.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64"]') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -484,7 +486,8 @@ jobs:
 
   compiler:
     name: Bootstrap and cross-target tests
-    runs-on: ubuntu-24.04
+    # Keep fork pull requests off the self-hosted Cerberus machine.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64"]') }}
     timeout-minutes: 80
 
     steps:
