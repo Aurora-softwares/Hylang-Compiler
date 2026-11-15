@@ -17,7 +17,8 @@ permissions:
 jobs:
   generated-runtime:
     name: Verify immutable-path-safe runtime bytes
-    runs-on: ubuntu-latest
+    # Keep fork pull requests off the self-hosted Cerberus machine.
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["ubuntu-latest"]' || '["self-hosted","Linux","X64"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Regenerate Linux runtime byte emitter
