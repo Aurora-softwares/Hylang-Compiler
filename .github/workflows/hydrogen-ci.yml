@@ -133,7 +133,7 @@ jobs:
 
   windows-ui-sdk:
     name: Export native WinUI 3 runtime SDK without Qt
-    runs-on: windows-2025
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["windows-2025"]' || '["self-hosted","Windows","X64"]') }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -407,6 +407,7 @@ jobs:
 
   windows-ui:
     name: WinUI interactions and appearance
+    # Native GUI screenshot tests need an interactive desktop; Hydra is a Windows service runner.
     runs-on: windows-2025
     timeout-minutes: 20
     steps:
@@ -449,7 +450,7 @@ jobs:
 
   windows-lifecycle:
     name: Windows release lifecycle
-    runs-on: windows-latest
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["windows-latest"]' || '["self-hosted","Windows","X64"]') }}
     timeout-minutes: 15
 
     steps:
@@ -471,7 +472,7 @@ jobs:
   windows-live-release:
     name: Public Windows release smoke test
     if: github.event_name == 'workflow_dispatch' && inputs.live_windows_release != ''
-    runs-on: windows-latest
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork && '["windows-latest"]' || '["self-hosted","Windows","X64"]') }}
     timeout-minutes: 20
 
     steps:
